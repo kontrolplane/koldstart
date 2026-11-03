@@ -25,7 +25,6 @@ functions {
   ["api"] {
     runtime = "nodejs22.x"
     handler = "src/api.handler"
-    // stage comes from --stage, so one file describes every stage
     memory = if (stage == "prod") 1024 else 256
     environment {
       ["TABLE_NAME"] = ref("orders", "TableName")
@@ -48,7 +47,6 @@ functions {
   }
 }
 
-// any AWS::* type, created through the cloud control api
 resources {
   ["orders"] {
     type = "AWS::DynamoDB::Table"
@@ -64,10 +62,14 @@ resources {
 }
 ```
 
+`stage` is whatever `--stage` was set to, so one file describes every stage, and here the api gets more memory in `prod`. `resources` takes any `AWS::*` type, created through the cloud control api. `ref()` reads an attribute of a resource, such as the table's name, once it exists, and `${ssm:...}` is read from parameter store during the deploy.
+
 ```bash
-kdst plan --stage prod     # what would change, touching nothing
-kdst deploy --stage prod   # build, upload and apply
+kdst plan --stage prod
+kdst deploy --stage prod
 ```
+
+`plan` shows what would change and touches nothing. `deploy` builds the functions, uploads them and applies the plan.
 
 ## highlights
 
@@ -107,13 +109,138 @@ docker run --rm -it -v "$PWD:/work" -w /work -v "$HOME/.aws:/root/.aws:ro" -e AW
 
 koldstart evaluates configuration with the `pkl` binary. Homebrew installs it as a dependency. Otherwise koldstart downloads a pinned version to `~/.cache/koldstart` on first use and checks it against its published checksum, or uses the one `KOLDSTART_PKL` points at.
 
+## getting started
+
+`init` writes a `koldstart.pkl` and an example function into the current directory:
+
+```bash
+mkdir orders && cd orders
+kdst init
+```
+
+Edit the file to describe your functions, or start from the example at the top of this page. Without `--stage`, every command works on `dev`. The first plan lists everything as a create: each function with its iam role and log group, the http api with its routes, the queue mapping, the table and the queue.
+
+```bash
+kdst plan
+kdst deploy
+```
+
+The first deploy in an account and region also creates the state bucket. When it finishes, `outputs` prints the url of the http api:
+
+```bash
+kdst outputs
+```
+
+Invoke a function with an event from a file or inline, and follow its logs:
+
+```bash
+kdst invoke -f api --path events/get-order.json
+kdst logs -f api --tail
+```
+
+After changing only a function's code, deploy just that function. It skips planning and replaces the code in place:
+
+```bash
+kdst deploy function -f api
+```
+
+`remove` deletes everything the stage deployed, after asking you to type the stage name:
+
+```bash
+kdst remove
+```
+
+## stages
+
+Every stage is deployed separately, with its own functions, resources, state and lock, so `dev`, a stage per pull request and `prod` can live in the same account without touching each other. Small differences go in the main file through `stage`. A stage that differs a lot gets its own file that amends the main one, such as a `koldstart.prod.pkl` with:
+
+```pkl
+amends "koldstart.pkl"
+
+region = "us-east-1"
+```
+
+```bash
+kdst deploy --stage prod --config koldstart.prod.pkl
+```
+
+## secrets
+
+`${ssm:/path}` reads a value from ssm parameter store, `${secretsmanager:name}` reads a secret from secrets manager, and `${secretsmanager:name:key}` takes one key from a json secret. They are resolved during the deploy and become environment variables of the function, so anyone who can read the function's configuration can read them too.
+
+To keep them out of the configuration, set `secretsAtRuntime = true` on the function. The environment variable then holds the arn of the parameter or secret, the function's role is allowed to read it, and the function reads it itself when it starts.
+
+## local development
+
+`invoke --local` runs one function on your machine, built the same way as for a deploy, against an emulator of the lambda runtime api:
+
+```bash
+kdst invoke -f worker --local --path events/job.json
+```
+
+`offline` serves every http route of the project locally, so the api can be called with curl or a browser while you work on it:
+
+```bash
+kdst offline
+```
+
+The events you invoke functions with in `kdst ui` are saved as json under `.koldstart/events/<function>/`, so they can be committed and shared with the rest of the team.
+
+## deploying from ci
+
+A ci job needs aws credentials and nothing else: the state bucket and the lock are already shared with everyone who deploys the app. With GitHub Actions and an iam role it can assume through oidc:
+
+```yaml
+name: deploy
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::123456789012:role/koldstart-deploy
+          aws-region: eu-west-1
+      - run: |
+          docker run --rm -v "$PWD:/work" -w /work \
+            -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_SESSION_TOKEN -e AWS_REGION \
+            ghcr.io/kontrolplane/koldstart:latest deploy --stage prod
+```
+
+The role needs permission to manage what the configuration describes, and to read and write the state bucket. When a job is cancelled halfway, running it again finishes the deploy. When the runner itself was killed and the lock was left behind, `kdst unlock --stage prod` releases it.
+
+## what ends up in your account
+
+- for each function: the lambda function, an iam role and a log group, and the permissions its events need to invoke it
+- for each stage with http routes: one api gateway http api that all its routes share
+- everything in `resources`, created through the cloud control api
+- per account and region: one bucket, `koldstart-state-<account>-<region>`, versioned, encrypted and with public access blocked, holding the state, locks and zips of every app and stage
+
+Everything koldstart creates is tagged, together with the `tags` from the configuration. Nothing else is created, and nothing is sent anywhere outside your account.
+
+## not supported yet
+
+- runtimes other than node and go
+- the rest api of api gateway, only http apis are deployed
+- lambda layers and container image functions
+- taking over resources that koldstart did not create, which is an open question in [#1](https://github.com/kontrolplane/koldstart/issues/1)
+
 ## commands
 
 | command                    | description                                                                 |
 | -------------------------- | --------------------------------------------------------------------------- |
 | `init`                     | write a `koldstart.pkl` and an example function to start from               |
 | `package`                  | build and zip every function, without deploying                             |
-| `plan`                     | show what a deploy would create, change and delete                          |
+| `plan`                     | show what a deploy would create, change and delete, `--refresh` to include drift |
 | `deploy`                   | build, upload and apply the plan                                            |
 | `deploy function -f <fn>`  | deploy only the code of one function                                        |
 | `remove`                   | delete everything the stage deployed                                        |
