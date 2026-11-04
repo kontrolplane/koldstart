@@ -25,9 +25,10 @@ type stage struct {
 	*project
 	sess    *session
 	backend *state.S3
-	exists  bool // whether the state bucket exists
-	state   *state.State
-	etag    string
+	// exists says whether the state bucket exists.
+	exists bool
+	state  *state.State
+	etag   string
 }
 
 // openStage loads the configuration, connects to aws, and reads the state. With create, the
@@ -64,12 +65,12 @@ func (s *stage) read(ctx context.Context) error {
 	return nil
 }
 
-// lock takes the stage's lock, and returns the function that releases it.
+// lock takes the stage's lock, and returns the function that releases it, also when ctx was
+// cancelled by ctrl+c.
 func (s *stage) lock(ctx context.Context, operation string) (func(), error) {
 	if err := s.backend.Lock(ctx, s.App, s.Stage, lockInfo(operation)); err != nil {
 		return nil, err
 	}
-	// The lock is released even when ctx was cancelled by ctrl+c.
 	return func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -280,6 +281,8 @@ func (s *stage) functionURLs(st *state.State) map[string]string {
 	return out
 }
 
+// deployFunctionCommand deploys the code of one function. The other functions keep the code the
+// state says they have.
 func deployFunctionCommand(name string, opts *Options) *cobra.Command {
 	var function string
 	cmd := &cobra.Command{
@@ -311,7 +314,6 @@ the function's configuration changed too: run deploy for that.`,
 			if err != nil {
 				return err
 			}
-			// The other functions keep the code the state says they have.
 			for other := range s.Functions {
 				if other == function {
 					continue

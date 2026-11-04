@@ -120,8 +120,9 @@ func (p *Project) Validate() error {
 
 // validator collects what Validate finds.
 type validator struct {
-	p      *Project
-	routes map[string]string // "GET /path" to the function it belongs to
+	p *Project
+	// routes maps each route, such as "GET /path", to the function it belongs to.
+	routes map[string]string
 	errs   []error
 }
 

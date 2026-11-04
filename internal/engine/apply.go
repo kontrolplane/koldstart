@@ -127,7 +127,9 @@ func (e *Engine) tags(id string, app, stage string) map[string]string {
 }
 
 // applyNode creates or updates one node, its refs resolved against the state as it is now that
-// what it depends on is applied.
+// what it depends on is applied. When they come out the same as before, nothing is done. The
+// operation is recorded as pending before the call, so a deploy that dies during it knows the
+// resource may exist.
 func (e *Engine) applyNode(ctx context.Context, n Node, c Change, store *Store) (err error) {
 	start := time.Now()
 	p, err := e.provider(n.Type)
@@ -175,7 +177,7 @@ func (e *Engine) applyNode(ctx context.Context, n Node, c Change, store *Store) 
 		action = Update
 	case c.Action == Adopt:
 	case prior.Hash == hash:
-		return nil // what it depends on came out the same after all
+		return nil
 	case p.Replaces(prior.Inputs, recorded):
 		if prior.DeletionPolicy == Retain && !e.AllowReplace {
 			return fmt.Errorf("%s: the change needs a new resource, and the old one is retained: pass --allow-replace", n.ID)
@@ -205,7 +207,6 @@ func (e *Engine) applyNode(ctx context.Context, n Node, c Change, store *Store) 
 		})
 	}
 
-	// Recorded before the call, so a deploy that dies during it knows the resource may exist.
 	if err := store.Update(ctx, func(st *state.State) {
 		r := &state.Resource{Type: n.Type, PhysicalID: n.Name}
 		if prior != nil {

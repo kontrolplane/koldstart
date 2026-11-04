@@ -44,7 +44,6 @@ type harness struct {
 
 func newHarness(t *testing.T) *harness {
 	fake := NewFake()
-	// Two kinds of resource share the fake; give the function its own name space.
 	return &harness{
 		t:       t,
 		fake:    fake,
@@ -210,12 +209,14 @@ func TestDeleteOrderAndRetain(t *testing.T) {
 
 // TestCrashAnywhereConverges kills the deploy after each create, update and delete in turn, as
 // if the process died after aws did the work but before koldstart heard back, and checks the
-// next deploy finishes the work with nothing made twice and nothing left over.
+// next deploy finishes the work with nothing made twice and nothing left over. Once a deploy
+// makes fewer calls than the crash point, every point is covered. Each step deploys before
+// first, without crashing, then after, which crashes and runs again.
 func TestCrashAnywhereConverges(t *testing.T) {
 	steps := []struct {
 		name   string
-		before []Node // deployed first, without crashing
-		after  []Node // the deploy that crashes, then runs again
+		before []Node
+		after  []Node
 	}{
 		{name: "first deploy", after: uniqueNames(stack(256))},
 		{name: "update", before: uniqueNames(stack(256)), after: uniqueNames(stack(1024))},
@@ -234,7 +235,7 @@ func TestCrashAnywhereConverges(t *testing.T) {
 			_, err := h.deploy(step.after)
 			if err == nil {
 				t.Logf("%s: crashed at each of %d calls", step.name, crash-1)
-				break // the deploy made fewer calls than crash: every point is covered
+				break
 			}
 			if !errors.Is(err, ErrCrash) {
 				t.Fatalf("%s, crash %d: %v", step.name, crash, err)
@@ -393,7 +394,8 @@ func TestStalePlan(t *testing.T) {
 	}
 }
 
-// TestJoin checks a join resolves once its refs do, and is unknown before.
+// TestJoin checks a join resolves once its refs do, is unknown before, and makes the node
+// depend on what its refs name.
 func TestJoin(t *testing.T) {
 	h := newHarness(t)
 	nodes := []Node{
@@ -410,7 +412,6 @@ func TestJoin(t *testing.T) {
 	if got := h.fake.Resources()["role"].Inputs["resource"]; got != "arn:fake:orders/index/*" {
 		t.Errorf("applied = %v", got)
 	}
-	// The ref inside the join is a dependency.
 	if deps := nodes[1].Deps(); !slices.Equal(deps, []string{"resource/orders"}) {
 		t.Errorf("Deps = %v", deps)
 	}

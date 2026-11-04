@@ -47,7 +47,8 @@ func Name(path string) string {
 	return nameLong
 }
 
-// Root builds the command, named name in its help.
+// Root builds the command, named name in its help. It defines --help and --version itself, so
+// cobra adds neither -v nor its own wording, and -v stays free.
 func Root(name string) *cobra.Command {
 	opts := &Options{}
 	var logFile *os.File
@@ -85,7 +86,6 @@ func Root(name string) *cobra.Command {
 	flags.StringVar(&opts.Profile, "profile", os.Getenv("AWS_PROFILE"), "aws profile from the shared aws config; $AWS_PROFILE")
 	flags.StringVar(&opts.Region, "region", os.Getenv("AWS_REGION"), "aws region, takes precedence over region in the configuration; $AWS_REGION")
 	flags.BoolVar(&opts.Debug, "debug", false, "write debug logs to "+debugLog)
-	// Defined here so cobra adds neither -v nor its own wording; -v stays free.
 	flags.BoolP("help", "h", false, "print the flags and exit")
 	root.Flags().Bool("version", false, "print the version and exit")
 

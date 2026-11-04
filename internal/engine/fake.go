@@ -31,7 +31,8 @@ type Fake struct {
 
 // FakeResource is one resource Fake holds.
 type FakeResource struct {
-	ID     string // the node it was made for
+	// ID is the node it was made for.
+	ID     string
 	Inputs map[string]any
 	Tags   map[string]string
 }

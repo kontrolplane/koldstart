@@ -14,9 +14,10 @@ import (
 
 // URLInputs are the inputs of a function url node.
 type URLInputs struct {
-	Function string   `json:"function"`
-	Auth     string   `json:"auth"` // NONE or AWS_IAM
-	CORS     *URLCORS `json:"cors"`
+	Function string `json:"function"`
+	// Auth is NONE or AWS_IAM.
+	Auth string   `json:"auth"`
+	CORS *URLCORS `json:"cors"`
 }
 
 // URLCORS is the cross-origin configuration of a function url.

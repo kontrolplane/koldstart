@@ -13,13 +13,15 @@ import (
 
 // Memory is a Backend in memory, for tests.
 type Memory struct {
-	mu       sync.Mutex
-	states   map[string][][]byte // every version of each state key, oldest first
-	locks    map[string]LockInfo
-	zips     map[string][]byte
-	Bucket   string
-	puts     int
-	FailNext error // returned by the next Write, then cleared
+	mu sync.Mutex
+	// states holds every version of each state key, oldest first; nil is a delete.
+	states map[string][][]byte
+	locks  map[string]LockInfo
+	zips   map[string][]byte
+	Bucket string
+	puts   int
+	// FailNext is returned by the next Write, then cleared.
+	FailNext error
 }
 
 // NewMemory returns an empty Memory.
@@ -51,7 +53,7 @@ func (m *Memory) Read(_ context.Context, app, stage string) (*State, string, err
 	return s, etagOf(versions), err
 }
 
-// Write implements Backend.
+// Write implements Backend. After a delete, only a write that expects nothing succeeds.
 func (m *Memory) Write(_ context.Context, s *State, etag string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -63,7 +65,7 @@ func (m *Memory) Write(_ context.Context, s *State, etag string) (string, error)
 	versions := m.states[key]
 	current := etagOf(versions)
 	if len(versions) > 0 && versions[len(versions)-1] == nil {
-		current = "" // deleted: only a write that expects nothing succeeds
+		current = ""
 	}
 	if etag != current {
 		return "", ErrConflict

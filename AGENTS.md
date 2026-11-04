@@ -29,6 +29,7 @@ The packages still to come, and the milestones they land in, are in [#1](https:/
 - `make check` runs what CI runs: lint for linux and darwin, actionlint, govulncheck, the tests and the goreleaser config.
 - base images and actions are pinned by digest or commit, with the tag beside it.
 - writing: short and concrete. say what something does and the command or value, not why at length. comments only explain a non-obvious why. british spelling.
+- comments go above what they describe: a function, type, constant, variable or field. none inside function bodies and none at the end of a line. a `//nolint` goes in the doc comment of the function it covers, after a `//` line. the one exception: the version beside a pinned action, `@<sha> # v7.0.1`, which dependabot reads.
 - case: README headings lowercase, prose sentence case. SECURITY, CONTRIBUTING, AGENTS and design docs all lowercase.
 - commits: conventional, lowercase, imperative (`feat: read the stage from KOLDSTART_STAGE`).
 

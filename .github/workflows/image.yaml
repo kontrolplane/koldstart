@@ -25,7 +25,8 @@ jobs:
     permissions:
       contents: read
       packages: write
-      id-token: write # keyless signing with cosign, and provenance
+      # Keyless signing with cosign, and provenance.
+      id-token: write
       attestations: write
     steps:
       - name: Set up Docker Buildx

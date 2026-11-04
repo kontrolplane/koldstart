@@ -56,7 +56,8 @@ type Resource struct {
 // Pending records an operation before it is made, so a deploy that dies halfway knows on the
 // next run what may exist.
 type Pending struct {
-	Operation string    `json:"operation"` // create, update, replace or delete
+	// Operation is create, update, replace or delete.
+	Operation string    `json:"operation"`
 	StartedAt time.Time `json:"startedAt"`
 	// Token is the request token of an asynchronous operation, such as one of cloud control.
 	Token string `json:"token,omitempty"`

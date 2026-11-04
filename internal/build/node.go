@@ -120,6 +120,8 @@ func buildErrors(messages []api.Message) error {
 }
 
 // typecheck runs tsc over the project, as asked for with typecheck = true.
+//
+//nolint:gosec // the project's own tsc
 func typecheck(ctx context.Context, root string) error {
 	tsc := filepath.Join(root, "node_modules", ".bin", "tsc")
 	if _, err := os.Stat(tsc); err != nil {
@@ -129,7 +131,7 @@ func typecheck(ctx context.Context, root string) error {
 		}
 		tsc = found
 	}
-	cmd := exec.CommandContext(ctx, tsc, "--noEmit") //nolint:gosec // the project's own tsc
+	cmd := exec.CommandContext(ctx, tsc, "--noEmit")
 	cmd.Dir = root
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -191,7 +193,7 @@ func nodeModules(root string, names []string) ([]File, error) {
 			if err != nil {
 				return err
 			}
-			content, err := os.ReadFile(p) //nolint:gosec // a file of an installed package
+			content, err := fs.ReadFile(os.DirFS(real), filepath.ToSlash(rel))
 			if err != nil {
 				return err
 			}

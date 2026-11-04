@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,6 +21,8 @@ var goFlags = []string{"-trimpath", "-buildvcs=false", "-tags", "lambda.norpc", 
 
 // golang cross-compiles the package in fn.Handler into a binary named bootstrap, which the
 // provided.al2023 runtime runs.
+//
+//nolint:gosec // go builds the user's own package
 func (b Builder) golang(ctx context.Context, fn config.Function, target Target) (File, error) {
 	goBin, err := exec.LookPath("go")
 	if err != nil {
@@ -34,7 +37,7 @@ func (b Builder) golang(ctx context.Context, fn config.Function, target Target) 
 
 	args := append([]string{"build"}, goFlags...)
 	args = append(args, "-o", out, fn.Handler)
-	cmd := exec.CommandContext(ctx, goBin, args...) //nolint:gosec // the handler is the user's package
+	cmd := exec.CommandContext(ctx, goBin, args...)
 	cmd.Dir = b.Root
 	cmd.Env = append(os.Environ(), "GOOS="+target.GOOS, "GOARCH="+target.GOARCH, "CGO_ENABLED=0")
 	var stderr bytes.Buffer
@@ -45,7 +48,7 @@ func (b Builder) golang(ctx context.Context, fn config.Function, target Target) 
 		}
 		return File{}, fmt.Errorf("go build %s: %w", fn.Handler, err)
 	}
-	data, err := os.ReadFile(out) //nolint:gosec // our own temporary file
+	data, err := fs.ReadFile(os.DirFS(tmp), "bootstrap")
 	if err != nil {
 		return File{}, err
 	}

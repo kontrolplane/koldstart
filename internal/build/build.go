@@ -43,7 +43,8 @@ func Lambda(architecture string) Target {
 
 // Builder builds the functions of the project in Root.
 type Builder struct {
-	Root  string // the project directory, absolute
+	// Root is the project directory, absolute.
+	Root  string
 	Stage string
 }
 
@@ -62,7 +63,7 @@ func (b Builder) Build(ctx context.Context, name string, fn config.Function) (Ar
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return Archive{}, fmt.Errorf("creating %s: %w", filepath.Dir(path), err)
 	}
-	if err := os.WriteFile(path, data, 0o644); err != nil { //nolint:gosec // a zip anyone may read
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return Archive{}, fmt.Errorf("writing %s: %w", path, err)
 	}
 	return Archive{

@@ -51,7 +51,8 @@ func awsConfig(ctx context.Context, opts *Options, region string) (aws.Config, e
 	return cfg, nil
 }
 
-// openSession connects to the account the credentials belong to, in region.
+// openSession connects to the account the credentials belong to, in region. With an endpoint of
+// an emulator, which answers on one host, buckets go in the path rather than the host name.
 func openSession(ctx context.Context, opts *Options, region string) (*session, error) {
 	cfg, err := awsConfig(ctx, opts, region)
 	if err != nil {
@@ -65,7 +66,6 @@ func openSession(ctx context.Context, opts *Options, region string) (*session, e
 		cfg:     cfg,
 		Account: aws.ToString(ident.Account),
 		Region:  cfg.Region,
-		// An emulator answers on one host, so buckets go in the path rather than the host name.
 		S3: s3.NewFromConfig(cfg, func(o *s3.Options) {
 			o.UsePathStyle = os.Getenv("AWS_ENDPOINT_URL") != "" || os.Getenv("AWS_ENDPOINT_URL_S3") != ""
 		}),

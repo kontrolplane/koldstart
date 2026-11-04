@@ -35,22 +35,25 @@ const (
 
 // Function is one lambda function.
 type Function struct {
-	Runtime             string            `json:"runtime"`
-	Handler             string            `json:"handler"`
-	Memory              int               `json:"memory"`
-	Timeout             int               `json:"timeout"` // seconds
-	Architecture        string            `json:"architecture"`
-	EphemeralStorage    int               `json:"ephemeralStorage"` // megabytes
-	ReservedConcurrency *int              `json:"reservedConcurrency"`
-	LogRetention        int               `json:"logRetention"` // days
-	Environment         map[string]Value  `json:"environment"`
-	Events              []Event           `json:"events"`
-	URL                 *FunctionURL      `json:"url"`
-	Permissions         []Statement       `json:"permissions"`
-	Link                map[string]string `json:"link"`
-	VPC                 *VPC              `json:"vpc"`
-	Bundle              Bundle            `json:"bundle"`
-	Typecheck           bool              `json:"typecheck"`
+	Runtime string `json:"runtime"`
+	Handler string `json:"handler"`
+	Memory  int    `json:"memory"`
+	// Timeout is in seconds.
+	Timeout      int    `json:"timeout"`
+	Architecture string `json:"architecture"`
+	// EphemeralStorage is in megabytes.
+	EphemeralStorage    int  `json:"ephemeralStorage"`
+	ReservedConcurrency *int `json:"reservedConcurrency"`
+	// LogRetention is in days.
+	LogRetention int               `json:"logRetention"`
+	Environment  map[string]Value  `json:"environment"`
+	Events       []Event           `json:"events"`
+	URL          *FunctionURL      `json:"url"`
+	Permissions  []Statement       `json:"permissions"`
+	Link         map[string]string `json:"link"`
+	VPC          *VPC              `json:"vpc"`
+	Bundle       Bundle            `json:"bundle"`
+	Typecheck    bool              `json:"typecheck"`
 }
 
 // IsNode reports whether the function runs on a node runtime.
@@ -65,7 +68,8 @@ func (f Function) IsGo() bool {
 
 // FunctionURL is the function's own url.
 type FunctionURL struct {
-	Auth string `json:"auth"` // iam or none
+	// Auth is iam or none.
+	Auth string `json:"auth"`
 	CORS *CORS  `json:"cors"`
 }
 
@@ -76,7 +80,8 @@ type CORS struct {
 	Headers     []string `json:"headers"`
 	Expose      []string `json:"expose"`
 	Credentials bool     `json:"credentials"`
-	MaxAge      int      `json:"maxAge"` // seconds
+	// MaxAge is in seconds.
+	MaxAge int `json:"maxAge"`
 }
 
 // Statement is an iam policy statement added to the function's role.
@@ -109,12 +114,14 @@ type HTTP struct {
 
 // Authorizer guards http routes: a jwt issuer, or a lambda function of the project.
 type Authorizer struct {
-	Type     string   `json:"type"` // jwt or lambda
+	// Type is jwt or lambda.
+	Type     string   `json:"type"`
 	Issuer   string   `json:"issuer"`
 	Audience []string `json:"audience"`
 	Function string   `json:"functionName"`
 	Identity []string `json:"identity"`
-	TTL      int      `json:"ttl"` // seconds
+	// TTL is in seconds.
+	TTL int `json:"ttl"`
 }
 
 // Throttling is the stage-wide request limit of the http api.
@@ -125,9 +132,10 @@ type Throttling struct {
 
 // Resource is anything else in aws, created through cloud control.
 type Resource struct {
-	Type           string         `json:"type"`
-	Properties     map[string]any `json:"properties"`
-	DeletionPolicy string         `json:"deletionPolicy"` // retain, delete, or empty for the type's default
+	Type       string         `json:"type"`
+	Properties map[string]any `json:"properties"`
+	// DeletionPolicy is retain, delete, or empty for the type's default.
+	DeletionPolicy string `json:"deletionPolicy"`
 }
 
 // marker is the key pkl renders on koldstart's own values, such as a ref, to tell them from a
@@ -157,7 +165,8 @@ type Ref struct {
 
 // Secret is read from ssm parameter store or secrets manager.
 type Secret struct {
-	Source    string `json:"source"` // ssm or secretsmanager
+	// Source is ssm or secretsmanager.
+	Source    string `json:"source"`
 	Name      string `json:"name"`
 	Key       string `json:"key"`
 	AtRuntime bool   `json:"atRuntime"`
@@ -279,8 +288,9 @@ type Event struct {
 	Bucket Value `json:"bucket"`
 
 	// queue and stream
-	BatchSize               int      `json:"batchSize"`
-	MaximumBatchingWindow   int      `json:"maximumBatchingWindow"` // seconds
+	BatchSize int `json:"batchSize"`
+	// MaximumBatchingWindow is in seconds.
+	MaximumBatchingWindow   int      `json:"maximumBatchingWindow"`
 	ReportBatchItemFailures bool     `json:"reportBatchItemFailures"`
 	Filters                 []string `json:"filters"`
 

@@ -89,7 +89,7 @@ func statement(effect string, actions []string, resources []any) map[string]any 
 }
 
 // permissions returns the role's inline policy, its managed policies, and the environment
-// variables link adds.
+// variables link adds. An ssm parameter's arn is not an attribute, so it is built from its name.
 func (b *builder) permissions(name string, fn config.Function) (map[string]any, []string, map[string]any, error) {
 	statements := []any{statement("Allow",
 		[]string{"logs:CreateLogStream", "logs:PutLogEvents"},
@@ -123,7 +123,6 @@ func (b *builder) permissions(name string, fn config.Function) (map[string]any, 
 		if a.resources != nil {
 			resources = a.resources(node)
 		} else {
-			// An ssm parameter's arn is not an attribute: build it from its name.
 			resources = []any{engine.Join("arn:"+awsp.Partition(b.t.Region)+":ssm:"+b.t.Region+":"+b.t.Account+":parameter/", engine.Ref(node, "Name"))}
 		}
 		statements = append(statements, statement("Allow", actions, resources))

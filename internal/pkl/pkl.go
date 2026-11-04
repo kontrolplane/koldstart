@@ -83,9 +83,11 @@ func CacheDir() (string, error) {
 
 // Find returns the pkl binary to use: $KOLDSTART_PKL, else a pkl on the PATH that is new enough,
 // else the pinned download in the cache, downloading it first when it is not there yet.
+//
+//nolint:gosec // the user names the binary in $KOLDSTART_PKL
 func Find(ctx context.Context) (string, error) {
 	if path := os.Getenv(EnvBinary); path != "" {
-		if _, err := os.Stat(path); err != nil { //nolint:gosec // the user names the binary
+		if _, err := os.Stat(path); err != nil {
 			return "", fmt.Errorf("%s=%s: %w", EnvBinary, path, err)
 		}
 		return path, nil
@@ -108,6 +110,8 @@ func Find(ctx context.Context) (string, error) {
 
 // download fetches the release binary name from base into dir, unless it is there already, and
 // checks it against its pinned checksum before it can be run.
+//
+//nolint:gosec // the binary has to be executable
 func download(ctx context.Context, client *http.Client, base, dir, name string) (string, error) {
 	want, ok := checksums[name]
 	if !ok {
@@ -152,7 +156,7 @@ func download(ctx context.Context, client *http.Client, base, dir, name string) 
 	if got := hex.EncodeToString(hash.Sum(nil)); got != want {
 		return "", fmt.Errorf("pkl %s from %s has sha256 %s, want %s: not using it", Version, base+name, got, want)
 	}
-	if err := os.Chmod(tmp.Name(), 0o755); err != nil { //nolint:gosec // an executable
+	if err := os.Chmod(tmp.Name(), 0o755); err != nil {
 		return "", err
 	}
 	if err := os.Rename(tmp.Name(), path); err != nil {
@@ -200,6 +204,8 @@ type Evaluator struct {
 
 // EvalJSON evaluates the module at path with the external properties props, and returns its
 // output as json.
+//
+//nolint:gosec // runs our pkl on the user's module
 func (e Evaluator) EvalJSON(ctx context.Context, path string, props map[string]string) ([]byte, error) {
 	args := make([]string, 0, 4+2*len(props))
 	args = append(args, "eval", "--format", "json")
@@ -207,7 +213,7 @@ func (e Evaluator) EvalJSON(ctx context.Context, path string, props map[string]s
 		args = append(args, "--property", k+"="+props[k])
 	}
 	args = append(args, path)
-	cmd := exec.CommandContext(ctx, e.Binary, args...) //nolint:gosec // the binary is ours, the path the user's
+	cmd := exec.CommandContext(ctx, e.Binary, args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

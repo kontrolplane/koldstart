@@ -3,6 +3,7 @@ package awsp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -129,7 +130,7 @@ func (p Function) Create(ctx context.Context, req engine.Request) (engine.Result
 		}
 		return err
 	})
-	if err == engine.ErrExists { //nolint:errorlint // returned as is above
+	if errors.Is(err, engine.ErrExists) {
 		return engine.Result{}, engine.ErrExists
 	}
 	if err != nil {

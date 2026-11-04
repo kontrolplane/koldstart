@@ -11,7 +11,8 @@ import (
 
 // File is one entry of a function's zip.
 type File struct {
-	Name       string // slash separated, relative to the root of the zip
+	// Name is slash separated, relative to the root of the zip.
+	Name       string
 	Data       []byte
 	Executable bool
 }

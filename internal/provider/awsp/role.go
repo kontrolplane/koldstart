@@ -126,7 +126,8 @@ func (p Role) Read(ctx context.Context, req engine.Request) (engine.Result, bool
 	return roleResult(out.Role), true, nil
 }
 
-// Update implements engine.Provider.
+// Update implements engine.Provider. Without prior inputs it is taking over a role a crashed
+// deploy made, and detaches whatever is attached that should not be.
 func (p Role) Update(ctx context.Context, req engine.Request) (engine.Result, error) {
 	var in, prior RoleInputs
 	if err := decodeInputs(req.Inputs, &in); err != nil {
@@ -136,7 +137,6 @@ func (p Role) Update(ctx context.Context, req engine.Request) (engine.Result, er
 		return engine.Result{}, err
 	}
 	if len(req.Prior) == 0 {
-		// Adopting a role a crashed deploy made: detach whatever is attached that should not be.
 		attached, err := p.Client.ListAttachedRolePolicies(ctx, &iam.ListAttachedRolePoliciesInput{RoleName: &in.Name})
 		if err != nil {
 			return engine.Result{}, fmt.Errorf("listing the policies of %s: %w", in.Name, err)

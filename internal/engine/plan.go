@@ -172,6 +172,8 @@ func (e *Engine) Plan(ctx context.Context, nodes []Node, st *state.State) (*Plan
 	return plan, errors.Join(errs...)
 }
 
+// planNode plans one node. When only a secret changed, the inputs, which hold references, look
+// the same, and the change is listed as one of a secret.
 func (e *Engine) planNode(ctx context.Context, n Node, st *state.State, unknownNodes map[string]bool) (Change, error) {
 	p, err := e.provider(n.Type)
 	if err != nil {
@@ -236,7 +238,6 @@ func (e *Engine) planNode(ctx context.Context, n Node, st *state.State, unknownN
 		}
 	}
 	if len(c.Fields) == 0 && !hasUnknown(after) {
-		// Only a secret changed: the inputs, which hold references, look the same.
 		c.Fields = []string{"(a secret)"}
 	}
 	return c, nil

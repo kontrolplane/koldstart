@@ -173,7 +173,8 @@ func TestNodeErrors(t *testing.T) {
 }
 
 // TestGoReproducible checks the same go code built in two directories gives the same zip, as on
-// a laptop and in ci, and that the binary is for lambda.
+// a laptop and in ci, and that the binary is for lambda: an elf binary for aarch64, with the
+// magic and machine 0xb7 at offset 18.
 func TestGoReproducible(t *testing.T) {
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("no go on the PATH")
@@ -206,7 +207,6 @@ func TestGoReproducible(t *testing.T) {
 		head := make([]byte, 20)
 		_, _ = rc.Read(head)
 		_ = rc.Close()
-		// An elf binary for aarch64: the magic, and machine 0xb7 at offset 18.
 		if !bytes.HasPrefix(head, []byte("\x7fELF")) || head[18] != 0xb7 {
 			t.Errorf("bootstrap is not an arm64 linux binary: % x", head)
 		}
