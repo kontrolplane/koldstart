@@ -1,0 +1,90 @@
+{
+  "schemaVersion": 1,
+  "app": "orders",
+  "region": "eu-west-1",
+  "stage": "dev",
+  "tags": { "team": "payments" },
+  "http": {
+    "domain": "",
+    "certificate": null,
+    "cors": null,
+    "authorizers": {
+      "users": { "type": "jwt", "issuer": "https://auth.example.com", "audience": ["orders"], "functionName": "", "identity": [], "ttl": 0 }
+    },
+    "throttling": { "rate": 100, "burst": 200 }
+  },
+  "functions": {
+    "api": {
+      "runtime": "nodejs22.x",
+      "handler": "src/api.handler",
+      "memory": 256,
+      "timeout": 10,
+      "architecture": "arm64",
+      "ephemeralStorage": 512,
+      "reservedConcurrency": null,
+      "logRetention": 30,
+      "environment": {
+        "TABLE_NAME": { "$koldstart": "ref", "resource": "orders", "attribute": "TableName" },
+        "API_KEY": { "$koldstart": "secret", "source": "ssm", "name": "/orders/api-key", "key": "", "atRuntime": false },
+        "PAYMENTS_URL": { "$koldstart": "output", "app": "payments", "stage": "dev", "output": "apiUrl" },
+        "LOG_LEVEL": "info"
+      },
+      "events": [
+        { "type": "httpRoute", "method": "GET", "path": "/orders/{id}", "authorizer": "users", "scopes": [] },
+        { "type": "httpRoute", "method": "POST", "path": "/orders", "authorizer": "", "scopes": [] }
+      ],
+      "url": null,
+      "permissions": [],
+      "link": { "orders": "read" },
+      "vpc": null,
+      "bundle": { "external": [], "sourcemap": false },
+      "typecheck": false
+    },
+    "worker": {
+      "runtime": "provided.al2023",
+      "handler": "./cmd/worker",
+      "memory": 128,
+      "timeout": 30,
+      "architecture": "arm64",
+      "ephemeralStorage": 512,
+      "reservedConcurrency": 5,
+      "logRetention": 30,
+      "environment": {
+        "TABLE_NAME": { "$koldstart": "ref", "resource": "orders", "attribute": "TableName" }
+      },
+      "events": [
+        { "type": "queue", "queue": { "$koldstart": "ref", "resource": "jobs", "attribute": "Arn" }, "batchSize": 10, "maximumBatchingWindow": 0, "reportBatchItemFailures": true, "filters": [] }
+      ],
+      "url": null,
+      "permissions": [
+        { "effect": "Allow", "actions": ["dynamodb:PutItem"], "resources": [{ "$koldstart": "ref", "resource": "orders", "attribute": "Arn" }] }
+      ],
+      "link": {},
+      "vpc": null,
+      "bundle": { "external": [], "sourcemap": false },
+      "typecheck": false
+    }
+  },
+  "resources": {
+    "orders": {
+      "type": "AWS::DynamoDB::Table",
+      "deletionPolicy": "",
+      "properties": {
+        "BillingMode": "PAY_PER_REQUEST",
+        "AttributeDefinitions": [{ "AttributeName": "id", "AttributeType": "S" }],
+        "KeySchema": [{ "AttributeName": "id", "KeyType": "HASH" }]
+      }
+    },
+    "jobs": {
+      "type": "AWS::SQS::Queue",
+      "deletionPolicy": "",
+      "properties": {
+        "RedrivePolicy": { "deadLetterTargetArn": { "$koldstart": "ref", "resource": "dead", "attribute": "Arn" }, "maxReceiveCount": 3 }
+      }
+    },
+    "dead": { "type": "AWS::SQS::Queue", "deletionPolicy": "", "properties": {} }
+  },
+  "outputs": {
+    "table": { "$koldstart": "ref", "resource": "orders", "attribute": "TableName" }
+  }
+}
