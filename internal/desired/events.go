@@ -24,8 +24,21 @@ func routeID(method, path string) string    { return "route/" + strings.ToUpper(
 func authorizerID(name string) string       { return "authorizer/" + name }
 func schedulerRoleID(fn string) string      { return "schedulerrole/" + fn }
 func permissionID(fn, source string) string { return "permission/" + fn + "/" + source }
-func eventID(kind, fn string, i int) string { return fmt.Sprintf("%s/%s/%d", kind, fn, i) }
+func eventID(kind, fn, key string) string   { return kind + "/" + fn + "/" + key }
 func notificationID(bucket string) string   { return "notification/" + bucket }
+
+// sourceKey names an event's source in node ids: the resource a ref names, or the last part of
+// an arn or name given as is. It does not change when other events are added or removed.
+func sourceKey(v config.Value) string {
+	if v.Ref != nil {
+		return v.Ref.Resource
+	}
+	key := v.Literal
+	if i := strings.LastIndexAny(key, ":/"); i >= 0 && i < len(key)-1 {
+		key = key[i+1:]
+	}
+	return key
+}
 
 // arnPrefix starts the arns of a service in the target's region and account.
 func (b *builder) arnPrefix(service string) string {
@@ -123,17 +136,20 @@ func (b *builder) events(name string, fn config.Function) []engine.Node {
 	arn := engine.Ref(FunctionID(name), attrArn)
 	functionName := engine.Ref(FunctionID(name), "FunctionName")
 	routed := false
-	for i, e := range fn.Events {
+	schedules := 0
+	for _, e := range fn.Events {
 		switch e.Type {
 		case config.EventHTTPRoute:
 			routed = true
 			nodes = append(nodes, b.route(name, e))
 		case config.EventSchedule:
 			enabled := e.Enabled == nil || *e.Enabled
+			n := fmt.Sprint(schedules)
+			schedules++
 			nodes = append(nodes, engine.Node{
-				ID: eventID("schedule", name, i), Type: awsp.TypeSchedule, Name: Name(64, b.p.App, b.p.Stage, name, fmt.Sprint(i)),
+				ID: eventID("schedule", name, n), Type: awsp.TypeSchedule, Name: Name(64, b.p.App, b.p.Stage, name, n),
 				Inputs: map[string]any{
-					inputName: Name(64, b.p.App, b.p.Stage, name, fmt.Sprint(i)), "expression": e.Expression, "timezone": e.Timezone,
+					inputName: Name(64, b.p.App, b.p.Stage, name, n), "expression": e.Expression, "timezone": e.Timezone,
 					inputFunction: arn, "role": engine.Ref(schedulerRoleID(name), attrArn), "input": e.Input, "enabled": enabled,
 				},
 			})
@@ -148,11 +164,11 @@ func (b *builder) events(name string, fn config.Function) []engine.Node {
 				in["startingPosition"] = e.StartingPosition
 			}
 			in["source"] = b.value(source)
-			nodes = append(nodes, engine.Node{ID: eventID("mapping", name, i), Type: awsp.TypeMapping, Inputs: in, After: []string{RoleID(name)}})
+			nodes = append(nodes, engine.Node{ID: eventID("mapping", name, sourceKey(source)), Type: awsp.TypeMapping, Inputs: in, After: []string{RoleID(name)}})
 		case config.EventTopic:
 			topic := b.value(e.Topic)
-			id := eventID("subscription", name, i)
-			permission := b.permission(name, fmt.Sprintf("topic-%d", i), "sns.amazonaws.com", topic, false)
+			id := eventID("subscription", name, sourceKey(e.Topic))
+			permission := b.permission(name, "topic-"+sourceKey(e.Topic), "sns.amazonaws.com", topic, false)
 			nodes = append(nodes, permission, engine.Node{
 				ID: id, Type: awsp.TypeSubscription,
 				Inputs: map[string]any{"topic": topic, inputFunction: arn, "filterPolicy": e.FilterPolicy},
@@ -214,26 +230,27 @@ func (b *builder) notifications() []engine.Node {
 	var nodes []engine.Node
 	prefix := "koldstart-" + b.p.App + "-" + b.p.Stage + "-"
 	for _, name := range slices.Sorted(maps.Keys(b.p.Functions)) {
-		for i, e := range b.p.Functions[name].Events {
+		seen := map[string]int{}
+		for _, e := range b.p.Functions[name].Events {
 			if e.Type != config.EventBucket {
 				continue
 			}
-			key := e.Bucket.Literal
-			if e.Bucket.Ref != nil {
-				key = e.Bucket.Ref.Resource
-			}
+			key := sourceKey(e.Bucket)
 			en := buckets[key]
 			if en == nil {
 				en = &entry{bucket: b.value(e.Bucket)}
 				buckets[key] = en
 			}
-			permission := b.permission(name, fmt.Sprintf("bucket-%d", i), "s3.amazonaws.com", engine.Join("arn:"+awsp.Partition(b.t.Region)+":s3:::", en.bucket), true)
-			nodes = append(nodes, permission)
-			en.after = append(en.after, permission.ID)
+			if seen[key] == 0 {
+				permission := b.permission(name, "bucket-"+key, "s3.amazonaws.com", engine.Join("arn:"+awsp.Partition(b.t.Region)+":s3:::", en.bucket), true)
+				nodes = append(nodes, permission)
+				en.after = append(en.after, permission.ID)
+			}
 			en.functions = append(en.functions, map[string]any{
-				"id": fmt.Sprintf("%s%s-%d", prefix, name, i), inputFunction: engine.Ref(FunctionID(name), attrArn),
+				"id": fmt.Sprintf("%s%s-%d", prefix, name, seen[key]), inputFunction: engine.Ref(FunctionID(name), attrArn),
 				"events": e.Events, "prefix": e.Prefix, "suffix": e.Suffix,
 			})
+			seen[key]++
 		}
 	}
 	for _, key := range slices.Sorted(maps.Keys(buckets)) {

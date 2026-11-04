@@ -153,7 +153,7 @@ func TestEvents(t *testing.T) {
 		t.Error("the http api lost its throttling")
 	}
 
-	mapping := got["mapping/worker/0"]
+	mapping := got["mapping/worker/jobs"]
 	if !slices.Contains(mapping.Deps(), "role/worker") || js(t, mapping.Inputs["source"]) != js(t, engine.Ref("resource/jobs", "Arn")) {
 		t.Errorf("the mapping = %v, deps %v", mapping.Inputs, mapping.Deps())
 	}
@@ -161,7 +161,7 @@ func TestEvents(t *testing.T) {
 		t.Errorf("the worker may not read its queue: %s", policy)
 	}
 
-	schedule := got["schedule/worker/1"]
+	schedule := got["schedule/worker/0"]
 	if schedule.Inputs["enabled"] != false || js(t, schedule.Inputs["role"]) != js(t, engine.Ref("schedulerrole/worker", "Arn")) {
 		t.Errorf("the schedule = %v", schedule.Inputs)
 	}
@@ -169,7 +169,7 @@ func TestEvents(t *testing.T) {
 		t.Errorf("the scheduler role = %v", got["schedulerrole/worker"].Inputs)
 	}
 
-	if sub := got["subscription/worker/2"]; !slices.Contains(sub.Deps(), "permission/worker/topic-2") {
+	if sub := got["subscription/worker/alerts"]; !slices.Contains(sub.Deps(), "permission/worker/topic-alerts") {
 		t.Errorf("the subscription comes before its permission: %v", sub.Deps())
 	}
 
@@ -178,14 +178,28 @@ func TestEvents(t *testing.T) {
 		t.Fatalf("no notification node for uploads: %v", slices.Sorted(maps.Keys(got)))
 	}
 	functions := n.Inputs["functions"].([]any)
-	if len(functions) != 2 || !slices.Contains(n.Deps(), "permission/api/bucket-2") || !slices.Contains(n.Deps(), "permission/worker/bucket-3") {
+	if len(functions) != 2 || !slices.Contains(n.Deps(), "permission/api/bucket-uploads") || !slices.Contains(n.Deps(), "permission/worker/bucket-uploads") {
 		t.Errorf("the notification = %v, deps %v", n.Inputs, n.Deps())
 	}
 	if !strings.HasPrefix(functions[0].(map[string]any)["id"].(string), "koldstart-orders-dev-") {
 		t.Errorf("a notification id does not start with the stage's prefix: %v", functions[0])
 	}
 
-	if a, b := got["permission/api/httpapi"].Inputs["statementId"], got["permission/api/bucket-2"].Inputs["statementId"]; a == b {
+	before := slices.Sorted(maps.Keys(got))
+	worker.Events = slices.Delete(worker.Events, 2, 3)
+	p.Functions["worker"] = worker
+	nodes, err = Build(p, target())
+	if err != nil {
+		t.Fatal(err)
+	}
+	after := byID(nodes)
+	for _, id := range []string{"mapping/worker/jobs", "schedule/worker/0", "permission/worker/bucket-uploads"} {
+		if _, ok := after[id]; !ok {
+			t.Errorf("removing the topic event renamed %s: before %v", id, before)
+		}
+	}
+
+	if a, b := got["permission/api/httpapi"].Inputs["statementId"], got["permission/api/bucket-uploads"].Inputs["statementId"]; a == b {
 		t.Errorf("two permissions share the statement id %v", a)
 	}
 }
