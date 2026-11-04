@@ -90,6 +90,7 @@ func Root(name string) *cobra.Command {
 	root.Flags().Bool("version", false, "print the version and exit")
 
 	root.AddCommand(versionCommand(name))
+	root.AddCommand(packageCommand(name, opts))
 
 	return root
 }
