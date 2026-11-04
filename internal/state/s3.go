@@ -56,21 +56,31 @@ const zipRetentionDays = 90
 // keptStateVersions is how many earlier versions of each state the bucket keeps, for history.
 const keptStateVersions = 100
 
-// Open returns the backend of the account and region, creating its bucket when it does not
-// exist yet: versioned, encrypted, with public access blocked and old zips expiring.
-func Open(ctx context.Context, client S3API, account, region string) (*S3, error) {
+// Find returns the backend of the account and region, and whether its bucket exists yet. It
+// creates nothing, for plan.
+func Find(ctx context.Context, client S3API, account, region string) (*S3, bool, error) {
 	b := &S3{Client: client, Bucket: BucketName(account, region), Account: account}
 	_, err := client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: &b.Bucket, ExpectedBucketOwner: &b.Account})
 	switch code := errorCode(err); {
 	case err == nil:
-		return b, nil
+		return b, true, nil
 	case code == "NotFound" || code == "NoSuchBucket":
-		return b, b.create(ctx, region)
+		return b, false, nil
 	case code == "Forbidden" || code == "AccessDenied" || code == "403":
-		return nil, fmt.Errorf("the state bucket %s exists, but not in account %s, or this role may not use it: koldstart will not write to it", b.Bucket, account)
+		return nil, false, fmt.Errorf("the state bucket %s exists, but not in account %s, or this role may not use it: koldstart will not write to it", b.Bucket, account)
 	default:
-		return nil, fmt.Errorf("finding the state bucket %s: %w", b.Bucket, err)
+		return nil, false, fmt.Errorf("finding the state bucket %s: %w", b.Bucket, err)
 	}
+}
+
+// Open returns the backend of the account and region, creating its bucket when it does not
+// exist yet: versioned, encrypted, with public access blocked and old zips expiring.
+func Open(ctx context.Context, client S3API, account, region string) (*S3, error) {
+	b, exists, err := Find(ctx, client, account, region)
+	if err != nil || exists {
+		return b, err
+	}
+	return b, b.create(ctx, region)
 }
 
 func (b *S3) create(ctx context.Context, region string) error {

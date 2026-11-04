@@ -1,0 +1,176 @@
+package cli
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"maps"
+	"slices"
+	"strings"
+	"sync"
+
+	"github.com/kontrolplane/koldstart/internal/engine"
+)
+
+func jsonUnmarshal(data []byte, v any) error {
+	if len(data) == 0 {
+		return nil
+	}
+	return json.Unmarshal(data, v)
+}
+
+// symbols mark each action in a plan.
+var symbols = map[engine.Action]string{
+	engine.Create:  "+",
+	engine.Update:  "~",
+	engine.Replace: "-/+",
+	engine.Delete:  "-",
+	engine.Keep:    "=",
+	engine.Adopt:   "<",
+}
+
+// verbs say what each action does, for the summary and progress.
+var verbs = map[engine.Action]string{
+	engine.Create:  "create",
+	engine.Update:  "update",
+	engine.Replace: "replace",
+	engine.Delete:  "delete",
+	engine.Keep:    "leave in place",
+	engine.Adopt:   "take over again",
+}
+
+// printPlan writes what a plan does, one node a line, with the inputs that change under each
+// update.
+func printPlan(w io.Writer, s *stage, plan *engine.Plan) {
+	printPlanTo(w, s.App, s.Stage, s.Region, s.sess.Account, plan)
+}
+
+func printPlanTo(w io.Writer, app, stage, region, account string, plan *engine.Plan) {
+	_, _ = fmt.Fprintf(w, "plan for %s/%s in %s, account %s:\n\n", app, stage, region, account)
+	if !plan.HasChanges() {
+		_, _ = fmt.Fprintln(w, "  no changes")
+		return
+	}
+	for _, c := range plan.Changes {
+		if c.Action == engine.NoOp {
+			continue
+		}
+		line := fmt.Sprintf("  %-3s %s", symbols[c.Action], c.ID)
+		if c.Resume {
+			line += "  (finishing what a deploy started)"
+		}
+		_, _ = fmt.Fprintln(w, line)
+		if c.Action == engine.Update || c.Action == engine.Replace || c.Action == engine.Adopt {
+			for _, f := range c.Fields {
+				_, _ = fmt.Fprintf(w, "        %s: %s\n", f, describeChange(c.Before[f], c.After[f]))
+			}
+		}
+	}
+	counts := plan.Counts()
+	var parts []string
+	for _, a := range []engine.Action{engine.Create, engine.Update, engine.Replace, engine.Delete, engine.Keep, engine.Adopt} {
+		if counts[a] > 0 {
+			parts = append(parts, fmt.Sprintf("%d to %s", counts[a], verbs[a]))
+		}
+	}
+	_, _ = fmt.Fprintf(w, "\n%s\n", strings.Join(parts, ", "))
+	if plan.OnlyCode() {
+		_, _ = fmt.Fprintln(w, "only code changes: the functions' code is replaced in place")
+	}
+}
+
+// describeChange says how an input changes: before and after for short values, less for the rest.
+func describeChange(before, after any) string {
+	switch {
+	case engine.IsUnknown(after):
+		return "known after apply"
+	case isSecret(after):
+		return "(a secret)"
+	}
+	b, a := short(before), short(after)
+	if b != "" && a != "" {
+		return b + " → " + a
+	}
+	if before == nil {
+		return "added"
+	}
+	if after == nil {
+		return "removed"
+	}
+	return "changed"
+}
+
+func isSecret(v any) bool {
+	m, ok := v.(map[string]any)
+	return ok && m["$koldstart"] == "secret"
+}
+
+// short returns a value as one short line, or "" when it does not fit one.
+func short(v any) string {
+	switch x := v.(type) {
+	case nil:
+		return ""
+	case string:
+		if len(x) > 60 {
+			return ""
+		}
+		return fmt.Sprintf("%q", x)
+	case float64, bool:
+		return fmt.Sprint(x)
+	case map[string]any:
+		if len(x) > 4 {
+			return ""
+		}
+		data, _ := json.Marshal(sortedMap(x))
+		if len(data) > 60 {
+			return ""
+		}
+		return string(data)
+	default:
+		return ""
+	}
+}
+
+func sortedMap(m map[string]any) map[string]any {
+	out := make(map[string]any, len(m))
+	for _, k := range slices.Sorted(maps.Keys(m)) {
+		out[k] = m[k]
+	}
+	return out
+}
+
+// progress returns an event handler that writes a line as each node finishes.
+func progress(w io.Writer) func(engine.Event) {
+	var mu sync.Mutex
+	return func(ev engine.Event) {
+		if !ev.Done {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if ev.Err != nil {
+			_, _ = fmt.Fprintf(w, "  ✗ %s: %s failed after %s\n", ev.ID, verbs[ev.Action], ev.Duration.Round(100*1e6))
+			return
+		}
+		_, _ = fmt.Fprintf(w, "  ✓ %s: %s in %s\n", ev.ID, pastTense(ev.Action), ev.Duration.Round(100*1e6))
+	}
+}
+
+func pastTense(a engine.Action) string {
+	switch a {
+	case engine.Create:
+		return "created"
+	case engine.Update:
+		return "updated"
+	case engine.Replace:
+		return "replaced"
+	case engine.Delete:
+		return "deleted"
+	case engine.Keep:
+		return "left in place"
+	case engine.Adopt:
+		return "taken over"
+	default:
+		return string(a)
+	}
+}

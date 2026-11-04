@@ -91,6 +91,11 @@ func Root(name string) *cobra.Command {
 
 	root.AddCommand(versionCommand(name))
 	root.AddCommand(packageCommand(name, opts))
+	root.AddCommand(planCommand(name, opts))
+	root.AddCommand(deployCommand(name, opts))
+	root.AddCommand(removeCommand(name, opts))
+	root.AddCommand(unlockCommand(name, opts))
+	root.AddCommand(outputsCommand(name, opts))
 
 	return root
 }
