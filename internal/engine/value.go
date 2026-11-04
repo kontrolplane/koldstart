@@ -19,6 +19,8 @@ const (
 	kindRef     = "ref"
 	kindSecret  = "secret"
 	kindUnknown = "unknown"
+	kindJoin    = "join"
+	kindOutput  = "output"
 )
 
 // Ref stands for an attribute of another node, such as its Arn, resolved while applying.
@@ -30,6 +32,38 @@ func Ref(node, attribute string) map[string]any {
 // the state.
 func SecretValue(s config.Secret) map[string]any {
 	return map[string]any{marker: kindSecret, "source": s.Source, "name": s.Name, "key": s.Key, "atRuntime": s.AtRuntime}
+}
+
+// StageOutput stands for an output of another app's stage, read from its state while planning
+// and applying.
+func StageOutput(app, stage, output string) map[string]any {
+	return map[string]any{marker: kindOutput, "app": app, "stage": stage, "output": output}
+}
+
+func asOutput(v any) (app, stage, output string, ok bool) {
+	m, isMap := v.(map[string]any)
+	if !isMap || m[marker] != kindOutput {
+		return "", "", "", false
+	}
+	app, _ = m["app"].(string)
+	stage, _ = m["stage"].(string)
+	output, _ = m["output"].(string)
+	return app, stage, output, true
+}
+
+// Join stands for its parts, strings and refs, joined into one string once the refs are known,
+// such as a table's arn with /index/* after it.
+func Join(parts ...any) map[string]any {
+	return map[string]any{marker: kindJoin, "parts": parts}
+}
+
+func asJoin(v any) ([]any, bool) {
+	m, ok := v.(map[string]any)
+	if !ok || m[marker] != kindJoin {
+		return nil, false
+	}
+	parts, _ := m["parts"].([]any)
+	return parts, true
 }
 
 // unknown is a value only known once a node it refers to is applied.

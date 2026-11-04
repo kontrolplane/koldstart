@@ -393,6 +393,29 @@ func TestStalePlan(t *testing.T) {
 	}
 }
 
+// TestJoin checks a join resolves once its refs do, and is unknown before.
+func TestJoin(t *testing.T) {
+	h := newHarness(t)
+	nodes := []Node{
+		{ID: "resource/orders", Type: fakeType, Name: "orders", Inputs: map[string]any{}},
+		{ID: "role/api", Type: fakeType, Name: "role", Inputs: map[string]any{"resource": Join(Ref("resource/orders", "Arn"), "/index/*")}},
+	}
+	plan, err := h.deploy(nodes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c, _ := plan.Change("role/api"); !IsUnknown(c.After["resource"]) {
+		t.Errorf("planned before the table exists: %v, want unknown", c.After["resource"])
+	}
+	if got := h.fake.Resources()["role"].Inputs["resource"]; got != "arn:fake:orders/index/*" {
+		t.Errorf("applied = %v", got)
+	}
+	// The ref inside the join is a dependency.
+	if deps := nodes[1].Deps(); !slices.Equal(deps, []string{"resource/orders"}) {
+		t.Errorf("Deps = %v", deps)
+	}
+}
+
 // TestOnlyCode checks a plan that changes nothing but function code is told apart.
 func TestOnlyCode(t *testing.T) {
 	plan := &Plan{Changes: []Change{

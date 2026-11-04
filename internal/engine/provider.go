@@ -60,3 +60,8 @@ var ErrNotOurs = errors.New("exists, but koldstart did not create it")
 type Secrets interface {
 	Resolve(ctx context.Context, source, name, key string, atRuntime bool) (string, error)
 }
+
+// Outputs reads the outputs of other apps' stages.
+type Outputs interface {
+	Output(ctx context.Context, app, stage, name string) (string, error)
+}

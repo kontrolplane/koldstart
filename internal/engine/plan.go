@@ -105,7 +105,12 @@ type Event struct {
 // Engine plans and applies.
 type Engine struct {
 	Providers map[string]Provider
-	Secrets   Secrets
+	// Fallback handles the types Providers has no provider for, such as cloud control for
+	// any AWS:: type.
+	Fallback Provider
+	Secrets  Secrets
+	// Outputs reads what output() refers to.
+	Outputs Outputs
 	// Concurrency is how many nodes are applied at once.
 	Concurrency int
 	// AllowReplace lets a plan replace a resource that is retained.
@@ -117,11 +122,13 @@ type Engine struct {
 }
 
 func (e *Engine) provider(typ string) (Provider, error) {
-	p, ok := e.Providers[typ]
-	if !ok {
-		return nil, fmt.Errorf("no provider for %s", typ)
+	if p, ok := e.Providers[typ]; ok {
+		return p, nil
 	}
-	return p, nil
+	if e.Fallback != nil {
+		return e.Fallback, nil
+	}
+	return nil, fmt.Errorf("no provider for %s", typ)
 }
 
 // Plan compares nodes with the state and returns what applying them would do. It reads
@@ -239,6 +246,24 @@ func (e *Engine) planNode(ctx context.Context, n Node, st *state.State, unknownN
 // nodes in unknownNodes, which are created or replaced before.
 func resolveRefs(v any, st *state.State, unknownNodes map[string]bool) (any, error) {
 	return transform(v, func(x any) (any, bool, error) {
+		if parts, ok := asJoin(x); ok {
+			var b strings.Builder
+			for _, part := range parts {
+				resolved, err := resolveRefs(part, st, unknownNodes)
+				if err != nil {
+					return nil, true, err
+				}
+				if IsUnknown(resolved) {
+					return unknown(), true, nil
+				}
+				s, ok := resolved.(string)
+				if !ok {
+					return nil, true, fmt.Errorf("a join of something that is not a string: %v", resolved)
+				}
+				b.WriteString(s)
+			}
+			return b.String(), true, nil
+		}
 		r, ok := asRef(x)
 		if !ok {
 			return nil, false, nil
@@ -258,9 +283,17 @@ func resolveRefs(v any, st *state.State, unknownNodes map[string]bool) (any, err
 	})
 }
 
-// resolveSecrets replaces the secrets in v with their values.
+// resolveSecrets replaces the secrets in v with their values, and the outputs of other stages
+// with theirs.
 func (e *Engine) resolveSecrets(ctx context.Context, v any) (any, error) {
 	return transform(v, func(x any) (any, bool, error) {
+		if app, stage, name, ok := asOutput(x); ok {
+			if e.Outputs == nil {
+				return nil, true, fmt.Errorf("no way to read the output %s of %s/%s", name, app, stage)
+			}
+			val, err := e.Outputs.Output(ctx, app, stage, name)
+			return val, true, err
+		}
 		s, ok := asSecret(x)
 		if !ok {
 			return nil, false, nil
