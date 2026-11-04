@@ -1,0 +1,39 @@
+version: 2
+updates:
+  # Conventional commit prefixes, so dependency pull requests follow CONTRIBUTING.md.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore(ci)
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore(deps)
+    groups:
+      aws:
+        patterns:
+          - "github.com/aws/*"
+      charm:
+        patterns:
+          - "charm.land/*"
+          - "github.com/charmbracelet/*"
+      other:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore(deps)
