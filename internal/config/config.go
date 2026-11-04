@@ -99,7 +99,7 @@ type VPC struct {
 
 // Bundle is how a node function is bundled.
 type Bundle struct {
-	External  []string `json:"external"`
+	External  []string `json:"externals"`
 	Sourcemap bool     `json:"sourcemap"`
 }
 

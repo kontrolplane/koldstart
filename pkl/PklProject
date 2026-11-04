@@ -1,0 +1,14 @@
+// The schema package koldstart.pkl files amend. `make pkl.package` builds it into .out/, and a
+// release attaches it to the tag's github release, so the uri of version 0.1.0 is
+// package://github.com/kontrolplane/koldstart/releases/download/v0.1.0/koldstart@0.1.0
+amends "pkl:Project"
+
+package {
+  name = "koldstart"
+  version = read?("env:KOLDSTART_VERSION") ?? "0.0.0"
+  baseUri = "package://github.com/kontrolplane/koldstart/releases/download/v\(version)/koldstart"
+  packageZipUrl = "https://github.com/kontrolplane/koldstart/releases/download/v\(version)/koldstart@\(version).zip"
+  license = "Apache-2.0"
+  sourceCode = "https://github.com/kontrolplane/koldstart"
+  description = "The schema of koldstart.pkl, the configuration of koldstart."
+}

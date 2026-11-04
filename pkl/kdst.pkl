@@ -1,0 +1,108 @@
+/// What a `koldstart.pkl` uses inside its functions and resources: `ref()`, the secrets, the
+/// stage, the events and the authorizers. Import it next to amending `Project.pkl`.
+module koldstart.kdst
+
+import "Project.pkl"
+
+/// The stage from `--stage`, `dev` without it.
+stage: String = read?("prop:stage") ?? "dev"
+
+/// An attribute of a function or resource of this project, such as its arn, once it exists.
+/// The attributes are the ones CloudFormation's `Fn::GetAtt` returns for the type.
+function ref(of: String, attr: String): Project.Ref = new { resource = of; attribute = attr }
+
+/// A parameter of ssm parameter store, read while deploying.
+function ssm(parameter: String): Project.Secret = new { source = "ssm"; name = parameter }
+
+/// A secret of secrets manager, read while deploying. `.field("key")` takes one key of a json
+/// secret.
+function secretsmanager(secret: String): Project.Secret = new { source = "secretsmanager"; name = secret }
+
+/// An output of another app's stage, read from its state while deploying.
+function stageOutput(ofApp: String, ofStage: String, named: String): Project.StageOutput =
+  new { app = ofApp; stage = ofStage; output = named }
+
+/// A route on the stage's http api.
+class HttpRoute extends Project.Event {
+  fixed type: "httpRoute" = "httpRoute"
+  method: "GET"|"POST"|"PUT"|"PATCH"|"DELETE"|"HEAD"|"OPTIONS"|"ANY"
+  /// Such as `/orders/{id}`, `/files/{proxy+}`, or `$default`.
+  path: String
+  /// An authorizer of `http.authorizers`, by name.
+  authorizer: String?
+  /// For a jwt authorizer: the scopes the token must have.
+  scopes: Listing<String>
+}
+
+/// An eventbridge scheduler schedule.
+class Schedule extends Project.Event {
+  fixed type: "schedule" = "schedule"
+  /// `rate(5 minutes)`, `cron(0 9 ? * MON-FRI *)` or `at(2026-12-31T23:59:00)`.
+  expression: String(matches(Regex(#"(rate|cron|at)\(.+\)"#)))
+  timezone: String = "UTC"
+  /// The event, as json.
+  input: String?
+  enabled: Boolean = true
+}
+
+/// An event source mapping from an sqs queue.
+class Queue extends Project.Event {
+  fixed type: "queue" = "queue"
+  /// The queue's arn.
+  queue: Project.Value
+  batchSize: Int(isBetween(1, 10000)) = 10
+  maximumBatchingWindow: Duration(isBetween(0.s, 5.min)) = 0.s
+  /// The function returns the messages that failed, so only those are retried.
+  reportBatchItemFailures: Boolean = true
+  /// Filter patterns, as json.
+  filters: Listing<String>
+}
+
+/// An sns subscription.
+class Topic extends Project.Event {
+  fixed type: "topic" = "topic"
+  /// The topic's arn.
+  topic: Project.Value
+  /// A filter policy, as json.
+  filterPolicy: String?
+}
+
+/// An event source mapping from a kinesis stream or a dynamodb stream.
+class Stream extends Project.Event {
+  fixed type: "stream" = "stream"
+  /// The stream's arn.
+  stream: Project.Value
+  startingPosition: "LATEST"|"TRIM_HORIZON" = "LATEST"
+  batchSize: Int(isBetween(1, 10000)) = 100
+  maximumBatchingWindow: Duration(isBetween(0.s, 5.min)) = 0.s
+  reportBatchItemFailures: Boolean = true
+  filters: Listing<String>
+}
+
+/// An s3 bucket notification.
+class Bucket extends Project.Event {
+  fixed type: "bucket" = "bucket"
+  /// The bucket's name.
+  bucket: Project.Value
+  /// Without any, `s3:ObjectCreated:*`.
+  events: Listing<String>
+  prefix: String?
+  suffix: String?
+}
+
+/// An authorizer that checks a jwt from an oidc issuer, such as cognito.
+class JwtAuthorizer extends Project.Authorizer {
+  fixed type: "jwt" = "jwt"
+  issuer: String(startsWith("https://"))
+  audience: Listing<String>(!isEmpty)
+}
+
+/// An authorizer that is a function of this project.
+class LambdaAuthorizer extends Project.Authorizer {
+  fixed type: "lambda" = "lambda"
+  functionName: String
+  /// Where the identity is, such as `$request.header.Authorization`.
+  identity: Listing<String>
+  /// How long a result is cached.
+  ttl: Duration(isBetween(0.s, 1.h)) = 0.s
+}

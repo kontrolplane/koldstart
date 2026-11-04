@@ -37,7 +37,7 @@
       "permissions": [],
       "link": { "orders": "read" },
       "vpc": null,
-      "bundle": { "external": [], "sourcemap": false },
+      "bundle": { "externals": [], "sourcemap": false },
       "typecheck": false
     },
     "worker": {
@@ -61,7 +61,7 @@
       ],
       "link": {},
       "vpc": null,
-      "bundle": { "external": [], "sourcemap": false },
+      "bundle": { "externals": [], "sourcemap": false },
       "typecheck": false
     }
   },
