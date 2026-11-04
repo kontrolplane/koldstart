@@ -1,0 +1,43 @@
+# koldstart: notes for contributors and coding agents
+
+## layout
+
+```
+cmd/koldstart/       the binary; main calls internal/cli. kdst is a link to it
+internal/cli/        the cobra commands and the global flags
+internal/version/    the build's version, stamped by the linker, in route's shape
+docs/                the user documentation; it describes the design in #1 until it is built
+```
+
+The packages still to come, and the milestones they land in, are in [#1](https://github.com/kontrolplane/koldstart/issues/1).
+
+## rules
+
+- no cgo. the binary is static, `CGO_ENABLED=0`, for linux and darwin on amd64 and arm64. no windows in v1.
+- the binary answers to `koldstart` and `kdst`. help, examples and errors use `cli.Name`, never a hardcoded name.
+- a global flag reads its default from the environment variable the README lists, and the flag wins over it.
+- commands come with their milestone. no stub commands for what is not built yet.
+- koldstart sends nothing anywhere but the aws apis of the account it deploys to, and the downloads of pkl and the schema package. no telemetry.
+- `plan` changes nothing in aws and writes no state.
+- tests: standard library only, no testify. table tests with `tests := []struct{...}`, a doc comment on each test.
+- aws calls go behind small interfaces, so the engine and the tui are tested against fakes. aws has no server to embed for tests.
+- logs: `log/slog`. `--debug` writes them to `debug.log`, otherwise nothing is logged.
+- errors wrap with what was being done (`fmt.Errorf("reading the state of %s: %w", stage, err)`). an error a person reads says what to do.
+- `make check` runs what CI runs: lint for linux and darwin, actionlint, govulncheck, the tests and the goreleaser config.
+- base images and actions are pinned by digest or commit, with the tag beside it.
+- writing: short and concrete. say what something does and the command or value, not why at length. comments only explain a non-obvious why. british spelling.
+- case: README headings lowercase, prose sentence case. SECURITY, CONTRIBUTING, AGENTS and design docs all lowercase.
+- commits: conventional, lowercase, imperative (`feat: read the stage from KOLDSTART_STAGE`).
+
+## the terminal interface
+
+`kdst ui` follows relay (kontrolplane/relay), the newest of the kontrolplane tuis. read its `pkg/tui` before adding a view.
+
+- it lives in `internal/tui`, with `internal/tui/styles` and `internal/tui/keys`. cobra never imports it: `cli.Root` takes the tui's run function, as konverge does, and runs it with `tea.WithContext`.
+- charm.land v2: bubbletea, bubbles, lipgloss and huh.
+- one model with a `page` enum and a state struct per page, each with its switch, update, view and go back. a confirmation is a page drawn over the one it came from.
+- keys are `key.Binding`s in one key map. `ctrl+c` quits, `q` goes back and quits only on the app overview, `esc` goes back or cancels and never quits. letters are off while a text input has focus.
+- styles are relay's palette, `--theme auto|dark|light` and `styles.Clean`. every string from aws, and every error, goes through `Clean` before it reaches the terminal.
+- every load is a `tea.Cmd` with a timeout, and its message carries the generation it was asked for; a stale one is dropped. refresh is a tick that pause lets lapse.
+- tests drive `Update` and `View` directly, with relay's layout sweep over terminal sizes and its escape test. no teatest.
+- the header shows the profile, region and account, from sts `GetCallerIdentity`, and the state bucket.
