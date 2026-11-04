@@ -21,6 +21,7 @@ func TestDescribeChange(t *testing.T) {
 		{before: "a", after: map[string]any{"$koldstart": "unknown"}, want: "known after apply"},
 		{before: "a", after: map[string]any{"$koldstart": "secret", "name": "x"}, want: "(a secret)"},
 		{before: strings.Repeat("a", 100), after: "b", want: "changed"},
+		{before: map[string]any{"sha256": "0123456789abcdef"}, after: map[string]any{"sha256": "fedcba9876543210"}, want: "0123456789ab → fedcba987654"},
 	}
 	for _, tt := range tests {
 		if got := describeChange(tt.before, tt.after); got != tt.want {

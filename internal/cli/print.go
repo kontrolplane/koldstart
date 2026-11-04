@@ -87,6 +87,9 @@ func describeChange(before, after any) string {
 	case isSecret(after):
 		return "(a secret)"
 	}
+	if b, a := codeHash(before), codeHash(after); b != "" && a != "" {
+		return b + " → " + a
+	}
 	b, a := short(before), short(after)
 	if b != "" && a != "" {
 		return b + " → " + a
@@ -98,6 +101,19 @@ func describeChange(before, after any) string {
 		return "removed"
 	}
 	return "changed"
+}
+
+// codeHash returns the start of the sha256 of a function's code input, or "".
+func codeHash(v any) string {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return ""
+	}
+	sha, _ := m["sha256"].(string)
+	if len(sha) < 12 {
+		return ""
+	}
+	return sha[:12]
 }
 
 func isSecret(v any) bool {
