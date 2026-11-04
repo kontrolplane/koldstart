@@ -2,6 +2,7 @@ package desired
 
 import (
 	"encoding/json"
+	"maps"
 	"os"
 	"slices"
 	"strings"
@@ -65,8 +66,8 @@ func TestBuild(t *testing.T) {
 			t.Errorf("no node %s", id)
 		}
 	}
-	if len(got) != 9 {
-		t.Errorf("%d nodes, want 9", len(got))
+	if len(got) != 16 {
+		t.Errorf("%d nodes, want 16: %v", len(got), slices.Sorted(maps.Keys(got)))
 	}
 
 	api := got["function/api"]
@@ -112,6 +113,80 @@ func TestBuild(t *testing.T) {
 	}
 	if js(t, got["resource/jobs"].Inputs["properties"].(map[string]any)["RedrivePolicy"].(map[string]any)["deadLetterTargetArn"]) != js(t, engine.Ref("resource/dead", "Arn")) {
 		t.Errorf("a ref inside properties was not turned into a node ref: %v", got["resource/jobs"].Inputs)
+	}
+}
+
+// TestEvents checks the nodes of each kind of event: the http api and its routes, a mapping
+// after the role that may read the queue, schedules with their role, subscriptions, and one
+// notification node for every function a bucket invokes.
+func TestEvents(t *testing.T) {
+	p := project(t)
+	enabled := false
+	worker := p.Functions["worker"]
+	worker.Events = append(worker.Events,
+		config.Event{Type: config.EventSchedule, Expression: "rate(5 minutes)", Timezone: "UTC", Enabled: &enabled},
+		config.Event{Type: config.EventTopic, Topic: config.Value{Literal: "arn:aws:sns:eu-west-1:123456789012:alerts"}},
+		config.Event{Type: config.EventBucket, Bucket: config.Value{Literal: "uploads"}, Prefix: "in/"},
+	)
+	p.Functions["worker"] = worker
+	api := p.Functions["api"]
+	api.Events = append(api.Events, config.Event{Type: config.EventBucket, Bucket: config.Value{Literal: "uploads"}, Suffix: ".png"})
+	p.Functions["api"] = api
+
+	nodes, err := Build(p, target())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := byID(nodes)
+
+	route := got["route/GET /orders/{id}"]
+	if route.Inputs["authorizationType"] != "JWT" || js(t, route.Inputs["authorizer"]) != js(t, engine.Ref("authorizer/users", "AuthorizerId")) {
+		t.Errorf("the authorized route = %v", route.Inputs)
+	}
+	if got["route/POST /orders"].Inputs["authorizationType"] != "NONE" {
+		t.Errorf("the open route = %v", got["route/POST /orders"].Inputs)
+	}
+	if !strings.Contains(js(t, got["permission/api/httpapi"].Inputs["sourceArn"]), "execute-api:eu-west-1:123456789012:") {
+		t.Errorf("the api's permission = %v", got["permission/api/httpapi"].Inputs)
+	}
+	if got["httpapi"].Inputs["throttling"] == nil {
+		t.Error("the http api lost its throttling")
+	}
+
+	mapping := got["mapping/worker/0"]
+	if !slices.Contains(mapping.Deps(), "role/worker") || js(t, mapping.Inputs["source"]) != js(t, engine.Ref("resource/jobs", "Arn")) {
+		t.Errorf("the mapping = %v, deps %v", mapping.Inputs, mapping.Deps())
+	}
+	if policy := js(t, got["role/worker"].Inputs["policy"]); !strings.Contains(policy, "sqs:ReceiveMessage") {
+		t.Errorf("the worker may not read its queue: %s", policy)
+	}
+
+	schedule := got["schedule/worker/1"]
+	if schedule.Inputs["enabled"] != false || js(t, schedule.Inputs["role"]) != js(t, engine.Ref("schedulerrole/worker", "Arn")) {
+		t.Errorf("the schedule = %v", schedule.Inputs)
+	}
+	if !strings.Contains(js(t, got["schedulerrole/worker"].Inputs), "scheduler.amazonaws.com") {
+		t.Errorf("the scheduler role = %v", got["schedulerrole/worker"].Inputs)
+	}
+
+	if sub := got["subscription/worker/2"]; !slices.Contains(sub.Deps(), "permission/worker/topic-2") {
+		t.Errorf("the subscription comes before its permission: %v", sub.Deps())
+	}
+
+	n, ok := got["notification/uploads"]
+	if !ok {
+		t.Fatalf("no notification node for uploads: %v", slices.Sorted(maps.Keys(got)))
+	}
+	functions := n.Inputs["functions"].([]any)
+	if len(functions) != 2 || !slices.Contains(n.Deps(), "permission/api/bucket-2") || !slices.Contains(n.Deps(), "permission/worker/bucket-3") {
+		t.Errorf("the notification = %v, deps %v", n.Inputs, n.Deps())
+	}
+	if !strings.HasPrefix(functions[0].(map[string]any)["id"].(string), "koldstart-orders-dev-") {
+		t.Errorf("a notification id does not start with the stage's prefix: %v", functions[0])
+	}
+
+	if a, b := got["permission/api/httpapi"].Inputs["statementId"], got["permission/api/bucket-2"].Inputs["statementId"]; a == b {
+		t.Errorf("two permissions share the statement id %v", a)
 	}
 }
 

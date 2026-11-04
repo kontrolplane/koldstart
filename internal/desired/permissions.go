@@ -49,8 +49,8 @@ var links = map[string]access{
 		env: map[string]string{suffixName: "BucketName", suffixARN: attrArn},
 	},
 	"AWS::SQS::Queue": {
-		read:      []string{"sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:ChangeMessageVisibility", "sqs:GetQueueAttributes", "sqs:GetQueueUrl"},
-		write:     []string{"sqs:SendMessage", "sqs:GetQueueAttributes", "sqs:GetQueueUrl"},
+		read:      sqsRead,
+		write:     sqsWrite,
 		resources: arn,
 		env:       map[string]string{"URL": "QueueUrl", suffixARN: attrArn},
 	},
@@ -61,7 +61,7 @@ var links = map[string]access{
 		env:       map[string]string{suffixARN: "TopicArn"},
 	},
 	"AWS::Kinesis::Stream": {
-		read:      []string{"kinesis:GetRecords", "kinesis:GetShardIterator", "kinesis:DescribeStream", "kinesis:DescribeStreamSummary", "kinesis:ListShards", "kinesis:SubscribeToShard"},
+		read:      kinesisRead,
 		write:     []string{"kinesis:PutRecord", "kinesis:PutRecords", "kinesis:DescribeStreamSummary"},
 		resources: arn,
 		env:       map[string]string{suffixName: "Name", suffixARN: attrArn},
@@ -84,8 +84,30 @@ func envName(name string) string {
 	return strings.ToUpper(strings.NewReplacer("-", "_", ".", "_").Replace(name))
 }
 
+// The actions a function needs to read a queue and a stream, for link and for events.
+var (
+	sqsRead     = []string{"sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:ChangeMessageVisibility", "sqs:GetQueueAttributes", "sqs:GetQueueUrl"}
+	sqsWrite    = []string{"sqs:SendMessage", "sqs:GetQueueAttributes", "sqs:GetQueueUrl"}
+	kinesisRead = []string{"kinesis:GetRecords", "kinesis:GetShardIterator", "kinesis:DescribeStream", "kinesis:DescribeStreamSummary", "kinesis:ListShards", "kinesis:ListStreams", "kinesis:SubscribeToShard"}
+	dynamoRead  = []string{"dynamodb:GetRecords", "dynamodb:GetShardIterator", "dynamodb:DescribeStream", "dynamodb:ListStreams"}
+)
+
 func statement(effect string, actions []string, resources []any) map[string]any {
 	return map[string]any{"Effect": effect, "Action": actions, "Resource": resources}
+}
+
+// policy is an iam policy document of statements.
+func policy(statements ...any) map[string]any {
+	return map[string]any{"Version": "2012-10-17", "Statement": statements}
+}
+
+// trust is a policy that lets a service assume a role, with conditions when there are any.
+func trust(service string, conditions map[string]any) map[string]any {
+	s := map[string]any{"Effect": "Allow", "Principal": map[string]any{"Service": service}, "Action": "sts:AssumeRole"}
+	if conditions != nil {
+		s["Condition"] = conditions
+	}
+	return policy(s)
 }
 
 // permissions returns the role's inline policy, its managed policies, and the environment
@@ -99,6 +121,8 @@ func (b *builder) permissions(name string, fn config.Function) (map[string]any, 
 	for _, s := range fn.Permissions {
 		statements = append(statements, statement(s.Effect, s.Actions, b.values(s.Resources)))
 	}
+
+	statements = append(statements, b.sourceStatements(fn)...)
 
 	env := map[string]any{}
 	for _, target := range slices.Sorted(maps.Keys(fn.Link)) {
@@ -135,6 +159,5 @@ func (b *builder) permissions(name string, fn config.Function) (map[string]any, 
 	if fn.VPC != nil {
 		managed = append(managed, "arn:"+awsp.Partition(b.t.Region)+":iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole")
 	}
-	policy := map[string]any{"Version": "2012-10-17", "Statement": statements}
-	return policy, managed, env, nil
+	return policy(statements...), managed, env, nil
 }

@@ -17,8 +17,12 @@ import (
 	"github.com/kontrolplane/koldstart/internal/provider/awsp"
 )
 
-// inputName is the input that names a resource.
-const inputName = "name"
+// The inputs several kinds of node have.
+const (
+	inputName     = "name"
+	inputFunction = "function"
+	inputAPI      = "api"
+)
 
 // Target is where the nodes are deployed.
 type Target struct {
@@ -76,6 +80,11 @@ func Build(p *config.Project, t Target) ([]engine.Node, error) {
 		}
 		nodes = append(nodes, fnNodes...)
 	}
+	nodes = append(nodes, b.httpAPI()...)
+	for _, name := range slices.Sorted(maps.Keys(p.Functions)) {
+		nodes = append(nodes, b.events(name, p.Functions[name])...)
+	}
+	nodes = append(nodes, b.notifications()...)
 	for _, name := range slices.Sorted(maps.Keys(p.Resources)) {
 		nodes = append(nodes, b.resource(name, p.Resources[name]))
 	}
@@ -186,7 +195,7 @@ func (b *builder) function(name string, fn config.Function) ([]engine.Node, erro
 		}
 		nodes = append(nodes, engine.Node{
 			ID: URLID(name), Type: awsp.TypeURL, Name: fnName,
-			Inputs: map[string]any{"function": engine.Ref(FunctionID(name), "FunctionName"), "auth": auth, "cors": urlCORS(fn.URL.CORS)},
+			Inputs: map[string]any{inputFunction: engine.Ref(FunctionID(name), "FunctionName"), "auth": auth, "cors": urlCORS(fn.URL.CORS)},
 		})
 	}
 	return nodes, nil
@@ -207,14 +216,7 @@ func urlCORS(c *config.CORS) any {
 	}
 }
 
-var assumeRolePolicy = map[string]any{
-	"Version": "2012-10-17",
-	"Statement": []any{map[string]any{
-		"Effect":    "Allow",
-		"Principal": map[string]any{"Service": "lambda.amazonaws.com"},
-		"Action":    "sts:AssumeRole",
-	}},
-}
+var assumeRolePolicy = trust("lambda.amazonaws.com", nil)
 
 // resource is a node for anything in resources, applied through cloud control.
 func (b *builder) resource(name string, r config.Resource) engine.Node {

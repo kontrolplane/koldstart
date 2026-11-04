@@ -157,6 +157,25 @@ func TestValidate(t *testing.T) {
 			want: `"api" is both a function and a resource`,
 		},
 		{
+			name: "queue hides messages shorter than the timeout",
+			change: func(p *Project) {
+				fn := p.Functions["worker"]
+				fn.Timeout = 60
+				p.Functions["worker"] = fn
+			},
+			want: "set its VisibilityTimeout to at least 60",
+		},
+		{
+			name: "bucket notifications twice",
+			change: func(p *Project) {
+				p.Resources["uploads"] = Resource{Type: "AWS::S3::Bucket", Properties: map[string]any{"NotificationConfiguration": map[string]any{}}}
+				fn := p.Functions["worker"]
+				fn.Events = append(fn.Events, Event{Type: EventBucket, Bucket: Value{Ref: &Ref{Resource: "uploads", Attribute: "BucketName"}}})
+				p.Functions["worker"] = fn
+			},
+			want: "sets NotificationConfiguration",
+		},
+		{
 			name: "output of itself",
 			change: func(p *Project) {
 				p.Outputs["self"] = Value{Output: &OutputRef{App: "orders", Stage: "dev", Output: "table"}}

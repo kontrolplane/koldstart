@@ -186,12 +186,40 @@ func (v *validator) event(fn, at string, e Event) {
 		}
 	case EventQueue:
 		v.value(at+".queue", e.Queue)
+		v.visibility(fn, at, e.Queue)
 	case EventTopic:
 		v.value(at+".topic", e.Topic)
 	case EventStream:
 		v.value(at+".stream", e.Stream)
 	case EventBucket:
 		v.value(at+".bucket", e.Bucket)
+		if e.Bucket.Ref != nil {
+			if _, set := v.p.Resources[e.Bucket.Ref.Resource].Properties["NotificationConfiguration"]; set {
+				v.errorf("%s: resources[%s] sets NotificationConfiguration, which koldstart manages for bucket events: move those notifications to events, or leave the bucket out of events", at, e.Bucket.Ref.Resource)
+			}
+		}
+	}
+}
+
+// defaultVisibility is how long sqs hides a received message when the queue does not say.
+const defaultVisibility = 30
+
+// visibility checks a queue of the project hides a message for at least the function's timeout,
+// or lambda refuses the mapping, as a message would come back while the function still runs.
+func (v *validator) visibility(fn, at string, queue Value) {
+	if queue.Ref == nil {
+		return
+	}
+	r, ok := v.p.Resources[queue.Ref.Resource]
+	if !ok || r.Type != "AWS::SQS::Queue" {
+		return
+	}
+	visibility := defaultVisibility
+	if t, ok := r.Properties["VisibilityTimeout"].(float64); ok {
+		visibility = int(t)
+	}
+	if timeout := v.p.Functions[fn].Timeout; visibility < timeout {
+		v.errorf("%s: resources[%s] hides a message for %ds, less than the function's timeout of %ds: set its VisibilityTimeout to at least %d", at, queue.Ref.Resource, visibility, timeout, timeout)
 	}
 }
 

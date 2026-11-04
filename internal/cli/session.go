@@ -10,10 +10,13 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/apigatewayv2"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/scheduler"
+	"github.com/aws/aws-sdk-go-v2/service/sns"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 
 	"github.com/kontrolplane/koldstart/internal/engine"
@@ -76,12 +79,23 @@ func openSession(ctx context.Context, opts *Options, region string) (*session, e
 
 // engine returns an engine with the providers for this session.
 func (s *session) engine(tags map[string]string) *engine.Engine {
+	apigw := apigatewayv2.NewFromConfig(s.cfg)
 	return &engine.Engine{
 		Providers: map[string]engine.Provider{
-			awsp.TypeLogGroup: awsp.LogGroup{Client: s.Logs},
-			awsp.TypeRole:     awsp.Role{Client: iam.NewFromConfig(s.cfg)},
-			awsp.TypeFunction: awsp.Function{Client: s.Lambda},
-			awsp.TypeURL:      awsp.URL{Client: s.Lambda},
+			awsp.TypeLogGroup:     awsp.LogGroup{Client: s.Logs},
+			awsp.TypeRole:         awsp.Role{Client: iam.NewFromConfig(s.cfg)},
+			awsp.TypeFunction:     awsp.Function{Client: s.Lambda},
+			awsp.TypeURL:          awsp.URL{Client: s.Lambda},
+			awsp.TypePermission:   awsp.Permission{Client: s.Lambda},
+			awsp.TypeHTTPAPI:      awsp.HTTPAPI{Client: apigw, Region: s.Region},
+			awsp.TypeIntegration:  awsp.Integration{Client: apigw},
+			awsp.TypeRoute:        awsp.Route{Client: apigw},
+			awsp.TypeAuthorizer:   awsp.Authorizer{Client: apigw},
+			awsp.TypeDomain:       awsp.Domain{Client: apigw},
+			awsp.TypeSchedule:     awsp.Schedule{Client: scheduler.NewFromConfig(s.cfg)},
+			awsp.TypeMapping:      awsp.Mapping{Client: s.Lambda},
+			awsp.TypeSubscription: awsp.Subscription{Client: sns.NewFromConfig(s.cfg)},
+			awsp.TypeNotification: awsp.Notification{Client: s.S3, Account: s.Account},
 		},
 		Concurrency: 8,
 		Tags:        tags,

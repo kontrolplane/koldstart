@@ -18,12 +18,23 @@ import (
 // attrArn is the attribute ref() reads an arn from, as CloudFormation names it.
 const attrArn = "Arn"
 
-// The types the providers here handle.
+// The types the providers here handle. They are koldstart's own names, so a resource of the same
+// CloudFormation type in resources still goes to cloud control.
 const (
-	TypeLogGroup = "AWS::Logs::LogGroup"
-	TypeRole     = "AWS::IAM::Role"
-	TypeFunction = "AWS::Lambda::Function"
-	TypeURL      = "AWS::Lambda::Url"
+	TypeLogGroup     = "koldstart::Logs::LogGroup"
+	TypeRole         = "koldstart::IAM::Role"
+	TypeFunction     = "koldstart::Lambda::Function"
+	TypeURL          = "koldstart::Lambda::Url"
+	TypePermission   = "koldstart::Lambda::Permission"
+	TypeHTTPAPI      = "koldstart::ApiGatewayV2::Api"
+	TypeIntegration  = "koldstart::ApiGatewayV2::Integration"
+	TypeRoute        = "koldstart::ApiGatewayV2::Route"
+	TypeAuthorizer   = "koldstart::ApiGatewayV2::Authorizer"
+	TypeDomain       = "koldstart::ApiGatewayV2::DomainName"
+	TypeSchedule     = "koldstart::Scheduler::Schedule"
+	TypeMapping      = "koldstart::Lambda::EventSourceMapping"
+	TypeSubscription = "koldstart::SNS::Subscription"
+	TypeNotification = "koldstart::S3::BucketNotification"
 )
 
 func errorCode(err error) string {

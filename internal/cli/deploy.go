@@ -270,13 +270,21 @@ func (s *stage) nodeID(name string) string {
 	return desired.ResourceID(name)
 }
 
-// functionURLs are the urls of the functions that have one, as outputs.
+// functionURLs are the urls of the functions that have one and of the http api, as outputs. With
+// a custom domain, httpDomainTarget is where its dns record points.
 func (s *stage) functionURLs(st *state.State) map[string]string {
 	out := map[string]string{}
 	for name := range s.Functions {
 		if r := st.Resources[desired.URLID(name)]; r != nil {
 			out[name+"Url"] = r.Attributes["FunctionUrl"]
 		}
+	}
+	if r := st.Resources[desired.HTTPAPIID]; r != nil {
+		out["httpApiUrl"] = r.Attributes["ApiEndpoint"]
+	}
+	if r := st.Resources[desired.DomainID]; r != nil {
+		out["httpApiUrl"] = "https://" + r.PhysicalID
+		out["httpDomainTarget"] = r.Attributes["RegionalDomainName"]
 	}
 	return out
 }
