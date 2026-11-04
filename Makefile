@@ -22,7 +22,17 @@ GOVULNCHECK   = go run golang.org/x/vuln/cmd/govulncheck@v1.9.0
 ACTIONLINT    = go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 GORELEASER    = go run github.com/goreleaser/goreleaser/v2@v2.20.0
 
-.PHONY: help fmt lint vuln test test-emulator emulator emulator.down check build image snapshot release.check
+# pkl, at the version and with the checksums internal/pkl pins, for the schema tests and the
+# package of the schema.
+PKL_VERSION = 0.32.2
+PKL_ASSET = pkl-$(if $(filter Darwin,$(shell uname -s)),macos,linux)-$(if $(filter arm64 aarch64,$(shell uname -m)),aarch64,amd64)
+PKL_SHA256_pkl-macos-aarch64 = 466952f0b30c93dfa36393a5b3695159917ce4291e3c936a18a0a240cfbe98e9
+PKL_SHA256_pkl-macos-amd64   = 3c4c914a75210d3f3292740b4a8d447f9f832e81b60720bec57221e884717eee
+PKL_SHA256_pkl-linux-aarch64 = e60744e17d4ddc0257a35260998b5f98387b5d6a5e868317cccfbebe8d962ae3
+PKL_SHA256_pkl-linux-amd64   = 874c75484c79add77fb2346ea4ab2e8875eea35fb707894bf5457a2df5d03def
+PKL = bin/pkl-$(PKL_VERSION)
+
+.PHONY: help fmt lint vuln test test-emulator emulator emulator.down check build image snapshot release.check pkl pkl.package
 
 ##@ development
 
@@ -41,6 +51,18 @@ lint: $(GOLANGCI_LINT) ## lint the code for linux and darwin, and the workflows,
 $(GOLANGCI_LINT):
 	GOBIN=$(CURDIR)/bin go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 	mv bin/golangci-lint $@
+
+pkl: $(PKL) ## download the pinned pkl into bin/ and check its sha256, for ci
+
+$(PKL):
+	@mkdir -p bin
+	curl -fsSL -o $@.tmp https://github.com/apple/pkl/releases/download/$(PKL_VERSION)/$(PKL_ASSET)
+	echo "$(PKL_SHA256_$(PKL_ASSET))  $@.tmp" | shasum -a 256 -c -
+	chmod +x $@.tmp && mv $@.tmp $@
+	ln -sf pkl-$(PKL_VERSION) bin/pkl
+
+pkl.package: ## package the schema in pkl/ into .pkl-out/, as a release attaches it
+	KOLDSTART_VERSION=$(VERSION) pkl project package --output-path .pkl-out pkl/
 
 vuln: ## check for known vulnerabilities
 	$(GOVULNCHECK) ./...

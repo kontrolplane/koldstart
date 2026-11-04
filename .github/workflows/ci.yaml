@@ -38,6 +38,9 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Set up pkl
+        run: make pkl && echo "$PWD/bin" >> "$GITHUB_PATH"
+
       - name: Test
         run: make test
 
@@ -104,6 +107,9 @@ jobs:
 
       - name: Install Syft
         uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+
+      - name: Set up pkl
+        run: make pkl && echo "$PWD/bin" >> "$GITHUB_PATH"
 
       - name: Build a snapshot
         run: make release.check snapshot

@@ -1,6 +1,12 @@
 version: 2
 project_name: koldstart
 
+# The schema package, which koldstart.pkl files amend, goes on the same release as the binaries.
+before:
+  hooks:
+    - rm -rf .pkl-out
+    - sh -c 'KOLDSTART_VERSION={{ .Version }} pkl project package --output-path .pkl-out pkl/'
+
 builds:
   - main: ./cmd/koldstart
     binary: koldstart
@@ -85,6 +91,8 @@ release:
   github:
     owner: kontrolplane
     name: koldstart
+  extra_files:
+    - glob: ./.pkl-out/koldstart@*
   draft: false
   prerelease: auto
   name_template: "{{ .ProjectName }} v{{ .Version }}"
