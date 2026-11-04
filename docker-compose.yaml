@@ -1,0 +1,9 @@
+# MiniStack, a local AWS emulator, for make test-emulator and for trying kdst against something
+# that is not an account. Lambda runs as a subprocess inside the container, so it needs no docker
+# socket. Pinned by digest beside its tag; dependabot moves both.
+services:
+  ministack:
+    container_name: "${MINISTACK_DOCKER_NAME:-koldstart-ministack}"
+    image: ministackorg/ministack:1.5.37@sha256:cdfa6ba04f4c7febd9e14a34a21e31b9f0fb5279ee6af545784c05219f5a59a4
+    ports:
+      - "127.0.0.1:4566:4566"

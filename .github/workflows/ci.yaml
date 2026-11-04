@@ -41,6 +41,32 @@ jobs:
       - name: Test
         run: make test
 
+  # The tests that talk to aws, against MiniStack as make test-emulator runs them.
+  emulator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      ministack:
+        image: ministackorg/ministack:1.5.37@sha256:cdfa6ba04f4c7febd9e14a34a21e31b9f0fb5279ee6af545784c05219f5a59a4
+        ports:
+          - 4566:4566
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Wait for MiniStack
+        run: for _ in $(seq 1 60); do curl -fs -o /dev/null http://127.0.0.1:4566/_localstack/health && exit 0; sleep 1; done; exit 1
+
+      - name: Test against MiniStack
+        run: make test-emulator
+
   # The versions the Makefile pins, so CI and make check lint alike.
   lint:
     runs-on: ubuntu-latest

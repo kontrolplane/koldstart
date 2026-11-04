@@ -20,7 +20,10 @@ The packages still to come, and the milestones they land in, are in [#1](https:/
 - koldstart sends nothing anywhere but the aws apis of the account it deploys to, and the downloads of pkl and the schema package. no telemetry.
 - `plan` changes nothing in aws and writes no state.
 - tests: standard library only, no testify. table tests with `tests := []struct{...}`, a doc comment on each test.
-- aws calls go behind small interfaces, so the engine and the tui are tested against fakes. aws has no server to embed for tests.
+- tests come in three tiers:
+  - unit: `make test`. aws calls go behind small interfaces, so the engine, providers and tui are tested against fakes. no network, no docker.
+  - emulator: `make emulator test-emulator`, against MiniStack (`docker-compose.yaml`). a test that talks to aws has `Emulator` in its name and gets its config from `awstest.Emulator(t)`, which skips without `KOLDSTART_TEST_ENDPOINT`. MiniStack runs lambda as a subprocess on one node version and ignores `ExpectedBucketOwner`: test those against fakes.
+  - e2e: `go test -tags e2e ./test/e2e/...`, against a real sandbox account, for what no emulator gets right.
 - logs: `log/slog`. `--debug` writes them to `debug.log`, otherwise nothing is logged.
 - errors wrap with what was being done (`fmt.Errorf("reading the state of %s: %w", stage, err)`). an error a person reads says what to do.
 - `make check` runs what CI runs: lint for linux and darwin, actionlint, govulncheck, the tests and the goreleaser config.

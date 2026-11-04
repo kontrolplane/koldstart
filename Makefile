@@ -22,7 +22,7 @@ GOVULNCHECK   = go run golang.org/x/vuln/cmd/govulncheck@v1.9.0
 ACTIONLINT    = go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 GORELEASER    = go run github.com/goreleaser/goreleaser/v2@v2.20.0
 
-.PHONY: help fmt lint vuln test check build image snapshot release.check
+.PHONY: help fmt lint vuln test test-emulator emulator emulator.down check build image snapshot release.check
 
 ##@ development
 
@@ -47,6 +47,19 @@ vuln: ## check for known vulnerabilities
 
 test: ## run the unit tests
 	go test -race -count=1 ./...
+
+# The emulator tests run against MiniStack. Without KOLDSTART_TEST_ENDPOINT they skip.
+EMULATOR ?= http://127.0.0.1:4566
+
+emulator: ## start MiniStack on 127.0.0.1:4566 and wait for it
+	docker compose up -d
+	@for _ in $$(seq 1 60); do curl -fs -o /dev/null $(EMULATOR)/_localstack/health && exit 0; sleep 1; done; echo "ministack did not become ready"; exit 1
+
+emulator.down: ## stop MiniStack and drop what it held
+	docker compose down
+
+test-emulator: ## run the tests that talk to aws against MiniStack; make emulator first
+	KOLDSTART_TEST_ENDPOINT=$(EMULATOR) go test -race -count=1 -run 'Emulator' ./...
 
 check: lint vuln test release.check ## run what CI runs
 
