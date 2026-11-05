@@ -25,14 +25,14 @@ The header shows the aws profile, account, region and state bucket in use, the p
   - invocations: the requests in the logs read, with their duration, billed duration, memory, cold start, and whether they failed or timed out; one opens with its lines of the log
   - invoke: the events kept for it, with the ones that are not json marked, and what the last invocation with each returned or failed with, and its log
 - `resource`: what koldstart applied, its id in aws, its attributes and inputs, and on a second tab its properties in aws now, from cloud control, with the ones changed outside koldstart, what each was applied with and what it is now
-- `plan`: what a deploy or remove does, and the progress of each resource while it applies; each change opens for its full diff of inputs, with secrets and refs shown by what they stand for
+- `plan`: what a deploy or remove does, and the progress of each resource while it applies, with how long it took and the error of one that failed; each change opens for its full diff of inputs, long values wrapped, with secrets, refs and outputs shown in parentheses by what they stand for, as `(secret ssm:/orders/key)`
 
 The page on screen is read again every five seconds; `p` pauses that. The live data, metrics, lambda's own view of a function, a queue's depth and a resource's properties in aws, needs the permissions to read them; where it cannot be read, as on an emulator, the page says so and shows the rest.
 
 ## keybindings
 
 - `q`: back, quit on the stages
-- `esc`: back, clear the filter, cancel a dialog; never quits
+- `esc`: back, clear the filter, cancel a dialog or a plan being made; never quits
 - `ctrl+c`: quit
 - `↑`, `k` and `↓`, `j`: up and down
 - `g`, `home` and `G`, `end`: first and last row, top and bottom of the logs

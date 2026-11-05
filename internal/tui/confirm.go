@@ -68,10 +68,20 @@ func (m model) applyUnlocked(msg unlockedMsg) (model, tea.Cmd) {
 
 func (m model) unlockView() string {
 	u := m.state.unlock
+	held := []styles.Span{styles.S("held by ", styles.ToneFaint), styles.B(orDash(u.lock.Who), styles.ToneText)}
+	if u.lock.Operation != "" {
+		held = append(held, styles.S(" for a "+u.lock.Operation, styles.ToneBody))
+	}
+	if u.lock.Where != "" {
+		held = append(held, styles.S(" from "+u.lock.Where, styles.ToneBody))
+	}
+	since := "since " + formatTime(u.lock.Since) + ", " + formatAgo(u.lock.Since)
+	if u.lock.Since.IsZero() {
+		since = "since an unknown time"
+	}
 	return dialog("release the lock of "+u.ref.String()+"?", styles.ToneWarning,
-		styles.Render(styles.S("held by ", styles.ToneFaint), styles.B(u.lock.Who, styles.ToneText),
-			styles.S(" for a "+u.lock.Operation+" from "+u.lock.Where, styles.ToneBody)),
-		styles.Render(styles.S("since "+formatTime(u.lock.Since)+", "+formatAgo(u.lock.Since), styles.ToneFaint)),
+		styles.Render(held...),
+		styles.Render(styles.S(since, styles.ToneFaint)),
 		"",
 		styles.Muted("make sure that deploy is really gone: two deploys of one stage at once can leave its state wrong."),
 		"",
@@ -80,7 +90,8 @@ func (m model) unlockView() string {
 }
 
 func (m model) askRemove() (model, tea.Cmd) {
-	c, cmd := newTypedConfirm(m.state.plan.ref.Stage)
+	ref := m.state.plan.ref
+	c, cmd := newTypedConfirm(ref.Stage, "remove "+ref.String())
 	m.state.remove = removeState{confirm: c}
 	m.page = removePage
 	return m, cmd
@@ -94,6 +105,7 @@ func (m model) removeUpdate(msg tea.Msg) (model, tea.Cmd) {
 			return m.leavePlan()
 		case key.Matches(k, m.keys.View):
 			if !r.confirm.ok() {
+				r.confirm.tried = true
 				return m, nil
 			}
 			m.page = planPage

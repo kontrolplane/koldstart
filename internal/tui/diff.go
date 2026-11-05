@@ -74,13 +74,25 @@ func lineDiff(a, b []string) []diffLine {
 	return out
 }
 
+// The runes around a value presentable stands in for, so jsonLines can write it without quotes.
+// They are in the private use area, which json leaves as it is.
+const (
+	placeholderOpen  = ""
+	placeholderClose = ""
+)
+
+// placeholders strips the runes of a placeholder from strings that hold them already.
+var placeholders = strings.NewReplacer(placeholderOpen, "", placeholderClose, "")
+
 // presentable replaces koldstart's own values, refs, secrets and outputs, with what they stand
 // for, so a diff shows them as a person writes them.
 func presentable(v any) any {
 	switch x := v.(type) {
+	case string:
+		return placeholders.Replace(x)
 	case map[string]any:
 		if _, ok := x["$koldstart"]; ok {
-			return engine.Describe(x)
+			return placeholderOpen + placeholders.Replace(describe(x)) + placeholderClose
 		}
 		out := make(map[string]any, len(x))
 		for k, e := range x {
@@ -97,16 +109,45 @@ func presentable(v any) any {
 	return v
 }
 
-// jsonLines writes a value as indented json, a line each, or none for nil.
+// describe says what one of koldstart's own values stands for: secret ssm:/orders/key, ref
+// resource/table.Arn, and a join with its refs in ${}, as ${ref resource/table.Arn}/index/*.
+func describe(v map[string]any) string {
+	switch {
+	case engine.IsSecret(v):
+		return "secret " + engine.Describe(v)
+	case v["$koldstart"] == "join":
+		parts, _ := v["parts"].([]any)
+		var b strings.Builder
+		for _, part := range parts {
+			if s, ok := part.(string); ok {
+				b.WriteString(s)
+				continue
+			}
+			b.WriteString("${" + engine.Describe(part) + "}")
+		}
+		return b.String()
+	}
+	return engine.Describe(v)
+}
+
+// unquote writes the placeholders json quoted in parentheses instead.
+var unquote = strings.NewReplacer(`"`+placeholderOpen, "(", placeholderClose+`"`, ")")
+
+// jsonLines writes a value as indented json, a line each, or none for nil. A ref, secret or
+// output shows in parentheses, unquoted, so it does not read as a string set to that text.
 func jsonLines(v any) []string {
 	if v == nil {
 		return nil
 	}
-	data, err := json.MarshalIndent(presentable(v), "", "  ")
-	if err != nil {
-		return []string{err.Error()}
+	var b strings.Builder
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(presentable(v)); err != nil {
+		return []string{styles.Clean(err.Error())}
 	}
-	return strings.Split(styles.CleanBlock(string(data)), "\n")
+	data := unquote.Replace(strings.TrimSuffix(b.String(), "\n"))
+	return strings.Split(styles.CleanBlock(data), "\n")
 }
 
 // diffState is the full change of one resource: in a plan, or between two versions of the state.
@@ -129,7 +170,7 @@ func (m model) diffUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 	if key.Matches(msg, m.keys.Back, m.keys.Quit) {
 		return m.switchPage(d.from), nil
 	}
-	d.scroll = scrollBy(msg, m.keys, d.scroll, contentHeight)
+	d.scroll = min(scrollBy(msg, m.keys, d.scroll, contentHeight), max(0, len(m.diffLines())-contentHeight))
 	return m, nil
 }
 
@@ -162,10 +203,42 @@ func (m model) diffLines() []string {
 		case '-':
 			mark, tone = "- ", styles.ToneDanger
 		}
-		text := ansi.Truncate(l.text, width-2, "…")
-		lines = append(lines, styles.Fg(tone).Render(mark+text))
+		style := styles.Fg(tone)
+		for i, part := range wrapIndented(l.text, width-2) {
+			if i > 0 {
+				mark = "  "
+			}
+			lines = append(lines, style.Render(mark+part))
+		}
 	}
 	return lines
+}
+
+// wrapIndented wraps a line of indented json to width, its continuation lines indented two
+// columns past the line's own indent, so a long value stays readable and in the json's shape.
+func wrapIndented(s string, width int) []string {
+	if ansi.StringWidth(s) <= width {
+		return []string{s}
+	}
+	lead := min(len(s)-len(strings.TrimLeft(s, " ")), width/2)
+	body := s[lead:]
+	first, _, _ := strings.Cut(ansi.Wrap(body, max(1, width-lead), ""), "\n")
+	if !strings.HasPrefix(body, first) {
+		first = ""
+	}
+	out := []string{s[:lead] + first}
+	rest := strings.TrimLeft(body[len(first):], " ")
+	if rest == "" {
+		return out
+	}
+	hang := strings.Repeat(" ", lead+2)
+	if first == "" {
+		out, hang = nil, s[:lead]
+	}
+	for part := range strings.SplitSeq(ansi.Wrap(rest, max(1, width-lead-2), ""), "\n") {
+		out = append(out, hang+part)
+	}
+	return out
 }
 
 func (m model) diffView() string {

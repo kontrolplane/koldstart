@@ -251,7 +251,7 @@ func TestResourceLive(t *testing.T) {
 // with more than the reference.
 func TestPresentable(t *testing.T) {
 	lines := jsonLines(map[string]any{"KEY": engine.Ref("resource/x", "Arn")})
-	if !strings.Contains(strings.Join(lines, "\n"), `"ref resource/x.Arn"`) {
+	if !strings.Contains(strings.Join(lines, "\n"), `"KEY": (ref resource/x.Arn)`) {
 		t.Errorf("jsonLines = %q", lines)
 	}
 }
