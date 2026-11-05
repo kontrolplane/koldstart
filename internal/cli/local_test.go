@@ -53,3 +53,26 @@ func TestEventFrom(t *testing.T) {
 		})
 	}
 }
+
+// TestFunctionError checks a function that failed in aws says the type and message of its error,
+// or what lambda calls the failure when it returned no error of its own.
+func TestFunctionError(t *testing.T) {
+	tests := []struct {
+		name    string
+		payload string
+		want    string
+	}{
+		{name: "node", payload: `{"errorType":"Error","errorMessage":"it went boom","trace":["Error: it went boom"]}`, want: "Error: it went boom"},
+		{name: "go", payload: `{"errorMessage":"no such order","errorType":"errorString"}`, want: "errorString: no such order"},
+		{name: "message alone", payload: `{"errorMessage":"Task timed out after 3.00 seconds"}`, want: "Task timed out after 3.00 seconds"},
+		{name: "not an error", payload: `"oops"`, want: "Unhandled"},
+		{name: "empty", payload: ``, want: "Unhandled"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := functionError([]byte(tt.payload), "Unhandled"); got != tt.want {
+				t.Errorf("functionError = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

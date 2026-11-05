@@ -95,6 +95,9 @@ deletionPolicy says delete.`,
 				return fmt.Errorf("%s is managed already, as %s: there is nothing to import", resource, existing.PhysicalID)
 			}
 			out, err := s.sess.CloudControl.GetResource(ctx, &awscloudcontrol.GetResourceInput{TypeName: &r.Type, Identifier: &identifier})
+			if awserr.Is(err, "ResourceNotFoundException") {
+				return fmt.Errorf("there is no %s %s in %s, account %s: check the identifier, which is the one cloud control knows it by, such as a table's name or a queue's url", r.Type, identifier, s.Region, s.sess.Account)
+			}
 			if err != nil {
 				return fmt.Errorf("reading the %s %s: %w", r.Type, identifier, err)
 			}

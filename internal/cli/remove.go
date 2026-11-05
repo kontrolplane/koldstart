@@ -133,7 +133,7 @@ sure that deploy is really gone: two deploys of one stage at once can leave its 
 				}
 			}
 			if held == nil {
-				return fmt.Errorf("%s/%s: %w: there is nothing to release", s.App, s.Stage, state.ErrNotLocked)
+				return fmt.Errorf("%s/%s is not locked: there is nothing to release", s.App, s.Stage)
 			}
 			out := cmd.OutOrStdout()
 			_, _ = fmt.Fprintln(out, lockHolder(s.App, s.Stage, *held, time.Now()))

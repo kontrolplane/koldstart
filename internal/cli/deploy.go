@@ -186,7 +186,7 @@ func (s *stage) planFunction(ctx context.Context, function string, upload bool) 
 	case change.Action == engine.NoOp:
 		return e, only, nodes, nil
 	case change.Action != engine.Update || !slices.Equal(change.Fields, []string{"code"}):
-		return nil, nil, nil, fmt.Errorf("the configuration of %s changed too (%s): run deploy", function, strings.Join(change.Fields, ", "))
+		return nil, nil, nil, configChanged(function, change)
 	}
 	only.Changes = []engine.Change{change}
 	return e, only, nodes, nil
@@ -203,6 +203,20 @@ func (s *stage) applyFunction(ctx context.Context, e *engine.Engine, plan *engin
 		return applyFailed(ctx, err, "deploy function -f "+function)
 	}
 	return nil
+}
+
+// configChanged refuses to deploy only the code of a function whose configuration changed,
+// naming what did and saying to deploy the stage.
+func configChanged(function string, change engine.Change) error {
+	fields := slices.DeleteFunc(slices.Clone(change.Fields), func(f string) bool { return f == "code" })
+	switch {
+	case len(fields) == 0:
+		return fmt.Errorf("%s needs more than its code deployed, to %s it: run deploy", function, verbs[change.Action])
+	case len(fields) < len(change.Fields):
+		return fmt.Errorf("the configuration of %s changed too (%s): run deploy, which deploys both", function, strings.Join(fields, ", "))
+	default:
+		return fmt.Errorf("the code of %s is as deployed, but its configuration changed (%s): run deploy", function, strings.Join(fields, ", "))
+	}
 }
 
 // deployedSHA is the hash of the code the state says a function has.

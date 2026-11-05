@@ -282,9 +282,25 @@ func (s *stage) invokeRemote(ctx context.Context, cmd *cobra.Command, function s
 	}
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), string(out.Payload))
 	if out.FunctionError != nil {
-		return fmt.Errorf("%s failed: %s", function, aws.ToString(out.FunctionError))
+		return fmt.Errorf("%s failed: %s\nsee its logs with %s logs -f %s --stage %s", function, functionError(out.Payload, aws.ToString(out.FunctionError)), cmd.Root().Name(), function, s.Stage)
 	}
 	return nil
+}
+
+// functionError says what a function that failed in aws returned: the type and message of its
+// error, as invoke --local says them, or what lambda calls the failure, such as Unhandled.
+func functionError(payload []byte, kind string) string {
+	var e struct {
+		Type    string `json:"errorType"`
+		Message string `json:"errorMessage"`
+	}
+	if json.Unmarshal(payload, &e) != nil || e.Message == "" {
+		return kind
+	}
+	if e.Type == "" {
+		return e.Message
+	}
+	return e.Type + ": " + e.Message
 }
 
 // invokeLocal runs the function once on this machine, its output on stderr and what it returned

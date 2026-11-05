@@ -271,7 +271,9 @@ func TestAsk(t *testing.T) {
 		input    string
 		accepted []string
 		cancel   bool
-		wantErr  bool
+		// say is what the error says, besides that nothing was changed.
+		say     string
+		wantErr bool
 	}{
 		{name: "yes", input: "y\n"},
 		{name: "yes in capitals", input: " YES \n"},
@@ -279,7 +281,8 @@ func TestAsk(t *testing.T) {
 		{name: "enter", input: "\n", wantErr: true},
 		{name: "end of input", input: "", wantErr: true},
 		{name: "the stage's name", input: "dev\n", accepted: []string{"dev"}},
-		{name: "another name", input: "prod\n", accepted: []string{"dev"}, wantErr: true},
+		{name: "another name", input: "prod\n", accepted: []string{"dev"}, wantErr: true, say: `"prod" is not dev`},
+		{name: "no name", input: "\n", accepted: []string{"dev"}, wantErr: true, say: "cancelled"},
 		{name: "ctrl+c", cancel: true, wantErr: true},
 	}
 	for _, tt := range tests {
@@ -298,8 +301,8 @@ func TestAsk(t *testing.T) {
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ask = %v, want an error: %v", err, tt.wantErr)
 			}
-			if err != nil && !strings.Contains(err.Error(), "nothing was changed") {
-				t.Errorf("the error %q does not say nothing was changed", err)
+			if err != nil && (!strings.Contains(err.Error(), "nothing was changed") || !strings.Contains(err.Error(), tt.say)) {
+				t.Errorf("the error %q does not say %q, and that nothing was changed", err, tt.say)
 			}
 		})
 	}
@@ -396,5 +399,29 @@ func TestUnlockHint(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("unlockHint for %v = %q, want %q", tt.args, got, tt.want)
 		}
+	}
+}
+
+// TestConfigChanged checks deploy function, refused for a function whose configuration changed,
+// says whether its code changed too and names the rest.
+func TestConfigChanged(t *testing.T) {
+	tests := []struct {
+		name   string
+		change engine.Change
+		want   string
+	}{
+		{name: "code and memory", change: engine.Change{Action: engine.Update, Fields: []string{"code", "memory"}},
+			want: "the configuration of api changed too (memory): run deploy, which deploys both"},
+		{name: "memory alone", change: engine.Change{Action: engine.Update, Fields: []string{"memory", "timeout"}},
+			want: "the code of api is as deployed, but its configuration changed (memory, timeout): run deploy"},
+		{name: "replaced", change: engine.Change{Action: engine.Replace, Fields: []string{"code"}},
+			want: "api needs more than its code deployed, to replace it: run deploy"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := configChanged("api", tt.change).Error(); got != tt.want {
+				t.Errorf("configChanged = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

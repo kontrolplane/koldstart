@@ -279,9 +279,11 @@ func confirm(cmd *cobra.Command, yes bool, question string, accepted ...string) 
 }
 
 // ask writes the question to w and reads the answer from r, as confirm does. ctrl+c, which
-// cancels ctx, or the end of r cancels without waiting for a line.
+// cancels ctx, or the end of r cancels without waiting for a line. A name typed wrong says what
+// was typed.
 func ask(ctx context.Context, r io.Reader, w io.Writer, question string, accepted ...string) error {
-	if accepted == nil {
+	yesNo := accepted == nil
+	if yesNo {
 		accepted = []string{"y", "yes"}
 		question += " [y/N]"
 	}
@@ -300,10 +302,14 @@ func ask(ctx context.Context, r io.Reader, w io.Writer, question string, accepte
 		_, _ = fmt.Fprintln(w)
 		return cancelled
 	case answer := <-answers:
-		if !slices.Contains(accepted, strings.ToLower(strings.TrimSpace(answer))) {
-			return cancelled
+		answer = strings.TrimSpace(answer)
+		switch {
+		case slices.Contains(accepted, strings.ToLower(answer)):
+			return nil
+		case !yesNo && answer != "":
+			return fmt.Errorf("%q is not %s: nothing was changed", answer, accepted[0])
 		}
-		return nil
+		return cancelled
 	}
 }
 
