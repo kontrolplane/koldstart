@@ -62,9 +62,11 @@ type functionState struct {
 
 	events     dataTable
 	eventFiles []string
-	invokeGen  int
-	invoking   bool
-	results    map[string]invocationResult
+	// eventErrs are why each event cannot be sent, nil for one that can, as they were listed.
+	eventErrs []error
+	invokeGen int
+	invoking  bool
+	results   map[string]invocationResult
 }
 
 func functionBodyHeight() int { return contentHeight - 2 }
@@ -299,7 +301,7 @@ func (m model) functionPosition() string {
 		}
 	case invokeTab:
 		height := functionBodyHeight()
-		n := len(m.invokeLines(resultWidth()))
+		n := m.invokeLines(resultWidth()).len()
 		return scrollCue(min(f.scroll, maxResultScroll(n, height)), height, n)
 	}
 	return ""

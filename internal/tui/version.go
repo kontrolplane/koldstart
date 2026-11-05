@@ -76,7 +76,7 @@ func (m model) versionUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 	}
 	l := m.versionLines()
 	if len(l.rows) == 0 {
-		v.scroll = scrollBy(msg, m.keys, v.scroll, contentHeight, maxOffset(len(l.lines), contentHeight))
+		v.scroll = scrollBy(msg, m.keys, v.scroll, contentHeight, maxOffset(l.lines.len(), contentHeight))
 		return m, nil
 	}
 	if cursor, ok := moveCursor(msg, m.keys, v.cursor, len(l.rows), contentHeight); ok {
@@ -207,30 +207,27 @@ func (m model) versionLines() pickList {
 		title += " · " + plural(len(changes), "resource")
 	}
 	lines = append(lines, styles.SectionHeader(title, width))
-	l := pickList{lines: lines}
+	l := pickList{lines: lazyOf(lines)}
 	cols := []column{{width: width}}
 	cells := make([]cell, len(changes))
 	for i, c := range changes {
 		cells[i] = c.line
 	}
 	for _, c := range alignNames(cells, width/2) {
-		l.add(renderCell(c, cols[0], nil), litRow(cols, c))
+		l.addDrawn(func() string { return renderCell(c, cols[0], nil) }, func() string { return litRow(cols, c) })
 	}
-	lines = l.lines
 	if len(changes) == 0 {
 		empty := "no resource or output changed: the deploy found everything as configured"
 		if len(outputs) > 0 {
 			empty = "no resource changed"
 		}
-		lines = append(lines, styles.Faint(empty))
+		l.lines.add(styles.Faint(empty))
 	}
 	if len(outputs) > 0 {
-		lines = append(lines, "", styles.SectionHeader("outputs · "+plural(len(outputs), "change"), width))
-		for _, c := range alignNames(outputs, width/2) {
-			lines = append(lines, renderCell(c, column{width: width}, nil))
-		}
+		aligned := alignNames(outputs, width/2)
+		l.lines.add("", styles.SectionHeader("outputs · "+plural(len(outputs), "change"), width))
+		l.lines.addDrawn(len(aligned), func(i int) string { return renderCell(aligned[i], column{width: width}, nil) })
 	}
-	l.lines = lines
 	return l
 }
 

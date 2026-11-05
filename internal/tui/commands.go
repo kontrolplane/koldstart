@@ -100,6 +100,9 @@ type invokedMsg struct {
 	local bool
 	inv   cli.Invocation
 	err   error
+	// body is the payload's lines, indented and cleaned off the interface's goroutine, as a
+	// payload can be megabytes.
+	body []string
 }
 
 type planLoadedMsg struct {
@@ -369,7 +372,7 @@ func (m model) invoke(event string, payload []byte, local bool) (model, tea.Cmd)
 		} else {
 			inv, err = m.b.Invoke(ctx, ref, lambdaName, payload)
 		}
-		return invokedMsg{gen: gen, event: event, local: local, inv: inv, err: err}
+		return invokedMsg{gen: gen, event: event, local: local, inv: inv, err: err, body: payloadLines(inv.Payload)}
 	}
 }
 

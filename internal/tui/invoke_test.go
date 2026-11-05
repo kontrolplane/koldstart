@@ -114,7 +114,8 @@ func TestResultErrorWraps(t *testing.T) {
 	payload, _ := json.Marshal(map[string]string{"errorType": "ReferenceError", "errorMessage": message})
 	r := invocationResult{inv: cli.Invocation{Error: "Unhandled", Payload: payload}}
 	for width := 30; width <= 90; width++ {
-		v := ansi.Strip(strings.Join(resultLines(r, width), "\n"))
+		lines := resultLines(r, width)
+		v := ansi.Strip(strings.Join(lines.window(0, lines.len()), "\n"))
 		for word := range strings.FieldsSeq(message) {
 			if len(word) <= width/2 && !strings.Contains(v, word) {
 				t.Fatalf("width %d: %q is broken over two lines:\n%s", width, word, v)

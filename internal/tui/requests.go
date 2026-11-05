@@ -45,10 +45,61 @@ func failure(line string) (failed, timedOut bool) {
 	case strings.Contains(line, "Task timed out"), strings.Contains(line, "Status: timeout"):
 		return true, true
 	case strings.Contains(line, "\tERROR\t"), strings.Contains(line, `"errorType"`), strings.Contains(line, "Runtime.ExitError"),
-		strings.Contains(line, "Status: error"), errorLevel.MatchString(line):
+		strings.Contains(line, "Status: error"), mayLogError(line) && errorLevel.MatchString(line):
 		return true, false
 	}
 	return false, false
+}
+
+// mayLogError reports whether a line holds a word errorLevel looks for, ignoring case, so the
+// expression runs only on the lines it can match.
+func mayLogError(line string) bool {
+	for i := range len(line) {
+		switch line[i] | 0x20 {
+		case 'e':
+			if hasFoldAt(line, i, "err") {
+				return true
+			}
+		case 'f':
+			if hasFoldAt(line, i, "fatal") {
+				return true
+			}
+		case 'c':
+			if hasFoldAt(line, i, "critical") {
+				return true
+			}
+		case 'p':
+			if hasFoldAt(line, i, "panic") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// hasFoldAt reports whether s holds word at i, ignoring case.
+func hasFoldAt(s string, i int, word string) bool {
+	return i+len(word) <= len(s) && strings.EqualFold(s[i:i+len(word)], word)
+}
+
+// lineIDs are the request a line starts, the one it reports, and the one a node line names, each
+// "" when it is not that line. An expression runs only on a line that starts as it would match.
+func lineIDs(line string) (start, report, node string) {
+	switch {
+	case strings.HasPrefix(line, "START RequestId:"):
+		if m := startLine.FindStringSubmatch(line); m != nil {
+			return m[1], "", ""
+		}
+	case strings.HasPrefix(line, "REPORT RequestId:"):
+		if m := reportLine.FindStringSubmatch(line); m != nil {
+			return "", m[1], ""
+		}
+	case strings.IndexByte(line, '\t') > 0:
+		if m := nodeLine.FindStringSubmatch(line); m != nil {
+			return "", "", m[1]
+		}
+	}
+	return "", "", ""
 }
 
 // requests reads the invocations out of a function's log lines, newest first. A line belongs to
@@ -68,12 +119,13 @@ func requests(logs []cli.LogEvent) []request {
 	}
 	for _, e := range logs {
 		var id string
+		start, report, node := lineIDs(e.Message)
 		switch {
-		case startLine.MatchString(e.Message):
-			id = startLine.FindStringSubmatch(e.Message)[1]
+		case start != "":
+			id = start
 			current[e.Stream] = id
-		case reportLine.MatchString(e.Message):
-			id = reportLine.FindStringSubmatch(e.Message)[1]
+		case report != "":
+			id = report
 			r := get(id, e.Time)
 			r.reported = true
 			for _, m := range reportItem.FindAllStringSubmatch(e.Message, -1) {
@@ -92,8 +144,8 @@ func requests(logs []cli.LogEvent) []request {
 				}
 			}
 			delete(current, e.Stream)
-		case nodeLine.MatchString(e.Message):
-			id = nodeLine.FindStringSubmatch(e.Message)[1]
+		case node != "":
+			id = node
 		default:
 			id = current[e.Stream]
 		}

@@ -57,10 +57,12 @@ type logState struct {
 	loadingOlder bool
 	// emptyOlder counts the reads of older lines in a row that found none.
 	emptyOlder int
+	// cache keeps the lines drawn of the events, tinted and wrapped.
+	cache *rowCache
 }
 
 func newLogState() logState {
-	return logState{follow: true, filter: newFilterBox("filter the lines…")}
+	return logState{follow: true, filter: newFilterBox("filter the lines…"), cache: newRowCache()}
 }
 
 func (m model) applyLogs(msg logsLoadedMsg) (model, tea.Cmd) {
@@ -302,7 +304,7 @@ func (m model) logRows(events []cli.LogEvent) []logRow {
 	var out []logRow
 	for _, e := range events {
 		if l.filter.matches(e.Message) {
-			out = append(out, entryRows(e, l.filter.text, logWidth())...)
+			out = append(out, l.cache.entryRows(e, l.filter.text, logWidth())...)
 		}
 	}
 	return out
@@ -316,7 +318,7 @@ func (m model) lastRows(n int) ([]logRow, bool) {
 	count, i := 0, len(l.lines)-1
 	for ; i >= 0 && count < n; i-- {
 		if e := l.lines[i]; l.filter.matches(e.Message) {
-			rows := entryRows(e, l.filter.text, logWidth())
+			rows := l.cache.entryRows(e, l.filter.text, logWidth())
 			chunks = append(chunks, rows)
 			count += len(rows)
 		}
@@ -347,14 +349,34 @@ func (r logRow) paint(width int) string {
 	return stamp + renderCell(r.c, column{width: width - stampWidth}, nil)
 }
 
-// logEntry draws one line of the logs: its time, and its message tinted and wrapped beside it.
-func logEntry(e cli.LogEvent, width int) []string {
-	rows := entryRows(e, "", width)
-	out := make([]string, len(rows))
-	for i, r := range rows {
-		out[i] = r.paint(width)
+// rowCache keeps the drawn lines of the events a frame tinted, at one width and mark, so
+// scrolling through a long log tints and wraps each line once. A row holds tones, not colours, so
+// a change of palette repaints it as it is; it starts again on one all the same, should a row ever
+// hold more. A page keeps one from when it opens; without one every line is drawn again.
+type rowCache struct {
+	width   int
+	mark    string
+	palette int
+	rows    map[cli.LogEvent][]logRow
+}
+
+func newRowCache() *rowCache { return &rowCache{} }
+
+// entryRows are entryRows, from the cache when it holds them. It starts again when the width, the
+// mark or the palette changes, or when it holds twice the lines the logs keep.
+func (c *rowCache) entryRows(e cli.LogEvent, mark string, width int) []logRow {
+	if c == nil {
+		return entryRows(e, mark, width)
 	}
-	return out
+	if c.rows == nil || c.width != width || c.mark != mark || c.palette != styles.Gen() || len(c.rows) > 2*maxLogLines {
+		c.width, c.mark, c.palette, c.rows = width, mark, styles.Gen(), map[cli.LogEvent][]logRow{}
+	}
+	if rows, ok := c.rows[e]; ok {
+		return rows
+	}
+	rows := entryRows(e, mark, width)
+	c.rows[e] = rows
+	return rows
 }
 
 // logsHead says how far back the logs go, how many lines the filter keeps, and what reads the

@@ -4,6 +4,7 @@ import (
 	"image/color"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
@@ -402,36 +403,23 @@ func pad(n int, bg color.Color) string {
 
 // renderCell cuts the spans to the column width and aligns them. Content that does not fit ends
 // in an ellipsis, also when the cut falls between two spans or a wide rune does not fit whole.
+// Only what is drawn is measured, so a long value costs no more than a short one, and it is
+// cleaned as it is drawn, so a span that missed Clean still cannot reach the terminal raw.
 func renderCell(c cell, col column, bg color.Color) string {
-	total := 0
-	for _, s := range c {
-		total += ansi.StringWidth(s.Text)
+	if col.width <= 0 {
+		return ""
 	}
-	budget := col.width
-	cut := total > col.width
-	if cut {
-		budget = col.width - 1
+	parts, used, whole := fitCell(c, col.width)
+	if !whole {
+		parts, used, _ = fitCell(c, col.width-1)
 	}
 	var b strings.Builder
-	used := 0
 	last := styles.Span{Tone: styles.ToneBody}
-	for _, s := range c {
-		if used >= budget {
-			break
-		}
-		txt := s.Text
-		full := used+ansi.StringWidth(txt) <= budget
-		if !full {
-			txt = ansi.Truncate(txt, budget-used, "")
-		}
-		used += ansi.StringWidth(txt)
-		b.WriteString(paint(s, bg, txt))
-		last = s
-		if !full {
-			break
-		}
+	for _, p := range parts {
+		b.WriteString(paint(p, bg, p.Text))
+		last = p
 	}
-	if cut && col.width > 0 {
+	if !whole {
 		b.WriteString(paint(last, bg, "…"))
 		used++
 	}
@@ -440,6 +428,64 @@ func renderCell(c cell, col column, bg color.Color) string {
 		return gap + b.String()
 	}
 	return b.String() + gap
+}
+
+// fitCell is the start of a cell that fits in width columns, a span for each part drawn, how wide
+// it is, and whether it is all of the cell.
+func fitCell(c cell, width int) ([]styles.Span, int, bool) {
+	parts := make([]styles.Span, 0, len(c))
+	used := 0
+	for _, s := range c {
+		txt, w, whole := fitText(s.Text, width-used)
+		if txt != "" {
+			s.Text = txt
+			parts = append(parts, s)
+		}
+		used += w
+		if !whole {
+			return parts, used, false
+		}
+	}
+	return parts, used, true
+}
+
+// fitText is the longest start of s, cleaned, that fits in width columns, how wide it is, and
+// whether it is all of s. It walks s a grapheme at a time, and only as far as it fits. Text that
+// needs cleaning is cleaned whole first, as an escape can join a mark after it into one grapheme.
+func fitText(s string, width int) (string, int, bool) {
+	if width <= 0 {
+		return "", 0, s == ""
+	}
+	if n := min(len(s), width); printableASCII(s[:n]) && (n == len(s) || s[n] < utf8.RuneSelf) {
+		return s[:n], n, n == len(s)
+	}
+	used := 0
+	for i := 0; i < len(s); {
+		cluster, w := ansi.FirstGraphemeCluster(s[i:], ansi.GraphemeWidth)
+		if cluster == "" {
+			_, size := utf8.DecodeRuneInString(s[i:])
+			cluster, w = s[i:i+size], 1
+		}
+		if styles.Clean(cluster) != cluster {
+			return fitText(styles.Clean(s), width)
+		}
+		if used+w > width {
+			return s[:i], used, false
+		}
+		used += w
+		i += len(cluster)
+	}
+	return s, used, true
+}
+
+// printableASCII reports whether s is only printable ascii, which is a column a byte.
+func printableASCII(s string) bool {
+	for i := range len(s) {
+		if s[i] < ' ' || s[i] > '~' {
+			return false
+		}
+	}
+	return true
 }
 
 func paint(s styles.Span, bg color.Color, txt string) string {

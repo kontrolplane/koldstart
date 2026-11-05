@@ -588,21 +588,21 @@ func (m model) position() string {
 	case functionPage:
 		return m.functionPosition()
 	case resourcePage:
-		return scrollCue(m.state.resource.scroll, contentHeight, len(m.resourceLines()))
+		return scrollCue(m.state.resource.scroll, contentHeight, m.resourceLines().len())
 	case versionPage:
 		v := m.state.version
 		l := m.versionLines()
 		if len(l.rows) == 0 {
-			return scrollCue(v.scroll, contentHeight, len(l.lines))
+			return scrollCue(v.scroll, contentHeight, l.lines.len())
 		}
 		return l.position(v.cursor)
 	case planPage:
 		_, body := m.planLines()
 		return body.position(m.state.plan.cursor)
 	case diffPage:
-		return scrollCue(m.state.diff.scroll, contentHeight, len(m.diffLines()))
+		return scrollCue(m.state.diff.scroll, contentHeight, m.diffLines().len())
 	case invocationPage:
-		return scrollCue(m.state.invocation.scroll, contentHeight, len(m.invocationLines()))
+		return scrollCue(m.state.invocation.scroll, contentHeight, m.invocationLines().len())
 	}
 	return ""
 }
@@ -808,7 +808,7 @@ func (m model) shortHelp() [][2]string {
 			if m.b.EventsDir(m.state.function.name) != "" {
 				h = append(h, hint(k.EditEvent))
 			}
-			if len(m.invokeLines(resultWidth())) > functionBodyHeight() {
+			if m.invokeLines(resultWidth()).len() > functionBodyHeight() {
 				h = append(h, [2]string{k.PageUp.Help().Key + "/" + k.PageDown.Help().Key, "scroll"})
 			}
 		}

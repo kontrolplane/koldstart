@@ -34,6 +34,67 @@ type invocationResult struct {
 	running bool
 	at      time.Time
 	err     error
+	// body is the payload's lines, indented and cleaned, and wrapped what the last frame drew of
+	// it and of the log at its width, so the next does not do either again.
+	body    []string
+	wrapped *resultRows
+}
+
+// resultRows are what an invocation returned and its log, wrapped to width in the palette
+// numbered palette. They hold no colour, but are wrapped again in a new palette all the same, so
+// nothing kept outlives one.
+type resultRows struct {
+	width   int
+	palette int
+	payload []string
+	logs    []cell
+}
+
+// payloadLines are the lines of what an invocation returned, indented when it is json, and
+// cleaned.
+func payloadLines(payload []byte) []string {
+	if len(bytes.TrimSpace(payload)) == 0 {
+		return nil
+	}
+	return strings.Split(styles.CleanBlock(strings.TrimRight(prettyJSON(payload), "\n")), "\n")
+}
+
+// rows wraps the payload and the log to width, or takes them as the last frame wrapped them.
+func (r invocationResult) rows(width int) resultRows {
+	if w := r.wrapped; w != nil && w.width == width && w.palette == styles.Gen() && width > 0 {
+		return *w
+	}
+	body := r.body
+	if body == nil {
+		body = payloadLines(r.inv.Payload)
+	}
+	out := resultRows{width: width, palette: styles.Gen(), payload: hardwrapLines(body, width), logs: logCells(r.inv.Logs, width)}
+	if r.wrapped != nil {
+		*r.wrapped = out
+	}
+	return out
+}
+
+// hardwrapLines breaks each line wider than width where the width runs out, as ansi.Hardwrap
+// does, cutting a line of ascii without measuring it.
+func hardwrapLines(lines []string, width int) []string {
+	width = max(1, width)
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		switch {
+		case len(line) <= width:
+			out = append(out, line)
+		case printableASCII(line):
+			for len(line) > width {
+				out = append(out, line[:width])
+				line = line[width:]
+			}
+			out = append(out, line)
+		default:
+			out = append(out, strings.Split(ansi.Hardwrap(line, width, true), "\n")...)
+		}
+	}
+	return out
 }
 
 // errNotJSON is an event file that does not hold json.
@@ -64,13 +125,20 @@ func (m model) readEventFiles() model {
 		}
 	}
 	current := m.selectedEvent()
-	f.eventFiles = files
+	f.eventFiles, f.eventErrs = files, make([]error, len(files))
 	rows := make([]tableRow, 0, len(files))
-	for _, name := range files {
+	for i, name := range files {
 		c := cell{styles.S(strings.TrimSuffix(name, ".json"), styles.ToneText)}
-		if data, err := os.ReadFile(filepath.Join(dir, name)); err == nil && !json.Valid(bytes.TrimSpace(data)) {
+		data, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			err = fmt.Errorf("reading the event %s: %w", name, err)
+		} else {
+			err = checkEvent(name, data)
+		}
+		if errors.Is(err, errNotJSON) {
 			c = append(c, styles.S("  not json", styles.ToneWarning))
 		}
+		f.eventErrs[i] = err
 		rows = append(rows, tableRow{c})
 	}
 	switch {
@@ -110,15 +178,34 @@ func (m model) eventPayload() ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading the event %s: %w", name, err)
 	}
-	var v any
-	if err := json.Unmarshal(data, &v); err != nil {
-		if syntax, ok := errors.AsType[*json.SyntaxError](err); ok {
-			line := 1 + bytes.Count(data[:min(int(syntax.Offset), len(data))], []byte("\n"))
-			return nil, fmt.Errorf("%s is %w, on line %d: %s", name, errNotJSON, line, syntax.Error())
-		}
-		return nil, fmt.Errorf("%s is %w: %w", name, errNotJSON, err)
+	if err := checkEvent(name, data); err != nil {
+		return nil, err
 	}
 	return data, nil
+}
+
+// checkEvent checks an event is json. The error of one that is not says the line it breaks on.
+func checkEvent(name string, data []byte) error {
+	if json.Valid(data) {
+		return nil
+	}
+	var v any
+	err := json.Unmarshal(data, &v)
+	if syntax, ok := errors.AsType[*json.SyntaxError](err); ok {
+		line := 1 + bytes.Count(data[:min(int(syntax.Offset), len(data))], []byte("\n"))
+		return fmt.Errorf("%s is %w, on line %d: %s", name, errNotJSON, line, syntax.Error())
+	}
+	return fmt.Errorf("%s is %w: %w", name, errNotJSON, err)
+}
+
+// eventErr is why the selected event cannot be sent, as it was when the events were listed, so a
+// frame does not read the file again.
+func (m model) eventErr() error {
+	f := m.state.function
+	if i := f.events.cursor; i < len(f.eventFiles) && i < len(f.eventErrs) {
+		return f.eventErrs[i]
+	}
+	return nil
 }
 
 // editor is the command of $VISUAL, or $EDITOR, or vi, split into its words.
@@ -207,7 +294,7 @@ func (m model) applyInvoked(msg invokedMsg) (model, tea.Cmd) {
 		return m, nil
 	}
 	f.invoking = false
-	f.results[msg.event] = invocationResult{inv: msg.inv, local: msg.local, at: time.Now(), err: msg.err}
+	f.results[msg.event] = invocationResult{inv: msg.inv, local: msg.local, at: time.Now(), err: msg.err, body: msg.body, wrapped: &resultRows{}}
 	f.scroll = 0
 	switch {
 	case msg.err != nil:
@@ -225,7 +312,7 @@ func (m model) invokeUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.PageUp, m.keys.PageDown):
 		height := functionBodyHeight()
-		f.scroll = scrollBy(msg, m.keys, f.scroll, height, maxResultScroll(len(m.invokeLines(resultWidth())), height))
+		f.scroll = scrollBy(msg, m.keys, f.scroll, height, maxResultScroll(m.invokeLines(resultWidth()).len(), height))
 	case f.events.move(msg, m.keys):
 		f.scroll = 0
 	}
@@ -234,7 +321,7 @@ func (m model) invokeUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 
 // invokeLines are what the right of the invoke tab shows for the selected event: the invocation
 // running, what the last one returned, or how to invoke it.
-func (m model) invokeLines(width int) []string {
+func (m model) invokeLines(width int) lazyLines {
 	f := m.state.function
 	name := styles.Clean(f.name)
 	r, ok := f.results[m.selectedEvent()]
@@ -244,17 +331,17 @@ func (m model) invokeLines(width int) []string {
 		if r.local {
 			what = "running " + name + " on this machine…"
 		}
-		return []string{styles.Accent(m.spinner.View()) + " " + styles.Muted(what)}
+		return lazyOf([]string{styles.Accent(m.spinner.View()) + " " + styles.Muted(what)})
 	case !ok:
-		if _, err := m.eventPayload(); err != nil {
+		if err := m.eventErr(); err != nil {
 			lines := wrapped("▲ "+err.Error(), styles.ToneWarning, width-2, 0)
-			return append(lines, "", styles.Faint("e edits it, and i sends it once it is json"))
+			return lazyOf(append(lines, "", styles.Faint("e edits it, and i sends it once it is json")))
 		}
-		return m.invokeHints(name)
+		return lazyOf(m.invokeHints(name))
 	case r.err != nil:
 		lines := []string{styles.Render(styles.S("✗ could not invoke "+f.name, styles.ToneDanger)), ""}
 		lines = append(lines, wrapped(r.err.Error(), styles.ToneDanger, width-2, 0)...)
-		return append(lines, "", styles.Faint("i tries again"))
+		return lazyOf(append(lines, "", styles.Faint("i tries again")))
 	}
 	return resultLines(r, width)
 }
@@ -291,7 +378,7 @@ func (m model) invokeView() string {
 	f := m.state.function
 	height := functionBodyHeight()
 	left, right := eventsWidth(), resultWidth()
-	body := scrolled(m.invokeLines(right), f.scroll, height)
+	body := scrolledLines(m.invokeLines(right), f.scroll, height)
 	return lipgloss.NewStyle().PaddingLeft(1).Render(lipgloss.JoinHorizontal(lipgloss.Top,
 		fill(f.events.View(), left, height),
 		"  ",
@@ -318,8 +405,9 @@ func functionError(inv cli.Invocation) string {
 	return inv.Error
 }
 
-// resultLines show what an invocation returned, or the error it failed with, and its log.
-func resultLines(r invocationResult, width int) []string {
+// resultLines show what an invocation returned, or the error it failed with, and its log. Only
+// the lines in sight are painted, so a payload of megabytes draws as quickly as a short one.
+func resultLines(r invocationResult, width int) lazyLines {
 	took := ""
 	if r.inv.Duration > 0 {
 		took = " in " + cli.Duration(r.inv.Duration)
@@ -329,32 +417,26 @@ func resultLines(r invocationResult, width int) []string {
 		where = " on this machine"
 	}
 	facts := styles.S(took+where+", "+formatAgo(r.at), styles.ToneFaint)
-	wrap := func(s string) []string {
-		return strings.Split(ansi.Hardwrap(styles.CleanBlock(strings.TrimRight(s, "\n")), width-2, true), "\n")
-	}
 	outcome, section := styles.S("✓ returned", styles.ToneSuccess), "returned"
 	if r.inv.Error != "" {
 		outcome, section = styles.S("✗ failed", styles.ToneDanger), "error"
 	}
-	lines := []string{styles.Render(outcome, facts)}
+	var lines lazyLines
+	lines.add(styles.Render(outcome, facts))
 	if r.inv.Error != "" {
 		for line := range strings.SplitSeq(styles.CleanBlock(strings.TrimRight(functionError(r.inv), "\n")), "\n") {
-			lines = append(lines, cellLines(text(line, styles.ToneDanger), width-2)...)
+			lines.add(cellLines(text(line, styles.ToneDanger), width-2)...)
 		}
 	}
-	lines = append(lines, "", styles.SectionHeader(section, width-2))
-	if len(bytes.TrimSpace(r.inv.Payload)) == 0 {
-		lines = append(lines, styles.Faint("nothing"))
-	} else {
-		for _, line := range wrap(prettyJSON(r.inv.Payload)) {
-			lines = append(lines, styles.Body(line))
-		}
+	rows := r.rows(width - 2)
+	lines.add("", styles.SectionHeader(section, width-2))
+	if len(rows.payload) == 0 {
+		lines.add(styles.Faint("nothing"))
 	}
+	lines.addDrawn(len(rows.payload), func(i int) string { return styles.Body(rows.payload[i]) })
 	if strings.TrimSpace(r.inv.Logs) != "" {
-		lines = append(lines, "", styles.SectionHeader("log", width-2))
-		for _, c := range logCells(r.inv.Logs, width-2) {
-			lines = append(lines, renderCell(c, column{width: width - 2}, nil))
-		}
+		lines.add("", styles.SectionHeader("log", width-2))
+		lines.addDrawn(len(rows.logs), func(i int) string { return renderCell(rows.logs[i], column{width: width - 2}, nil) })
 	}
 	return lines
 }

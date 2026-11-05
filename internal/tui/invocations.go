@@ -105,10 +105,12 @@ func (m model) invocationsView() string {
 type invocationState struct {
 	req    request
 	scroll int
+	// cache keeps the lines of the log drawn, tinted and wrapped.
+	cache *rowCache
 }
 
 func (m model) openInvocation(r request) (model, tea.Cmd) {
-	m.state.invocation = invocationState{req: r}
+	m.state.invocation = invocationState{req: r, cache: newRowCache()}
 	return m.switchPage(invocationPage), nil
 }
 
@@ -120,7 +122,7 @@ func (m model) invocationUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Copy):
 		return m.copy(v.req.id)
 	}
-	v.scroll = scrollBy(msg, m.keys, v.scroll, contentHeight, maxOffset(len(m.invocationLines()), contentHeight))
+	v.scroll = scrollBy(msg, m.keys, v.scroll, contentHeight, maxOffset(m.invocationLines().len(), contentHeight))
 	return m, nil
 }
 
@@ -134,7 +136,9 @@ func (m model) shownRequest() request {
 	return r
 }
 
-func (m model) invocationLines() []string {
+// invocationLines are the lines of the invocation page, the lines of its log drawn only where
+// they are in sight.
+func (m model) invocationLines() lazyLines {
 	r := m.shownRequest()
 	width := contentWidth - 4
 	row := requestRow(r, time.Duration(m.state.function.inputs.Timeout)*time.Second)
@@ -153,12 +157,14 @@ func (m model) invocationLines() []string {
 		lines = append(lines, styles.Muted(strings.Join(facts, " · ")))
 	}
 	lines = append(lines, "", styles.SectionHeader("log", width))
+	out := lazyOf(lines)
 	for _, e := range r.lines {
-		lines = append(lines, logEntry(e, width)...)
+		rows := m.state.invocation.cache.entryRows(e, "", width)
+		out.addDrawn(len(rows), func(i int) string { return rows[i].paint(width) })
 	}
-	return lines
+	return out
 }
 
 func (m model) invocationView() string {
-	return indent(scrolled(m.invocationLines(), m.state.invocation.scroll, contentHeight))
+	return indent(scrolledLines(m.invocationLines(), m.state.invocation.scroll, contentHeight))
 }

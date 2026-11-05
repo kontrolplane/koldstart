@@ -260,7 +260,15 @@ func UseProfile(p colorprofile.Profile) {
 	pick()
 }
 
+// gen counts the palettes picked.
+var gen int
+
+// Gen numbers the palette in use. It changes whenever Use or UseProfile picks one, so what is kept
+// drawn can tell it was drawn in another.
+func Gen() int { return gen }
+
 func pick() {
+	gen++
 	switch {
 	case profile == colorprofile.ANSI256 && dark:
 		P = Dark256
@@ -396,9 +404,14 @@ func Key(k, desc string) string {
 	return Fg(ToneText).Bold(true).Render(k) + " " + Muted(desc)
 }
 
-// SectionHeader renders a lowercase label followed by a hairline, filling width.
+// SectionHeader renders a lowercase label followed by a hairline, filling width. A label too long
+// for it ends in an ellipsis, so the line stays within width.
 func SectionHeader(title string, width int) string {
-	label := Fg(ToneText).Bold(true).Render(Clean(title))
+	title = Clean(title)
+	if ansi.StringWidth(title) > width-2 {
+		title = ansi.Truncate(title, max(0, width-2), "…")
+	}
+	label := Fg(ToneText).Bold(true).Render(title)
 	fill := max(1, width-lipgloss.Width(label)-1)
 	return label + " " + lipgloss.NewStyle().Foreground(P.Rule).Render(strings.Repeat("─", fill))
 }

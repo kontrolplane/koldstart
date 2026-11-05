@@ -157,27 +157,30 @@ type diffState struct {
 	lines  []diffLine
 	scroll int
 	from   page
+	// wrapped is the lines as the last frame wrapped them, so the next does not wrap them again.
+	wrapped *diffRows
 }
 
 // openDiff shows what changes in a resource, from before to after, scrolled so its first change
 // is in sight, with a few lines above it: the inputs of a function run longer than a short
 // terminal, and the line that changed is often below them.
 func (m model) openDiff(title, detail string, before, after any) (model, tea.Cmd) {
-	m.state.diff = diffState{title: title, detail: detail, lines: lineDiff(jsonLines(before), jsonLines(after)), from: m.page}
-	lines := m.diffLines()
-	for i, line := range lines {
-		if i < diffHeaderLines {
-			continue
-		}
-		if plain := ansi.Strip(line); strings.HasPrefix(plain, "+ ") || strings.HasPrefix(plain, "- ") {
+	d := &m.state.diff
+	*d = diffState{title: title, detail: detail, lines: lineDiff(jsonLines(before), jsonLines(after)), from: m.page, wrapped: &diffRows{}}
+	total := m.diffLines().len()
+	for j, r := range d.rows(diffWidth() - 2) {
+		if i := diffHeaderLines + j; r.op != ' ' && r.first {
 			if i >= contentHeight {
-				m.state.diff.scroll = min(i-diffContext, max(0, len(lines)-contentHeight))
+				d.scroll = min(i-diffContext, max(0, total-contentHeight))
 			}
 			break
 		}
 	}
 	return m.switchPage(diffPage), nil
 }
+
+// diffWidth is the width the diff page draws its lines in.
+func diffWidth() int { return contentWidth - 4 }
 
 // diffHeaderLines are the lines above a diff's json, and diffContext the lines kept in sight
 // above its first change.
@@ -191,13 +194,14 @@ func (m model) diffUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 	if key.Matches(msg, m.keys.Back, m.keys.Quit) {
 		return m.switchPage(d.from), nil
 	}
-	d.scroll = scrollBy(msg, m.keys, d.scroll, contentHeight, maxOffset(len(m.diffLines()), contentHeight))
+	d.scroll = scrollBy(msg, m.keys, d.scroll, contentHeight, maxOffset(m.diffLines().len(), contentHeight))
 	return m, nil
 }
 
-func (m model) diffLines() []string {
+// diffLines are the lines of the diff page, drawn only where they are in sight.
+func (m model) diffLines() lazyLines {
 	d := m.state.diff
-	width := contentWidth - 4
+	width := diffWidth()
 	added, removed := 0, 0
 	for _, l := range d.lines {
 		switch l.op {
@@ -207,32 +211,68 @@ func (m model) diffLines() []string {
 			removed++
 		}
 	}
-	lines := []string{
+	var lines lazyLines
+	counts := cell{styles.S("  ", styles.ToneFaint), styles.S("+"+formatInt(added), styles.ToneSuccess), styles.S(" ", styles.ToneFaint), styles.S("-"+formatInt(removed), styles.ToneDanger)}
+	countsWidth := ansi.StringWidth(plainText(counts))
+	detail := truncate(styles.Clean(d.detail), width-1-countsWidth)
+	lines.add(
 		styles.SectionHeader(d.title, width),
-		" " + styles.Render(styles.S(d.detail, styles.ToneMuted), styles.S("  ", styles.ToneFaint),
-			styles.S("+"+formatInt(added), styles.ToneSuccess), styles.S(" ", styles.ToneFaint), styles.S("-"+formatInt(removed), styles.ToneDanger)),
+		" "+styles.Render(append([]styles.Span{{Text: detail, Tone: styles.ToneMuted}}, counts...)...),
 		"",
-	}
+	)
 	if len(d.lines) == 0 {
-		return append(lines, " "+styles.Faint("no inputs on either side"))
+		lines.add(" " + styles.Faint("no inputs on either side"))
+		return lines
 	}
-	for _, l := range d.lines {
+	rows := d.rows(width - 2)
+	lines.addDrawn(len(rows), func(i int) string {
+		r := rows[i]
 		mark, tone := "  ", styles.ToneFaint
-		switch l.op {
+		switch r.op {
 		case '+':
 			mark, tone = "+ ", styles.ToneSuccess
 		case '-':
 			mark, tone = "- ", styles.ToneDanger
 		}
-		style := styles.Fg(tone)
-		for i, part := range wrapIndented(l.text, width-2) {
-			if i > 0 {
-				mark = "  "
-			}
-			lines = append(lines, style.Render(mark+part))
+		if !r.first {
+			mark = "  "
+		}
+		return styles.Fg(tone).Render(mark + r.text)
+	})
+	return lines
+}
+
+// diffRows are the lines of a diff wrapped to width in the palette numbered palette. They hold no
+// colour, but are wrapped again in a new palette all the same, so nothing kept outlives one.
+type diffRows struct {
+	width   int
+	palette int
+	rows    []diffRow
+}
+
+// diffRow is a part of a line of a diff as it is drawn: the line's op, and whether it is the
+// line's first part.
+type diffRow struct {
+	op    byte
+	first bool
+	text  string
+}
+
+// rows wraps the lines of the diff to width, or takes them as the last frame wrapped them.
+func (d diffState) rows(width int) []diffRow {
+	if d.wrapped != nil && d.wrapped.width == width && d.wrapped.palette == styles.Gen() && width > 0 {
+		return d.wrapped.rows
+	}
+	rows := make([]diffRow, 0, len(d.lines))
+	for _, l := range d.lines {
+		for i, part := range wrapIndented(l.text, width) {
+			rows = append(rows, diffRow{op: l.op, first: i == 0, text: part})
 		}
 	}
-	return lines
+	if d.wrapped != nil {
+		*d.wrapped = diffRows{width: width, palette: styles.Gen(), rows: rows}
+	}
+	return rows
 }
 
 // wrapIndented wraps a line of indented json to width, its continuation lines indented two
@@ -241,9 +281,9 @@ func wrapIndented(s string, width int) []string {
 	if ansi.StringWidth(s) <= width {
 		return []string{s}
 	}
-	lead := min(len(s)-len(strings.TrimLeft(s, " ")), width/2)
+	lead := min(len(s)-len(strings.TrimLeft(s, " ")), width/2, max(0, width-2))
 	body := s[lead:]
-	first, _, _ := strings.Cut(ansi.Wrap(body, max(1, width-lead), ""), "\n")
+	first := wrapWords(body, max(1, width-lead))[0]
 	if !strings.HasPrefix(body, first) {
 		first = ""
 	}
@@ -252,16 +292,34 @@ func wrapIndented(s string, width int) []string {
 	if rest == "" {
 		return out
 	}
-	hang := strings.Repeat(" ", lead+2)
+	hang, room := lead+2, width-lead-2
 	if first == "" {
-		out, hang = nil, s[:lead]
+		out, hang = nil, lead
 	}
-	for part := range strings.SplitSeq(ansi.Wrap(rest, max(1, width-lead-2), ""), "\n") {
-		out = append(out, hang+part)
+	if room < 2 {
+		room = max(1, min(2, width))
+		hang = max(0, min(hang, width-room))
+	}
+	for _, part := range wrapWords(rest, room) {
+		out = append(out, strings.Repeat(" ", hang)+part)
+	}
+	return out
+}
+
+// wrapWords wraps s to width at its spaces and hyphens, breaking a word only where it does not
+// fit on a line of its own, as ansi.Wrap does, and hard where ansi.Wrap leaves a part too wide.
+func wrapWords(s string, width int) []string {
+	var out []string
+	for part := range strings.SplitSeq(ansi.Wrap(s, width, ""), "\n") {
+		if ansi.StringWidth(part) <= width {
+			out = append(out, part)
+			continue
+		}
+		out = append(out, strings.Split(ansi.Hardwrap(part, width, true), "\n")...)
 	}
 	return out
 }
 
 func (m model) diffView() string {
-	return indent(scrolled(m.diffLines(), m.state.diff.scroll, contentHeight))
+	return indent(scrolledLines(m.diffLines(), m.state.diff.scroll, contentHeight))
 }

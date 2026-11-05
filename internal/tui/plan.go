@@ -355,36 +355,47 @@ func (m model) planLines() ([]string, pickList) {
 	var body pickList
 	cols := []column{{width: width - planStatusWidth - 1}, {width: 1}, {width: planStatusWidth, right: true}}
 	for _, c := range m.planChanges() {
-		line := cell{
-			styles.S(fmt.Sprintf(" %-4s", cli.Symbol(c.Action)), actionTones[c.Action]),
-			styles.S(c.ID, styles.ToneText),
-		}
-		switch {
-		case c.Resume:
-			line = append(line, styles.S("  "+cli.ResumeNote(c.Action), styles.ToneFaint))
-		case c.Gone:
-			line = append(line, styles.S("  deleted outside koldstart", styles.ToneWarning))
-		}
-		status := m.progressCell(c)
-		body.add(renderCell(line, cols[0], nil)+" "+renderCell(status, cols[2], nil), litRow(cols, line, nil, status))
+		line := func() cell { return changeCell(c) }
+		body.addDrawn(func() string {
+			return renderCell(line(), cols[0], nil) + " " + renderCell(m.progressCell(c), cols[2], nil)
+		}, func() string { return litRow(cols, line(), nil, m.progressCell(c)) })
 		if len(c.Drift) > 0 {
-			body.lines = append(body.lines, renderCell(text("        ▲ changed outside koldstart: "+strings.Join(c.Drift, ", "), styles.ToneWarning), column{width: width}, nil))
+			body.lines.addDrawn(1, func(int) string {
+				return renderCell(text("        ▲ changed outside koldstart: "+strings.Join(c.Drift, ", "), styles.ToneWarning), column{width: width}, nil)
+			})
 		}
 		if c.Action == engine.Update || c.Action == engine.Replace || c.Action == engine.Adopt {
-			for _, change := range cli.FieldChanges(c) {
-				body.lines = append(body.lines, renderCell(text("        "+change, styles.ToneMuted), column{width: width}, nil))
-			}
+			fields := cli.FieldChanges(c)
+			body.lines.addDrawn(len(fields), func(i int) string {
+				return renderCell(text("        "+fields[i], styles.ToneMuted), column{width: width}, nil)
+			})
 		}
 		if pr := p.progress[c.ID]; pr.err != nil {
 			for _, l := range errorLines(c.ID, pr.err, width-8) {
-				body.lines = append(body.lines, "        "+l)
+				body.lines.add("        " + l)
 			}
 		}
 	}
 	if len(body.rows) == 0 {
-		body.lines = append(body.lines, " "+styles.Faint(styles.Clean(p.ref.String())+" is as the configuration says: there is nothing to "+m.planWhat()))
+		body.lines.add(" " + styles.Faint(styles.Clean(p.ref.String())+" is as the configuration says: there is nothing to "+m.planWhat()))
 	}
 	return head, body
+}
+
+// changeCell is the line of a change of the plan: its action and its id, and what is special
+// about it.
+func changeCell(c engine.Change) cell {
+	line := cell{
+		styles.S(fmt.Sprintf(" %-4s", cli.Symbol(c.Action)), actionTones[c.Action]),
+		styles.S(c.ID, styles.ToneText),
+	}
+	switch {
+	case c.Resume:
+		line = append(line, styles.S("  "+cli.ResumeNote(c.Action), styles.ToneFaint))
+	case c.Gone:
+		line = append(line, styles.S("  deleted outside koldstart", styles.ToneWarning))
+	}
+	return line
 }
 
 // errorLines are a node's error wrapped to width, without the node's id the engine puts first,

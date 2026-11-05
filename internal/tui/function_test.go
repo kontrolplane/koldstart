@@ -120,7 +120,7 @@ func TestScrollStopsAtTheEnd(t *testing.T) {
 				return m
 			},
 			scroll: func(m model) int { return m.state.diff.scroll },
-			lines:  func(m model) int { return len(m.diffLines()) },
+			lines:  func(m model) int { return m.diffLines().len() },
 		},
 		{
 			name: "resource",
@@ -133,7 +133,7 @@ func TestScrollStopsAtTheEnd(t *testing.T) {
 				return pressKeys(t, openTable(t, f), "tab")
 			},
 			scroll: func(m model) int { return m.state.resource.scroll },
-			lines:  func(m model) int { return len(m.resourceLines()) },
+			lines:  func(m model) int { return m.resourceLines().len() },
 		},
 		{
 			name: "invocation",
@@ -149,7 +149,7 @@ func TestScrollStopsAtTheEnd(t *testing.T) {
 				return pressKeys(t, m, "tab", "enter")
 			},
 			scroll: func(m model) int { return m.state.invocation.scroll },
-			lines:  func(m model) int { return len(m.invocationLines()) },
+			lines:  func(m model) int { return m.invocationLines().len() },
 		},
 		{
 			name: "deploy without resource changes",
@@ -161,7 +161,7 @@ func TestScrollStopsAtTheEnd(t *testing.T) {
 				return openNewestDeploy(t, before, after)
 			},
 			scroll: func(m model) int { return m.state.version.scroll },
-			lines:  func(m model) int { return len(m.versionLines().lines) },
+			lines:  func(m model) int { return m.versionLines().lines.len() },
 		},
 	}
 	for _, tt := range tests {
