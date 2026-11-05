@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"cmp"
 	"slices"
 	"strings"
 	"testing"
@@ -188,3 +189,108 @@ func TestNavPickHighlight(t *testing.T) {
 	}
 }
 
+// navTop is the top edge of the frame on screen, where the breadcrumb is set.
+func navTop(m model) string {
+	for line := range strings.SplitSeq(screen(m), "\n") {
+		if strings.Contains(line, "╭") {
+			return line
+		}
+	}
+	return ""
+}
+
+// navPages are the interface on every page, by name, with its first loads in.
+func navPages(t *testing.T) map[string]model {
+	t.Helper()
+	m := started(t, navFake(t))
+	fn := pressKeys(t, m, "enter")
+	prod, cmd := m.openStage(ordersProd)
+	prod = settle(t, prod, cmd)
+	return map[string]model{
+		"overview":    pressKeys(t, m, "q"),
+		"stage":       m,
+		"function":    fn,
+		"logs":        pressKeys(t, fn, "tab"),
+		"invocations": pressKeys(t, fn, "tab", "tab"),
+		"invoke":      pressKeys(t, fn, "shift+tab"),
+		"invocation":  pressKeys(t, fn, "tab", "tab", "enter"),
+		"resource":    pressKeys(t, m, "tab", "G", "enter"),
+		"version":     pressKeys(t, m, "shift+tab", "enter"),
+		"diff":        pressKeys(t, m, "d", "enter"),
+		"plan":        pressKeys(t, m, "d"),
+		"unlock":      pressKeys(t, m, "ctrl+x"),
+		"run here":    pressKeys(t, prod, "enter", "I"),
+	}
+}
+
+// TestNavBreadcrumb checks the frame names where every page sits, a diff and an invocation under
+// the page they came from.
+func TestNavBreadcrumb(t *testing.T) {
+	pages := navPages(t)
+	tests := []struct {
+		page string
+		want string
+	}{
+		{page: "overview", want: "╭─ stages ─"},
+		{page: "stage", want: "stages › orders/dev › functions ─"},
+		{page: "function", want: "stages › orders/dev › functions › api › overview ─"},
+		{page: "logs", want: "stages › orders/dev › functions › api › logs ─"},
+		{page: "invocation", want: "stages › orders/dev › functions › api › invocations › 33333333-333 ─"},
+		{page: "resource", want: "stages › orders/dev › resources › resource/table ─"},
+		{page: "plan", want: "stages › orders/dev › deploy ─"},
+		{page: "diff", want: "stages › orders/dev › deploy › function/api ─"},
+		{page: "unlock", want: "stages › orders/dev › unlock ─"},
+		{page: "run here", want: "stages › orders/prod › functions › api › invoke ─"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.page, func(t *testing.T) {
+			if top := navTop(pages[tt.page]); !strings.Contains(top, tt.want) {
+				t.Errorf("top %q, want %q in it", top, tt.want)
+			}
+		})
+	}
+	version := pages["version"]
+	if top := navTop(pressKeys(t, version, "enter")); !strings.Contains(top, "› history › ") || !strings.HasSuffix(strings.TrimRight(top, "─╮ "), "resource/table") {
+		t.Errorf("a diff of a deploy does not sit under it: %q", top)
+	}
+}
+
+// TestNavBreadcrumbNarrow checks a breadcrumb that does not fit loses its middle, keeping the
+// first crumb and the page on screen whole: the crumbs between fold into an ellipsis, then the
+// function is cut.
+func TestNavBreadcrumbNarrow(t *testing.T) {
+	long := strings.Repeat("checkout", 4)
+	tests := []struct {
+		name     string
+		function string
+		width    int
+		want     string
+	}{
+		{name: "fits", function: "api", want: "stages › orders/dev › functions › api › logs"},
+		{name: "middle folds", function: long, want: "stages › … › functions › " + long + " › logs"},
+		{name: "function cut", function: long, width: 30, want: "stages › … › checkoutc… › logs"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := navFake(t)
+			st := f.states[ordersDev]
+			fn := *st.Resources["function/api"]
+			st.Resources["function/"+tt.function] = &fn
+			m := started(t, f)
+			for i, name := range m.state.stage.functions {
+				if name == tt.function {
+					m.state.stage.tables[functionsTab].setCursor(i)
+				}
+			}
+			m = pressKeys(t, m, "enter", "tab")
+			m, _ = update(t, m, tea.WindowSizeMsg{Width: 78, Height: 24})
+			width := cmp.Or(tt.width, titleRoom(""))
+			if crumb := ansi.Strip(m.breadcrumb(width)); crumb != tt.want {
+				t.Errorf("breadcrumb %q in %d, want %q", crumb, width, tt.want)
+			}
+			if !strings.Contains(navTop(m), "logs ─") {
+				t.Errorf("the frame lost the page: %q", navTop(m))
+			}
+		})
+	}
+}

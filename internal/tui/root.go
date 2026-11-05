@@ -267,7 +267,7 @@ func (m model) render() string {
 		return place(m.width, m.height, notice)
 	}
 	meta, foot := m.frameMeta()
-	view := m.header() + "\n\n" + frame(styles.Render(m.breadcrumb()...), meta, foot, m.content()) + "\n" + m.footer()
+	view := m.header() + "\n\n" + frame(m.breadcrumb(titleRoom(meta)), meta, foot, m.content()) + "\n" + m.footer()
 	if m.width == 0 {
 		return view
 	}
@@ -386,42 +386,101 @@ func callerName(arn string) string {
 // crumbStages is the first crumb, the overview of every stage.
 const crumbStages = "stages"
 
-// breadcrumb names where the page sits: stages › orders/dev › functions › api.
-func (m model) breadcrumb() []styles.Span {
+// crumbSep goes between the crumbs, and crumbWidth is the widest a crumb before the last gets.
+const (
+	crumbSep   = " › "
+	crumbWidth = 32
+)
+
+// trail names where a page sits, from the stages down: a diff and an invocation under the page
+// they were opened from.
+func (m model) trail(p page) []string {
 	ref := m.state.stage.ref.String()
-	var trail []string
-	switch m.page {
+	switch p {
 	case overviewPage:
-		trail = []string{crumbStages}
+		return []string{crumbStages}
 	case stagePage:
-		trail = []string{crumbStages, ref, stageTabs[m.state.stage.tab]}
+		return []string{crumbStages, ref, stageTabs[m.state.stage.tab]}
 	case functionPage, runLocalPage:
-		trail = []string{crumbStages, ref, stageTabs[functionsTab], m.state.function.name}
+		f := m.state.function
+		return []string{crumbStages, ref, stageTabs[functionsTab], f.name, functionTabs[f.tab]}
 	case resourcePage:
-		trail = []string{crumbStages, ref, stageTabs[resourcesTab], m.state.resource.res.id}
+		return []string{crumbStages, ref, stageTabs[resourcesTab], m.state.resource.res.id}
 	case versionPage:
-		trail = []string{crumbStages, ref, stageTabs[historyTab], formatTime(m.state.version.version.LastModified)}
+		return []string{crumbStages, ref, stageTabs[historyTab], formatTime(m.state.version.version.LastModified)}
 	case planPage, removePage:
-		trail = []string{crumbStages, m.state.plan.ref.String(), m.planWhat()}
+		return []string{crumbStages, m.state.plan.ref.String(), m.planWhat()}
 	case unlockPage:
-		trail = []string{crumbStages, m.state.unlock.ref.String(), m.keys.Unlock.Help().Desc}
+		return []string{crumbStages, m.state.unlock.ref.String(), m.keys.Unlock.Help().Desc}
 	case diffPage:
-		trail = []string{crumbStages, ref, "diff", m.state.diff.title}
+		from := m.state.diff.from
+		if from == diffPage {
+			from = overviewPage
+		}
+		return append(m.trail(from), m.state.diff.title)
 	case invocationPage:
-		trail = []string{crumbStages, ref, m.state.function.name, functionTabs[invocationsTab], shortSHA(m.state.invocation.req.id)}
+		return append(m.trail(functionPage), shortSHA(m.state.invocation.req.id))
 	}
+	return []string{crumbStages}
+}
+
+// breadcrumb names where the page sits in width columns: stages › orders/dev › functions › api ›
+// logs, the page on screen in bold.
+func (m model) breadcrumb(width int) string {
+	trail := m.trail(m.page)
+	for i := range trail {
+		trail[i] = styles.Clean(trail[i])
+		if i < len(trail)-1 {
+			trail[i] = truncate(trail[i], crumbWidth)
+		}
+	}
+	crumbs := foldCrumbs(trail, width)
+	last := len(crumbs) - 1
 	var spans []styles.Span
-	for i, t := range trail {
+	for i, c := range crumbs {
 		if i > 0 {
-			spans = append(spans, styles.S(" › ", styles.ToneFaint))
+			spans = append(spans, styles.S(crumbSep, styles.ToneFaint))
 		}
-		if i == len(trail)-1 {
-			spans = append(spans, styles.B(t, styles.ToneText))
-		} else {
-			spans = append(spans, styles.S(truncate(t, 32), styles.ToneMuted))
+		switch {
+		case i == last:
+			spans = append(spans, styles.B(c, styles.ToneText))
+		case c == "…" && i == 1:
+			spans = append(spans, styles.S(c, styles.ToneFaint))
+		default:
+			spans = append(spans, styles.S(c, styles.ToneMuted))
 		}
 	}
-	return spans
+	return styles.Render(spans...)
+}
+
+// foldCrumbs fits a trail to width by giving way in the middle: the crumbs after the first fold
+// into an ellipsis from the left until the two last are left, then the one before the last is
+// cut, and the last, the page on screen, only once nothing else gives way.
+func foldCrumbs(trail []string, width int) []string {
+	fits := func(crumbs []string) bool { return ansi.StringWidth(strings.Join(crumbs, crumbSep)) <= width }
+	crumbs := slices.Clone(trail)
+	for n := 1; !fits(crumbs) && n < len(trail)-2; n++ {
+		crumbs = append([]string{trail[0], "…"}, trail[1+n:]...)
+	}
+	cut := func(i int) {
+		others := ansi.StringWidth(strings.Join(crumbs, crumbSep)) - ansi.StringWidth(crumbs[i])
+		crumbs[i] = truncate(crumbs[i], max(1, width-others))
+	}
+	if !fits(crumbs) && len(crumbs) >= 3 {
+		cut(len(crumbs) - 2)
+	}
+	if !fits(crumbs) {
+		cut(len(crumbs) - 1)
+	}
+	return crumbs
+}
+
+// titleRoom is the room the frame's top edge leaves its title beside meta.
+func titleRoom(meta string) int {
+	if meta == "" {
+		return frameWidth - 7
+	}
+	return frameWidth - 9 - min(ansi.StringWidth(meta), frameWidth/3)
 }
 
 // position is where the page on screen is, for the frame's foot: the row under the cursor of a
