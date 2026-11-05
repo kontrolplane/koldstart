@@ -635,14 +635,16 @@ func (m model) footer() string {
 	var status string
 	if m.status != "" {
 		mark, tone := "✓ ", styles.ToneSuccess
+		text, budget := m.status, frameWidth*2/3
 		switch m.statusTone {
 		case styles.ToneDanger:
 			mark, tone = "✗ ", styles.ToneDanger
+			text = cutError(text, budget-ansi.StringWidth(mark))
 		case styles.ToneWarning:
 			mark, tone = "▲ ", styles.ToneWarning
 		}
-		status = styles.Render(styles.S(mark, tone), styles.S(m.status, tone))
-		status = ansi.Truncate(status, frameWidth*2/3, "…")
+		status = styles.Render(styles.S(mark, tone), styles.S(text, tone))
+		status = ansi.Truncate(status, budget, "…")
 	}
 	width := frameWidth - 3 - ansi.StringWidth(status)
 	left := fitHints(width, m.shortHelp()...)
@@ -651,6 +653,29 @@ func (m model) footer() string {
 	}
 	return " " + spread(ansi.Truncate(left, width, "…"), status+" ", frameWidth-1)
 }
+
+// cutError fits an error in width by cutting out its middle: what failed, up to the first colon,
+// stays, and so does the end, where an error from aws says why, as connection refused or the
+// permission it lacks. When the head would leave the end too little room, the end alone stays.
+func cutError(s string, width int) string {
+	if ansi.StringWidth(s) <= width || width < 8 {
+		return s
+	}
+	head, _, ok := strings.Cut(s, ": ")
+	if head += ": "; !ok || width-ansi.StringWidth(head)-1 < minErrorTail {
+		head = ""
+	}
+	room := width - ansi.StringWidth(head) - 1
+	runes := []rune(s)
+	start := len(runes)
+	for start > 0 && ansi.StringWidth(string(runes[start-1:])) <= room {
+		start--
+	}
+	return head + "…" + string(runes[start:])
+}
+
+// minErrorTail is the least of the end of an error cutError keeps beside its head.
+const minErrorTail = 24
 
 // fitHints renders the hints that fit width, dropping them from the end but for the last two,
 // help and back or quit, which stay.

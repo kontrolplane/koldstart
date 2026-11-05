@@ -707,11 +707,7 @@ func cmpOr(values ...string) string {
 // stageGoBack goes back to the overview with the cursor on the stage left, also when it was
 // opened on start rather than from there.
 func (m model) stageGoBack() (model, tea.Cmd) {
-	o := &m.state.overview
-	if i := slices.IndexFunc(o.shown, func(s cli.StageSummary) bool { return s.StageRef == m.state.stage.ref }); i >= 0 {
-		o.table.setCursor(i)
-	}
-	m = m.switchPage(overviewPage)
+	m = m.switchPage(overviewPage).selectStage(m.state.stage.ref)
 	return m.loadStages()
 }
 

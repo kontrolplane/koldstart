@@ -140,6 +140,16 @@ func overviewRow(s cli.StageSummary, local bool) tableRow {
 	return append(row, text(formatAgo(s.DeployedAt), styles.ToneBody), text(orDash(s.DeployedBy), styles.ToneMuted), resources, lock)
 }
 
+// selectStage puts the overview's cursor on ref, when it is listed, so going back from a stage,
+// also the project's that opened on start, lands on it.
+func (m model) selectStage(ref cli.StageRef) model {
+	o := &m.state.overview
+	if i := slices.IndexFunc(o.shown, func(s cli.StageSummary) bool { return s.StageRef == ref }); i >= 0 {
+		o.table.setCursor(i)
+	}
+	return m
+}
+
 // selectedStage is the stage under the cursor.
 func (m model) selectedStage() (cli.StageSummary, bool) {
 	o := m.state.overview

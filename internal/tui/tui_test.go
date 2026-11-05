@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -120,6 +122,60 @@ func TestStaleLoadsAreDropped(t *testing.T) {
 	m, _ = update(t, m, stagesLoadedMsg{gen: m.state.overview.gen, err: errAWS})
 	if len(m.state.overview.shown) != 3 || !strings.Contains(m.status, "aws said no") || m.error != "" {
 		t.Fatalf("a failed refresh: %d stages, status %q, error %q; want the stages kept and the error in the footer", len(m.state.overview.shown), m.status, m.error)
+	}
+}
+
+// TestFooterKeepsTheCause checks an error too long for the footer keeps what failed and the end
+// of the error from aws, which says why, instead of being cut before either is reached.
+func TestFooterKeepsTheCause(t *testing.T) {
+	err := errors.New(`reading the state of orders/dev: operation error S3: GetObject, exceeded maximum number of attempts, 3, https response error StatusCode: 0, RequestID: , HostID: , request send failed, Get "http://127.0.0.1:4566/koldstart-state/orders/dev/state.json": dial tcp 127.0.0.1:4566: connect: connection refused`)
+	for _, width := range []int{80, 120, 200} {
+		t.Run(fmt.Sprint(width), func(t *testing.T) {
+			m := started(t, newFake(t))
+			m, _ = update(t, m, tea.WindowSizeMsg{Width: width, Height: 30})
+			m, _ = update(t, m, stageLoadedMsg{gen: m.state.stage.gen, err: err})
+			lines := strings.Split(screen(m), "\n")
+			footer := lines[len(lines)-1]
+			wants := []string{"✗ could not read the state of orders/dev: …", "connect: connection refused"}
+			if width == 80 {
+				wants = []string{"✗ …", "connect: connection refused"}
+			}
+			for _, want := range wants {
+				if !strings.Contains(footer, want) {
+					t.Errorf("the footer does not say %q:\n%s", want, footer)
+				}
+			}
+			if w := ansi.StringWidth(footer); w > width {
+				t.Errorf("the footer is %d wide, wider than %d", w, width)
+			}
+		})
+	}
+}
+
+// TestCutError checks an error is cut in its middle, keeping what failed and why.
+func TestCutError(t *testing.T) {
+	tests := []struct {
+		name  string
+		s     string
+		width int
+		want  string
+	}{
+		{name: "fits", s: "could not list the stages: denied", width: 40, want: "could not list the stages: denied"},
+		{name: "head and end", s: "could not list the stages: operation error S3: ListObjectsV2, connection refused", width: 60, want: "could not list the stages: …istObjectsV2, connection refused"},
+		{name: "head too long", s: "could not read the state of a stage with a very long name indeed: connection refused", width: 30, want: "…me indeed: connection refused"},
+		{name: "head leaves too little", s: "could not read the state of orders/dev: dial tcp: connection refused", width: 50, want: "…state of orders/dev: dial tcp: connection refused"},
+		{name: "no colon", s: "the deploy is running and cannot be stopped from here at all", width: 20, want: "…ed from here at all"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := cutError(tt.s, tt.width)
+			if got != tt.want {
+				t.Errorf("cutError = %q, want %q", got, tt.want)
+			}
+			if ansi.StringWidth(got) > tt.width {
+				t.Errorf("cutError is %d wide, want at most %d", ansi.StringWidth(got), tt.width)
+			}
+		})
 	}
 }
 
