@@ -64,9 +64,17 @@ or %s.`, defaultRegion),
 		},
 	}
 	cmd.Flags().StringVar(&app, "app", "", "the app's name, the directory's by default")
-	cmd.Flags().StringVarP(&template, "template", "t", scaffold.Node, "the handler's language: "+strings.Join(scaffold.Templates, " or "))
+	cmd.Flags().StringVarP(&template, "template", "t", scaffold.Node, "the handler's language: "+orList(scaffold.Templates))
 	cmd.Flags().BoolVar(&force, "force", false, "write over a koldstart.pkl that is there")
 	return cmd
+}
+
+// orList names the choices as a person writes them: node, go or python.
+func orList(names []string) string {
+	if len(names) < 2 {
+		return strings.Join(names, "")
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " or " + names[len(names)-1]
 }
 
 // initRegion is --region, or the region of the aws profile, or defaultRegion. It reads only the

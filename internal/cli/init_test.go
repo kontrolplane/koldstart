@@ -9,18 +9,20 @@ import (
 )
 
 // TestInit checks init writes the template into the directory it is given, names the app after
-// it, and says what to run next.
+// it, and says the app, its region and what to run next.
 func TestInit(t *testing.T) {
 	tests := []struct {
 		name     string
 		args     []string
 		files    []string
 		app      string
+		started  string
 		next     string
 		failWith string
 	}{
-		{name: "node", args: []string{"orders"}, files: []string{"koldstart.pkl", "src/api.ts", ".gitignore"}, app: `app = "orders"`, next: "kdst deploy"},
-		{name: "go", args: []string{"orders", "-t", "go", "--app", "shop"}, files: []string{"koldstart.pkl", "cmd/api/main.go", "go.mod"}, app: `app = "shop"`, next: "go mod tidy"},
+		{name: "node", args: []string{"orders"}, files: []string{"koldstart.pkl", "src/api.ts", ".gitignore"}, app: `app = "orders"`, started: "started orders, which deploys to eu-west-1", next: "kdst deploy"},
+		{name: "go", args: []string{"orders", "-t", "go", "--app", "shop"}, files: []string{"koldstart.pkl", "cmd/api/main.go", "go.mod"}, app: `app = "shop"`, started: "started shop, which deploys to eu-west-1", next: "go mod tidy"},
+		{name: "python", args: []string{"orders", "-t", "python"}, files: []string{"koldstart.pkl", "src/api.py", "requirements.txt"}, app: `app = "orders"`, started: "started orders", next: "kdst plan"},
 		{name: "unknown template", args: []string{"orders", "-t", "ruby"}, failWith: "no template"},
 		{name: "no app name", args: []string{"日本"}, failWith: "pass --app"},
 	}
@@ -51,9 +53,27 @@ func TestInit(t *testing.T) {
 			if !strings.Contains(string(data), tt.app) || !strings.Contains(string(data), `region = "eu-west-1"`) {
 				t.Errorf("koldstart.pkl:\n%s", data)
 			}
-			if !strings.Contains(out.String(), tt.next) || !strings.Contains(out.String(), "cd orders") {
+			if !strings.Contains(out.String(), tt.started) || !strings.Contains(out.String(), tt.next) || !strings.Contains(out.String(), "cd orders") {
 				t.Errorf("printed:\n%s", out.String())
 			}
 		})
+	}
+}
+
+// TestOrList checks choices are named as a person writes them.
+func TestOrList(t *testing.T) {
+	tests := []struct {
+		in   []string
+		want string
+	}{
+		{in: nil, want: ""},
+		{in: []string{"node"}, want: "node"},
+		{in: []string{"node", "go"}, want: "node or go"},
+		{in: []string{"node", "go", "python"}, want: "node, go or python"},
+	}
+	for _, tt := range tests {
+		if got := orList(tt.in); got != tt.want {
+			t.Errorf("orList(%q) = %q, want %q", tt.in, got, tt.want)
+		}
 	}
 }

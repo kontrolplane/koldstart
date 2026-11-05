@@ -117,10 +117,11 @@ kdst plan
 kdst deploy
 ```
 
-The first deploy in an account and region also creates the state bucket. When it finishes, it prints the outputs, the url of the http api among them:
+The first deploy in an account and region also creates the state bucket. When it finishes, it prints the outputs, the url of the http api among them. `outputs` prints them again, and `-o json` prints them for a script:
 
 ```bash
 kdst outputs
+curl "$(kdst outputs -o json | jq -r .httpApiUrl)/hello"
 ```
 
 Invoke a function with an event from a file or inline, and follow its logs:

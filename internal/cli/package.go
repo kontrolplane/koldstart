@@ -56,7 +56,7 @@ func printArchives(w io.Writer, root string, archives []build.Archive) error {
 	_, _ = fmt.Fprintf(tw, "FUNCTION\t%*s\tSHA256\tZIP\n", width, "SIZE")
 	for _, a := range archives {
 		if a.Image {
-			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", a.Function, "-", a.SHA256[:12], "container image, built on deploy")
+			_, _ = fmt.Fprintf(tw, "%s\t%*s\t%s\t%s\n", a.Function, width, "-", a.SHA256[:12], "container image, built on deploy")
 			continue
 		}
 		rel, err := filepath.Rel(root, a.Path)
