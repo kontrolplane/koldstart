@@ -3,10 +3,20 @@
 ## layout
 
 ```
-cmd/koldstart/       the binary; main calls internal/cli. kdst is a link to it
-internal/cli/        the cobra commands and the global flags
-internal/version/    the build's version, stamped by the linker, in route's shape
-docs/                the user documentation; it describes the design in #1 until it is built
+cmd/koldstart/              the binary; main calls internal/cli. kdst is a link to it
+pkl/                        the schema package: Project.pkl, the shape of koldstart.pkl, and kdst.pkl, its helpers and events
+internal/cli/               the cobra commands, the global flags and the aws session
+internal/pkl/               finds or downloads pkl, and evaluates configuration to json
+internal/config/            decodes what pkl renders, and checks what the schema cannot
+internal/build/             node bundled with esbuild, go cross-compiled; deterministic zips
+internal/desired/           turns a configuration into nodes: names, policies, link, events, resources
+internal/engine/            plans and applies nodes in dependency order, recording every step in the state
+internal/state/             the state, locks and zips in a bucket of the account; a memory backend for tests
+internal/provider/awsp/     the hand-written providers, with koldstart:: type names
+internal/provider/cloudcontrol/  everything in resources, through cloud control
+internal/awstest/           connects tests to the emulator
+internal/version/           the build's version, stamped by the linker, in route's shape
+docs/                       the user documentation; it describes the design in #1 until it is built
 ```
 
 The packages still to come, and the milestones they land in, are in [#1](https://github.com/kontrolplane/koldstart/issues/1).
@@ -22,7 +32,7 @@ The packages still to come, and the milestones they land in, are in [#1](https:/
 - tests: standard library only, no testify. table tests with `tests := []struct{...}`, a doc comment on each test.
 - tests come in three tiers:
   - unit: `make test`. aws calls go behind small interfaces, so the engine, providers and tui are tested against fakes. no network, no docker.
-  - emulator: `make emulator test-emulator`, against MiniStack (`docker-compose.yaml`). a test that talks to aws has `Emulator` in its name and gets its config from `awstest.Emulator(t)`, which skips without `KOLDSTART_TEST_ENDPOINT`. MiniStack runs lambda as a subprocess on one node version and ignores `ExpectedBucketOwner`: test those against fakes.
+  - emulator: `make emulator test-emulator`, against MiniStack (`docker-compose.yaml`). a test that talks to aws has `Emulator` in its name and gets its config from `awstest.Emulator(t)`, which skips without `KOLDSTART_TEST_ENDPOINT`. MiniStack runs lambda as a subprocess on one node version, ignores `ExpectedBucketOwner`, and its cloud control only keeps the properties it was given, under a uuid: no real resource, no attributes aws sets, no idempotent client tokens. test those against fakes that behave as aws does.
   - e2e: `go test -tags e2e ./test/e2e/...`, against a real sandbox account, for what no emulator gets right.
 - logs: `log/slog`. `--debug` writes them to `debug.log`, otherwise nothing is logged.
 - errors wrap with what was being done (`fmt.Errorf("reading the state of %s: %w", stage, err)`). an error a person reads says what to do.
