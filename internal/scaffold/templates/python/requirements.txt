@@ -1,0 +1,1 @@
+# the packages the function needs, installed with uv for the platform lambda runs it on
