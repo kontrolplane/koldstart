@@ -365,7 +365,7 @@ func (m model) planLines() ([]string, pickList) {
 		}
 	}
 	if len(body.rows) == 0 {
-		body.lines = append(body.lines, " "+styles.Faint(p.ref.String()+" is as the configuration says: there is nothing to "+m.planWhat()))
+		body.lines = append(body.lines, " "+styles.Faint(styles.Clean(p.ref.String())+" is as the configuration says: there is nothing to "+m.planWhat()))
 	}
 	return head, body
 }

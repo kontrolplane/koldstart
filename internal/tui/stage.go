@@ -469,7 +469,7 @@ func groupResources(st *state.State, f filterBox) []stageResource {
 	for _, k := range keys {
 		group := members[k]
 		slices.SortFunc(group, func(a, b stageResource) int {
-			return cmp.Or(cmp.Compare(boolInt(a.id != heads[k]), boolInt(b.id != heads[k])), cmp.Compare(a.id, b.id))
+			return cmp.Or(cmp.Compare(boolInt(a.id != heads[k]), boolInt(b.id != heads[k])), cmp.Compare(a.id, b.id), cmp.Compare(boolInt(a.retained), boolInt(b.retained)))
 		})
 		if !slices.ContainsFunc(group, func(r stageResource) bool { return f.matches(r.id, r.res.Type, r.res.PhysicalID) }) {
 			continue

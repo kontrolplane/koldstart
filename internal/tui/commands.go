@@ -213,7 +213,9 @@ func (m model) loadLogs(since, until time.Time, how logsHow) (model, tea.Cmd) {
 }
 
 // startTail follows the function's logs with a live tail, until the function is left or
-// following stops, its lines sent on a channel the returned command reads from.
+// following stops, its lines sent on a channel the returned command reads from. Once it is
+// stopped nothing may read the channel, so a send gives up when its context ends rather than
+// leave the goroutine waiting.
 func (m model) startTail() (model, tea.Cmd) {
 	f := &m.state.function
 	if f.logGroupARN == "" || f.logs.tailing || f.logs.noTail {
@@ -224,15 +226,17 @@ func (m model) startTail() (model, tea.Cmd) {
 	ch := make(chan tea.Msg, 64)
 	f.logs.tailGen, f.logs.tailing, f.logs.stopTail = gen, true, cancel
 	ref, arn := m.state.stage.ref, f.logGroupARN
+	send := func(msg tea.Msg) {
+		select {
+		case ch <- msg:
+		case <-ctx.Done():
+		}
+	}
 	go func() {
 		defer close(ch)
-		err := m.b.Tail(ctx, ref, arn, func(lines []cli.LogEvent) {
-			select {
-			case ch <- tailMsg{gen: gen, lines: lines, ch: ch}:
-			case <-ctx.Done():
-			}
-		})
-		ch <- tailMsg{gen: gen, ended: true, err: err, ch: ch}
+		defer cancel()
+		err := m.b.Tail(ctx, ref, arn, func(lines []cli.LogEvent) { send(tailMsg{gen: gen, lines: lines, ch: ch}) })
+		send(tailMsg{gen: gen, ended: true, err: err, ch: ch})
 	}()
 	return m, waitFor(ch)
 }

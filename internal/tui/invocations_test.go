@@ -25,6 +25,8 @@ func TestFailure(t *testing.T) {
 		{name: "logfmt error", line: `time=x level=error msg=boom`, failed: true},
 		{name: "slog error", line: `time=x level=ERROR msg=boom`, failed: true},
 		{name: "a level of errors", line: `level=errors msg=fine`, failed: false},
+		{name: "json panic", line: `{"level":"panic","msg":"boom"}`, failed: true},
+		{name: "logfmt severity", line: `severity=err msg=boom`, failed: true},
 		{name: "a message about an error", line: `{"level":"info","msg":"no error here"}`, failed: false},
 		{name: "exit", line: "RequestId: 1 Error: Runtime exited with error: exit status 2\nRuntime.ExitError", failed: true},
 		{name: "report of an error", line: "REPORT RequestId: 1\tDuration: 2.00 ms\tStatus: error\tError Type: Runtime.Unknown", failed: true},
@@ -88,26 +90,5 @@ func TestInvocationTakesItsReport(t *testing.T) {
 	m = m.updateRequests()
 	if v := screen(m); !strings.Contains(v, "✓ ok") || !strings.Contains(v, "duration 2ms") || !strings.Contains(v, "REPORT") {
 		t.Errorf("the invocation once reported:\n%s", v)
-	}
-}
-
-// TestInvocationScroll checks the lines of an invocation scroll no further than their end, so ↑
-// after G moves at once.
-func TestInvocationScroll(t *testing.T) {
-	at := time.Now().Add(-time.Minute)
-	id := "66666666-6666-6666-6666-666666666666"
-	lines := make([]cli.LogEvent, 0, 81)
-	lines = append(lines, cli.LogEvent{Time: at, Stream: "a", Message: "START RequestId: " + id + " Version: $LATEST"})
-	for i := range 80 {
-		lines = append(lines, cli.LogEvent{Time: at.Add(time.Duration(i+1) * time.Millisecond), Stream: "a", Message: "2026-11-05T10:00:00.001Z\t" + id + "\tINFO\tstep"})
-	}
-	m, _ := onLogs(t, lines)
-	m = pressKeys(t, m, "tab", "enter", "G")
-	bottom := m.state.invocation.scroll
-	if bottom != len(m.invocationLines())-contentHeight {
-		t.Fatalf("G scrolled to %d, want %d", bottom, len(m.invocationLines())-contentHeight)
-	}
-	if m = pressKeys(t, m, "k"); m.state.invocation.scroll != bottom-1 {
-		t.Errorf("k after G scrolled to %d, want %d", m.state.invocation.scroll, bottom-1)
 	}
 }

@@ -35,7 +35,7 @@ var (
 	reportItem = regexp.MustCompile(`(Billed Duration|Init Duration|Duration|Max Memory Used|Memory Size): ([\d.]+)`)
 	nodeLine   = regexp.MustCompile(`^\S+\t([0-9a-f-]{36})\t`)
 	// errorLevel is a line of json or logfmt logged at the error level or worse.
-	errorLevel = regexp.MustCompile(`(?i)"(level|lvl|severity)"\s*:\s*"(error|fatal|critical)"|(^|\s)(level|lvl)="?(error|fatal|critical)\b`)
+	errorLevel = regexp.MustCompile(`(?i)"(level|lvl|severity)"\s*:\s*"(error|err|fatal|critical|panic)"|(^|\s)(level|lvl|severity)="?(error|err|fatal|critical|panic)\b`)
 )
 
 // failure reports whether a line of a request says it failed: an error a runtime logs, a

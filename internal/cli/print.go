@@ -159,12 +159,13 @@ func printPlanTo(w io.Writer, app, stage, region, account string, plan *engine.P
 
 // planCounts counts the changes of a plan, as 2 to create, 1 to update.
 func planCounts(plan *engine.Plan) string {
-	var parts []string
-	for _, c := range PlanCounts(plan) {
-		parts = append(parts, c.String())
-	}
-	if len(parts) == 0 {
+	counts := PlanCounts(plan)
+	if len(counts) == 0 {
 		return "no changes"
+	}
+	parts := make([]string, 0, len(counts))
+	for _, c := range counts {
+		parts = append(parts, c.String())
 	}
 	return strings.Join(parts, ", ")
 }

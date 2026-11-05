@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"slices"
@@ -98,9 +99,9 @@ var (
 	expiredCodes = []string{"ExpiredToken", "ExpiredTokenException", "RequestExpired", "TokenRefreshRequired"}
 )
 
-// accountError says what to do when sts could not say whose cfg's credentials are, from where
-// they came from and why they failed: sign in again, fix the keys, set up a profile, or check the
-// region.
+// accountError says what to do when sts could not say whose cfg's credentials are, by where they
+// came from and why they failed: sign in again, fix the keys, set up a profile, or check the
+// region. Where there are no credentials at all, the sdk's error is only logged.
 func accountError(err error, cfg aws.Config, profile string) error {
 	var sources []aws.CredentialSource
 	if p, ok := cfg.Credentials.(aws.CredentialProviderSource); ok {
@@ -134,6 +135,7 @@ func accountError(err error, cfg aws.Config, profile string) error {
 	case slices.Contains(refusedCodes, code):
 		return fmt.Errorf("finding the aws account: %w\naws refused the credentials: check the access keys of profile %s, or pass another --profile", err, cmp.Or(profile, "default"))
 	case code == "" && (len(sources) == 0 || slices.Equal(sources, []aws.CredentialSource{aws.CredentialSourceIMDS})):
+		slog.Debug("no aws credentials", "error", err)
 		return errors.New("no aws credentials: pass --profile or set AWS_PROFILE, or set up a profile with aws configure sso")
 	}
 	return fmt.Errorf("finding the aws account: %w", err)
