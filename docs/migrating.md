@@ -37,6 +37,9 @@ koldstart does not read `serverless.yml` itself, and does not run serverless fra
 | `events: stream`                                            | `kdst.Stream`                                                        |
 | `events: sns`                                               | `kdst.Topic`; a topic given by name becomes a resource, as the serverless framework made it |
 | `events: s3`                                                | `kdst.Bucket`; a bucket that is not `existing` becomes a resource     |
+| `events: eventBridge` with a `pattern`                      | `kdst.EventRule`, with `eventBus`, `input` and `enabled`             |
+| `events: websocket`, and `websocketsApiRouteSelectionExpression` | `kdst.WebSocketRoute`, and `websocket.routeSelection`          |
+| `events: alb`                                               | `kdst.LoadBalancer`, with its path, host and method conditions       |
 | `resources.Resources`                                       | `resources`, the same type and properties, and `DeletionPolicy`       |
 | `resources.Outputs`                                         | `outputs`                                                            |
 | `Ref`, `!Ref`                                               | `kdst.ref(<name>, "Identifier")`, or `"FunctionName"` for a function  |
@@ -72,7 +75,7 @@ A variable inside a longer string becomes pkl interpolation: `orders-${sls:stage
 - `custom` and `plugins`. What refers to `custom` gets its value. Some plugins are no longer needed: koldstart bundles typescript itself, so `serverless-esbuild` and `serverless-plugin-typescript` can go, `serverless-offline` is `kdst offline`, and every function has its own role already.
 - runtimes other than node, go and python, which koldstart does not deploy: those functions are left out; and a function of a prebuilt image, given by its uri, which koldstart does not take, as it builds images itself.
 - `layers` that `serverless.yml` builds, which koldstart does not build: publish them, and give functions their arns. A go function's layers, which go functions do not take.
-- events other than the ones above, such as `websocket`, `eventBridge` and `alb`.
+- events other than the ones above, such as `cognitoUserPool`, `iot` and `cloudwatchLog`; an `eventBridge` event of a schedule, which is `kdst.Schedule`, and its `inputPath`, `inputTransformer` and `retryPolicy`; the header, query and ip conditions of an `alb` event; a websocket route's authorizer.
 - resources of a `Custom::` type, and `DependsOn`, `Condition` and the other attributes of a resource besides `DeletionPolicy`.
 
 ## moving a stage that is already deployed

@@ -139,6 +139,9 @@ events {
   new kdst.Topic { topic = kdst.ref("alerts", "TopicArn") }
   new kdst.Stream { stream = kdst.ref("orders", "StreamArn"); startingPosition = "LATEST" }
   new kdst.Bucket { bucket = kdst.ref("uploads", "BucketName"); events { "s3:ObjectCreated:*" }; prefix = "incoming/" }
+  new kdst.EventRule { bus = "orders"; pattern = new Dynamic { source { "orders.service" }; ["detail-type"] { "OrderPlaced" } } }
+  new kdst.WebSocketRoute { route = "$connect" }
+  new kdst.LoadBalancer { listener = "arn:aws:elasticloadbalancing:..."; priority = 10; paths { "/legacy/*" } }
 }
 ```
 
@@ -150,6 +153,9 @@ events {
 | `Topic`     | an sns subscription and the permission for sns to invoke the function, with `filterPolicy`          |
 | `Stream`    | an event source mapping from a kinesis stream or a dynamodb stream                                   |
 | `Bucket`    | the function in the bucket's notifications, and the permission for s3 to invoke it                   |
+| `EventRule` | an eventbridge rule on `bus`, `default` without one, that sends the events matching `pattern`, an object or json, to the function, with `input` in their place and `enabled`; and the permission for eventbridge to invoke it |
+| `WebSocketRoute` | a route of the stage's websocket api, `$connect`, `$disconnect`, `$default` or a value of the route selection, with its integration and permission |
+| `LoadBalancer` | a target group of the function, the permission for the load balancer to invoke it, and a rule of `priority` on `listener` that forwards the requests matching its `paths`, `hosts` and `methods` to it |
 
 A queue must hide a message for at least the function's timeout, its `VisibilityTimeout`, or lambda refuses the mapping; koldstart checks it for queues of the project. `reportBatchItemFailures` is on by default, so a function returns the messages that failed and only those are retried.
 
@@ -172,7 +178,17 @@ http {
 }
 ```
 
-With a domain, `httpApiUrl` is `https://<domain>`, and the output `httpDomainTarget` is where its dns record points. A route picks an authorizer with `authorizer = "users"`.
+With a domain, `httpApiUrl` is `https://<domain>`, and the output `httpDomainTarget` is where its dns record points. A route picks an authorizer with `authorizer = "users"`, and sets a request limit of its own, in place of the stage-wide one, with `throttling = new { rate = 5; burst = 10 }`.
+
+### the websocket api
+
+The `WebSocketRoute`s of a stage share one websocket api, with a stage of the stage's name. Its url is the output `webSocketUrl`. A message picks its route by its `action`, or what `websocket.routeSelection` says:
+
+```pkl
+websocket { routeSelection = "$request.body.type" }
+```
+
+A function with websocket routes may post to the connections of the api, and gets the url to post to as `WEBSOCKET_CALLBACK_URL`, for the api management client of the aws sdk.
 
 ## resources
 
