@@ -291,6 +291,19 @@ region = "us-east-1"
 
 One app reads another's outputs with `kdst.stageOutput(app, stage, output)`, from the state of that stage in the same account and region. A plan fails when that stage is not deployed, or has no such output.
 
+An output of a stage in another region or account amends it with `region`, `account` and `role`:
+
+```pkl
+environment {
+  ["PAYMENTS_URL"] = (kdst.stageOutput("payments", "prod", "apiUrl")) { region = "us-east-1" }
+  ["LEDGER_URL"] = (kdst.stageOutput("ledger", "prod", "apiUrl")) {
+    role = "arn:aws:iam::210987654321:role/koldstart-outputs"
+  }
+}
+```
+
+The state is read from the stage's bucket, `koldstart-<account>-<region>`, at `<app>/<stage>/state.json`, and only from a bucket that account owns. With a `role`, koldstart assumes it to read it, and the stage is in the role's account unless `account` says another. The role needs `s3:GetObject` on that key, and the deploying credentials need `sts:AssumeRole` on the role. Without a role, the deploying credentials read it themselves, which the bucket's policy has to allow for another account.
+
 ## secrets
 
 `kdst.ssm("/path")` is read from ssm parameter store, and `kdst.secretsmanager("name")` from secrets manager; `.field("key")` takes one key of a json secret. They are read while planning and deploying, so a plan shows when one changed, and their values become environment variables of the function. Their values never go into the state.

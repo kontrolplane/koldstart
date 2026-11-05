@@ -160,7 +160,7 @@ functions {
 kdst deploy --stage prod --config koldstart.prod.pkl
 ```
 
-One app can read another's outputs with `kdst.stageOutput("payments", kdst.stage, "apiUrl")`, from the state of that stage in the same account and region.
+One app can read another's outputs with `kdst.stageOutput("payments", kdst.stage, "apiUrl")`, from the state of that stage. That stage can be in another region, or in another account through a role koldstart assumes: `(kdst.stageOutput("payments", "prod", "apiUrl")) { region = "us-east-1" }`.
 
 ## secrets
 
@@ -263,7 +263,7 @@ Everything koldstart creates is tagged with its app, stage and node, together wi
 | -------------------------------- | ------------------------------------------------------------------------------- |
 | `init [directory]`               | start a project: a `koldstart.pkl`, a handler and the `.gitignore` entries      |
 | `package`                        | build and zip every function, without deploying                                 |
-| `plan`                           | show what a deploy would create, change and delete                              |
+| `plan`                           | show what a deploy would create, change and delete, `--refresh` to read aws too  |
 | `deploy`                         | build, upload, and apply the plan                                               |
 | `deploy function -f <fn>`        | deploy only the code of one function                                            |
 | `remove`                         | delete everything the stage deployed, leaving resources that hold data in place |

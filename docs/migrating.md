@@ -55,6 +55,7 @@ koldstart does not read `serverless.yml` itself, and does not run serverless fra
 | `<Function>LambdaFunction`, the logical id of a function    | that function                                                        |
 | `${ssm:/path}`                                              | `kdst.ssm("/path")`                                                  |
 | `${cf:<service>-<stage>.<Output>}`                          | `kdst.stageOutput("<service>", "<stage>", "<Output>")`               |
+| `${cf(<region>):...}`, `${cf.<region>:...}`                 | the same, amended with `{ region = "<region>" }`                     |
 | `${env:NAME}`, `${env:NAME, 'default'}`                     | `read("env:NAME")`, `read?("env:NAME") ?? "default"`                 |
 | `${file(./x.yml):key}`, `${file(./x.json)}`                 | the value, or the object or list, read from the file next to `serverless.yml` |
 | `params`, `stages.<stage>.params`, and `${param:name}`      | a `local` Mapping by stage, and `param("name")`, the stage's or default's |
