@@ -125,7 +125,7 @@ func TestToneRules(t *testing.T) {
 		{name: "an inactive function", c: cell{styles.S("inactive", stateTone("Inactive"))}, part: "inactive", want: styles.ToneWarning},
 		{name: "a retained resource", c: resourceNote(&state.Resource{DeletionPolicy: "retain"}, false), part: "retained", want: styles.ToneMuted},
 		{name: "a kept resource", c: resourceNote(&state.Resource{}, true), part: "kept", want: styles.ToneMuted},
-		{name: "an unreadable stage", c: overviewRow(stage, false)[3], part: "✗ unreadable", want: styles.ToneDanger},
+		{name: "an unreadable stage", c: overviewRow(stage, false)[len(overviewRow(stage, false))-1], part: "unreadable", want: styles.ToneDanger},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -422,7 +422,7 @@ func TestColourProfiles(t *testing.T) {
 					styles.UseProfile(colorprofile.TrueColor)
 					want := themeSeconds.ReplaceAllString(ansi.Strip(m.render()), "Ns ago")
 					styles.UseProfile(tt.profile)
-					raw := m.render()
+					raw := m.restyleInputs().render()
 					got := themeDownsample(raw, tt.profile)
 					if text := themeSeconds.ReplaceAllString(ansi.Strip(got), "Ns ago"); text != want {
 						t.Errorf("dark %v %s: the text differs from truecolor's:\n%s\nwant:\n%s", dark, name, text, want)

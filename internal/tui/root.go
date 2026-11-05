@@ -109,10 +109,10 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		if !styles.Paint {
 			styles.Use(msg.IsDark())
 		}
-		return m, nil
+		return m.restyleInputs(), nil
 	case tea.ColorProfileMsg:
 		styles.UseProfile(msg.Profile)
-		return m, nil
+		return m.restyleInputs(), nil
 	case spinner.TickMsg:
 		if !m.busy() {
 			m.spinning = false
@@ -909,4 +909,16 @@ func (l helpLayout) body() string {
 		parts = append(parts, "", styles.Faint("press any key to close"))
 	}
 	return lipgloss.JoinVertical(lipgloss.Center, parts...)
+}
+
+// restyleInputs gives every text input the palette in use now, once the terminal has said what
+// its background and colours are. Styling an input resets its cursor's blink, so it is done
+// when the palette changes and not on every frame.
+func (m model) restyleInputs() model {
+	in := styles.TextInput()
+	m.state.overview.filter.input.SetStyles(in)
+	m.state.stage.filter.input.SetStyles(in)
+	m.state.function.logs.filter.input.SetStyles(in)
+	m.state.remove.confirm.input.SetStyles(in)
+	return m
 }
