@@ -154,8 +154,9 @@ func (c typedConfirm) update(msg tea.Msg) (typedConfirm, tea.Cmd) {
 
 // view asks for the phrase, marks whether what was typed matches it, and says below what enter
 // does or that the phrase is not what was typed. The lines stay the same in number as it is
-// typed, so the dialog does not move.
+// typed, so the dialog does not move. The input takes the palette in use now.
 func (c typedConfirm) view() string {
+	c.input.SetStyles(styles.TextInput())
 	mark := "  "
 	say := styles.Render(styles.S("esc cancels", styles.ToneFaint))
 	switch {

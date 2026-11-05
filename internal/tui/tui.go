@@ -9,11 +9,12 @@ import (
 	"maps"
 	"os"
 	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 
 	"github.com/kontrolplane/koldstart/internal/cli"
 	"github.com/kontrolplane/koldstart/internal/engine"
@@ -99,8 +100,10 @@ func Run(ctx context.Context, c *cli.Console, theme string) error {
 	return nil
 }
 
-// useTheme picks the palette: auto follows the terminal's background, dark and light paint their
-// own.
+// useTheme picks the palette: dark and light paint their own background, and auto starts from
+// what COLORFGBG says of the terminal's, dark without it, until the terminal answers Init's query
+// of its background. Asking within the program, not before it, means a terminal that does not
+// answer, as some multiplexers do not, costs no wait and leaves no reply to echo.
 func useTheme(theme string) {
 	switch theme {
 	case "dark":
@@ -110,6 +113,19 @@ func useTheme(theme string) {
 		styles.Use(false)
 		styles.Paint = true
 	default:
-		styles.Use(lipgloss.HasDarkBackground(os.Stdin, os.Stdout))
+		styles.Use(darkGround(os.Getenv("COLORFGBG")))
+		styles.Paint = false
 	}
+}
+
+// darkGround reports whether COLORFGBG, as rxvt, konsole and tmux set it, names a dark
+// background: its last field is the colour of the background, 0 to 6 and 8 dark. Anything else,
+// or nothing, is taken as dark, as most terminals are.
+func darkGround(colorfgbg string) bool {
+	fields := strings.Split(colorfgbg, ";")
+	bg, err := strconv.Atoi(fields[len(fields)-1])
+	if err != nil || bg < 0 || bg > 15 {
+		return true
+	}
+	return bg <= 6 || bg == 8
 }

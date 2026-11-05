@@ -81,7 +81,10 @@ func (f filterBox) matches(fields ...string) bool {
 	return false
 }
 
+// view draws the filter as it is typed, in the palette in use now, which the terminal's answer
+// of its background may have changed since the input was made.
 func (f filterBox) view(width int, k keys.KeyMap) string {
+	f.input.SetStyles(styles.TextInput())
 	f.input.SetWidth(max(10, width-30))
 	return styles.Accent("/ ") + f.input.View() + "  " + hints(hint(k.View, "apply"), hint(k.Back, "clear"))
 }

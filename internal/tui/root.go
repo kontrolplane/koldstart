@@ -17,9 +17,14 @@ import (
 )
 
 // Init lists the stages and starts the refresh, with the generations newModel numbered them by,
-// as Init cannot change the model.
+// as Init cannot change the model. With --theme auto it asks the terminal for its background,
+// which follows as a tea.BackgroundColorMsg, or not at all.
 func (m model) Init() tea.Cmd {
-	return tea.Batch(m.stagesCmd(m.state.overview.gen), refreshTick(m.refreshGen), m.spinner.Tick)
+	cmds := []tea.Cmd{m.stagesCmd(m.state.overview.gen), refreshTick(m.refreshGen), m.spinner.Tick}
+	if !styles.Paint {
+		cmds = append(cmds, tea.RequestBackgroundColor)
+	}
+	return tea.Batch(cmds...)
 }
 
 // busy reports whether something runs that the spinner shows.
@@ -100,6 +105,14 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		setLayout(msg.Width, msg.Height)
 		return m.resize(), nil
+	case tea.BackgroundColorMsg:
+		if !styles.Paint {
+			styles.Use(msg.IsDark())
+		}
+		return m, nil
+	case tea.ColorProfileMsg:
+		styles.UseProfile(msg.Profile)
+		return m, nil
 	case spinner.TickMsg:
 		if !m.busy() {
 			m.spinning = false
@@ -247,7 +260,11 @@ func (m model) keyPress(msg tea.KeyPressMsg) (model, tea.Cmd) {
 }
 
 func (m model) View() tea.View {
-	v := tea.NewView(m.render())
+	content := m.render()
+	if styles.Paint {
+		content = styles.Ground(content, m.width, m.height)
+	}
+	v := tea.NewView(content)
 	v.AltScreen = true
 	v.WindowTitle = binary + " ui"
 	v.ForegroundColor = styles.P.Text

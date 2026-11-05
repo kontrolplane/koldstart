@@ -256,8 +256,16 @@ func (t dataTable) View() string {
 	return b.String()
 }
 
+// renderRow draws a row, the selected one on the selection with its marker. Where the selection
+// has no ground to sit on (see styles.Reverse), the selected row is its text in reverse video.
 func (t dataTable) renderRow(r int) string {
 	selected := r == t.cursor
+	if selected && styles.Reverse() {
+		plain := t
+		plain.cursor = -1
+		row := ansi.Strip(plain.renderRow(r))[1:] + strings.Repeat(" ", t.spare)
+		return styles.Accent("▌") + lipgloss.NewStyle().Reverse(true).Render(row)
+	}
 	var bg color.Color
 	marker := strings.Repeat(" ", tableGutter)
 	if selected {
@@ -290,9 +298,10 @@ func (t dataTable) renderRow(r int) string {
 	return b.String()
 }
 
-// lift raises faint spans on a selected row, where the ground has less contrast to spare. The
-// light selection takes more of it than the dark one: muted text on it reads at under 4:1, so there
-// faint and muted spans are lifted to body.
+// lift raises faint spans on a selected row, where the ground has less contrast to spare: faint
+// text reads at under 4.5:1 on either selection. The light selection takes more of it than the
+// dark one, muted text on it reading at under 4.5:1 as well, so there faint and muted spans are
+// lifted to body.
 func lift(c cell) cell {
 	out := make(cell, len(c))
 	for i, s := range c {

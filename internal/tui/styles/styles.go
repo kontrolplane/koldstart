@@ -4,7 +4,52 @@
 // tokens/semantic.json). Terminals cannot blend alpha, so every rule and tint is the solid mix the
 // token describes. A detected theme keeps the terminal's own background; both themes paint cornsilk
 // and black forest text with olive accents on top of it. A theme chosen with --theme paints its own
-// background as well (see Paint).
+// background as well (see Paint and Ground).
+//
+// # tones
+//
+// Text is painted in a tone, never a colour, and the same kind of thing takes the same tone on every
+// page:
+//
+//   - text: what a row or a page is about: the name of an app, a function, a resource, an output or
+//     a change, the last crumb, and the keys in the footer and the help, in bold.
+//   - body: values: what a column or a field says, numbers, times and sizes among them, and the
+//     words of a log line or a payload.
+//   - muted: what qualifies a value: a region, who did something, a type, an id in aws in a table,
+//     a reason, the tabs that are not open, what a key does, and a note on why something is missing.
+//   - faint: metadata and punctuation: column headings and field labels, units and counts beside a
+//     name, hashes and version ids, the time stamped on a log line, separators, empty values such
+//     as "-", "none" and "free", and hints.
+//   - accent: where the cursor is and what runs now: the open tab, the cursor's marker, the
+//     spinner, something in flight, the project's app (●), the current version, a filter's matches
+//     and the titles in the help.
+//   - success: something done or healthy: ✓, + and create, ok, active.
+//   - warning: something that needs attention and has not failed: ▲, ~ and update, a lock, a change
+//     outside koldstart, what is pending, paused or throttled, an event that is not json, and a
+//     dialog that asks before something that cannot be undone easily.
+//   - danger: a failure or something destructive: ✗, - and delete, -/+ and replace, errors and their
+//     counts, a timeout, and the dialog that removes a stage.
+//   - info: what koldstart takes over or does not change itself, = and adopt, a reference to a
+//     secret or an output, and a cold start.
+//   - warm: numbers in a payload.
+//
+// A status carries its symbol as well as its tone, ✓, ▲ or ✗, so it reads without colour too.
+// Rules and the branches of a tree are hairlines: they divide, carry nothing that is not also said
+// in words, and are left out of the contrast checks.
+//
+// # contrast
+//
+// Every tone of text reads at 4.5:1 or more on the base, and on the selection once lift has raised
+// faint and muted text (see internal/tui's lift). The cursor's marker and a status's symbol read at
+// 3:1 or more. Both hold for the truecolor and the 256-colour palettes, and the tests check them.
+//
+// # colour profiles
+//
+// UseProfile picks the palette for what the terminal shows. 256 colours take palettes of their own,
+// as the nearest of the 256 can lose the hue (the dark selection became green) or the contrast.
+// Sixteen colours are the terminal's own, whose values cannot be known, so the palette names them
+// by role, and a selected row is drawn in reverse video (see Reverse). Without colour, NO_COLOR, a
+// selected row is reversed as well, danger and warning are bold, and a focused button is reversed.
 package styles
 
 import (
@@ -13,6 +58,8 @@ import (
 
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/colorprofile"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // Palette is one theme of the brand, resolved to solid colours.
@@ -56,13 +103,14 @@ var (
 )
 
 // Dark sits on the terminal's own dark ground. Tints mix cornsilk into a neutral dark so only the
-// accent reads as olive: the surface is 12% cornsilk, the selection 45% olive, the rules 16% and
-// 38% cornsilk, and the body, muted and faint text 92%, 74% and 55%.
+// accent reads as olive: the surface is 12% cornsilk, the selection 30% olive, the rules 16% and
+// 38% cornsilk, and the body, muted and faint text 92%, 74% and 55%. Danger is a shade lighter than
+// the token, to read at 4.5:1 on the selection.
 var Dark = Palette{
 	Dark:      true,
 	Base:      lipgloss.Color("#1A1A1A"),
 	Surface:   lipgloss.Color("#353532"),
-	Selection: lipgloss.Color("#3A3F28"),
+	Selection: lipgloss.Color("#2F3323"),
 	Rule:      lipgloss.Color("#3E3E3A"),
 	RuleBold:  lipgloss.Color("#716F65"),
 	Text:      cornsilk,
@@ -74,29 +122,113 @@ var Dark = Palette{
 	Success:   lipgloss.Color("#00C389"),
 	Warning:   lipgloss.Color("#F7AB1B"),
 	Info:      lipgloss.Color("#53A2FF"),
-	Danger:    lipgloss.Color("#FF6467"),
+	Danger:    lipgloss.Color("#FF6B6E"),
 }
 
 // Light is the cornsilk stock. Hierarchy is a tint of black forest, never a grey: the surface is
-// 5% black forest, the selection 18%, the rules 20% and 30%, and faint text 68%, which reads at
-// 4.5:1 on the stock.
+// 5% black forest, the selection 12%, the rules 20% and 30%, and faint text 68%, which reads at
+// 4.5:1 on the stock. The olive, copper and the statuses are the tokens' hues a step darker in
+// oklch, so they read at 4.5:1 on the selection too.
 var Light = Palette{
 	Dark:      false,
 	Base:      cornsilk,
 	Surface:   lipgloss.Color("#F3F0D6"),
-	Selection: lipgloss.Color("#D7D7BC"),
+	Selection: lipgloss.Color("#E4E2C8"),
 	Rule:      lipgloss.Color("#D3D3B8"),
 	RuleBold:  lipgloss.Color("#BEBFA4"),
 	Text:      blackForest,
 	Body:      lipgloss.Color("#3D4A2C"),
 	Muted:     lipgloss.Color("#60694C"),
 	Faint:     lipgloss.Color("#6C7558"),
-	Accent:    lipgloss.Color("#606C38"),
-	Warm:      lipgloss.Color("#A16223"),
-	Success:   lipgloss.Color("#007E4E"),
-	Warning:   lipgloss.Color("#9C6000"),
-	Info:      lipgloss.Color("#0067C7"),
-	Danger:    lipgloss.Color("#E7000B"),
+	Accent:    lipgloss.Color("#5C6736"),
+	Warm:      lipgloss.Color("#8C551E"),
+	Success:   lipgloss.Color("#007146"),
+	Warning:   lipgloss.Color("#8C5600"),
+	Info:      lipgloss.Color("#0061BC"),
+	Danger:    lipgloss.Color("#C8000A"),
+}
+
+// Dark256 is Dark in the 256 colours of xterm. The cube has no olive dark enough for the
+// selection, so it is a grey, as the surface is.
+var Dark256 = Palette{
+	Dark:      true,
+	Base:      ansi.IndexedColor(234),
+	Surface:   ansi.IndexedColor(236),
+	Selection: ansi.IndexedColor(236),
+	Rule:      ansi.IndexedColor(237),
+	RuleBold:  ansi.IndexedColor(242),
+	Text:      ansi.IndexedColor(230),
+	Body:      ansi.IndexedColor(254),
+	Muted:     ansi.IndexedColor(187),
+	Faint:     ansi.IndexedColor(246),
+	Accent:    ansi.IndexedColor(144),
+	Warm:      ansi.IndexedColor(173),
+	Success:   ansi.IndexedColor(42),
+	Warning:   ansi.IndexedColor(214),
+	Info:      ansi.IndexedColor(75),
+	Danger:    ansi.IndexedColor(210),
+}
+
+// Light256 is Light in the 256 colours of xterm. Its darkest amber is the one copper and warning
+// share, and the selection is the lightest grey, the one ground it reads on at 4.5:1.
+var Light256 = Palette{
+	Dark:      false,
+	Base:      ansi.IndexedColor(230),
+	Surface:   ansi.IndexedColor(254),
+	Selection: ansi.IndexedColor(255),
+	Rule:      ansi.IndexedColor(252),
+	RuleBold:  ansi.IndexedColor(248),
+	Text:      ansi.IndexedColor(235),
+	Body:      ansi.IndexedColor(238),
+	Muted:     ansi.IndexedColor(240),
+	Faint:     ansi.IndexedColor(242),
+	Accent:    ansi.IndexedColor(58),
+	Warm:      ansi.IndexedColor(94),
+	Success:   ansi.IndexedColor(22),
+	Warning:   ansi.IndexedColor(94),
+	Info:      ansi.IndexedColor(25),
+	Danger:    ansi.IndexedColor(160),
+}
+
+// Dark16 names the terminal's own sixteen colours by role, for a dark ground. The accent is cyan,
+// the one hue no status takes.
+var Dark16 = Palette{
+	Dark:      true,
+	Base:      lipgloss.Black,
+	Surface:   lipgloss.BrightBlack,
+	Selection: lipgloss.BrightBlack,
+	Rule:      lipgloss.BrightBlack,
+	RuleBold:  lipgloss.BrightBlack,
+	Text:      lipgloss.BrightWhite,
+	Body:      lipgloss.White,
+	Muted:     lipgloss.White,
+	Faint:     lipgloss.BrightBlack,
+	Accent:    lipgloss.Cyan,
+	Warm:      lipgloss.Magenta,
+	Success:   lipgloss.Green,
+	Warning:   lipgloss.Yellow,
+	Info:      lipgloss.BrightBlue,
+	Danger:    lipgloss.Red,
+}
+
+// Light16 names the terminal's own sixteen colours by role, for a light ground.
+var Light16 = Palette{
+	Dark:      false,
+	Base:      lipgloss.BrightWhite,
+	Surface:   lipgloss.White,
+	Selection: lipgloss.White,
+	Rule:      lipgloss.White,
+	RuleBold:  lipgloss.BrightBlack,
+	Text:      lipgloss.Black,
+	Body:      lipgloss.Black,
+	Muted:     lipgloss.BrightBlack,
+	Faint:     lipgloss.BrightBlack,
+	Accent:    lipgloss.Cyan,
+	Warm:      lipgloss.Magenta,
+	Success:   lipgloss.Green,
+	Warning:   lipgloss.Yellow,
+	Info:      lipgloss.Blue,
+	Danger:    lipgloss.Red,
 }
 
 // P is the active palette.
@@ -106,14 +238,50 @@ var P = Dark
 // ground, since the terminal's may be the opposite of what the theme was made for.
 var Paint bool
 
+// dark and profile are what P was picked for: the theme, and the colours the terminal shows.
+var (
+	dark    = true
+	profile = colorprofile.TrueColor
+)
+
 // Use selects the dark or the light theme.
-func Use(dark bool) {
-	if dark {
+func Use(d bool) {
+	dark = d
+	pick()
+}
+
+// UseProfile selects the palette for the colours the terminal shows: truecolor, 256, the
+// terminal's own sixteen, or none.
+func UseProfile(p colorprofile.Profile) {
+	profile = p
+	pick()
+}
+
+func pick() {
+	switch {
+	case profile == colorprofile.ANSI256 && dark:
+		P = Dark256
+	case profile == colorprofile.ANSI256:
+		P = Light256
+	case profile == colorprofile.ANSI && dark:
+		P = Dark16
+	case profile == colorprofile.ANSI:
+		P = Light16
+	case dark:
 		P = Dark
-	} else {
+	default:
 		P = Light
 	}
 }
+
+// Mono reports whether the terminal shows no colour, as with NO_COLOR, so what a colour would
+// say takes bold or reverse video.
+func Mono() bool { return profile < colorprofile.ANSI }
+
+// Reverse reports whether a selected row is drawn in reverse video rather than on the selection:
+// without colour, or with only the terminal's own sixteen, no ground is sure to differ from the
+// terminal's.
+func Reverse() bool { return profile < colorprofile.ANSI256 }
 
 // Tone names a foreground role, so text can be described once and painted on any ground.
 type Tone int
@@ -161,9 +329,13 @@ func (p Palette) Color(t Tone) color.Color {
 	}
 }
 
-// Fg returns a style painting the given tone.
+// Fg returns a style painting the given tone. Without colour, danger and warning are bold.
 func Fg(t Tone) lipgloss.Style {
-	return lipgloss.NewStyle().Foreground(P.Color(t))
+	s := lipgloss.NewStyle().Foreground(P.Color(t))
+	if Mono() && (t == ToneDanger || t == ToneWarning) {
+		s = s.Bold(true)
+	}
+	return s
 }
 
 // Body, Muted, Faint, Accent and Bold paint text in a tone. The text must be clean already.
@@ -186,7 +358,13 @@ func S(text string, tone Tone) Span { return Span{Text: Clean(text), Tone: tone}
 func B(text string, tone Tone) Span { return Span{Text: Clean(text), Tone: tone, Bold: true} }
 
 // Style is the style the span is painted in.
-func (s Span) Style() lipgloss.Style { return Fg(s.Tone).Bold(s.Bold) }
+func (s Span) Style() lipgloss.Style {
+	style := Fg(s.Tone)
+	if s.Bold {
+		style = style.Bold(true)
+	}
+	return style
+}
 
 // Render joins spans on the terminal's ground.
 func Render(spans ...Span) string {
@@ -198,7 +376,7 @@ func Render(spans ...Span) string {
 }
 
 // Button renders a dialog button. A focused button takes the primary treatment, or the given
-// tone when the action it confirms is destructive.
+// tone when the action it confirms is destructive; without colour, it is reversed.
 func Button(label string, focused bool, tone Tone) string {
 	style := lipgloss.NewStyle().Padding(0, 3)
 	if !focused {
@@ -208,7 +386,7 @@ func Button(label string, focused bool, tone Tone) string {
 	if tone != ToneText {
 		bg = P.Color(tone)
 	}
-	return style.Foreground(P.Base).Background(bg).Bold(true).Render(label)
+	return style.Foreground(P.Base).Background(bg).Bold(true).Reverse(Mono()).Render(label)
 }
 
 // Key renders a key binding hint.
