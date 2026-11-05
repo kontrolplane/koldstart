@@ -7,8 +7,54 @@ app = "legacy"
 region = "eu-central-1"
 
 functions {
-  // TODO: scraper runs on python3.12, which koldstart does not build yet.
-  // TODO: image is a container image function, which koldstart does not deploy yet.
+  ["scraper"] {
+    runtime = "python3.12"
+    handler = "handler.main"
+    environment {
+      ["REGION"] = module.region
+      ["BUCKET"] = "\(module.app)-\(kdst.stage)-files"
+      // TODO: ${file(./config.json):key}: there is no ./config.json next to serverless.yml
+      // was: ${file(./config.json):key}
+      ["SHARED"] = kdst.stageOutput("shared", "prod", "QueueUrl")
+      ["LOG_LEVEL"] = read?("env:LOG_LEVEL") ?? "info"
+    }
+  }
+  ["reports"] {
+    runtime = "python3.12"
+    handler = "src/reports.build"
+    environment {
+      ["REGION"] = module.region
+      ["BUCKET"] = "\(module.app)-\(kdst.stage)-files"
+      // TODO: ${file(./config.json):key}: there is no ./config.json next to serverless.yml
+      // was: ${file(./config.json):key}
+      ["SHARED"] = kdst.stageOutput("shared", "prod", "QueueUrl")
+      ["LOG_LEVEL"] = read?("env:LOG_LEVEL") ?? "info"
+    }
+    layers {
+      "arn:aws:lambda:eu-central-1:123456789012:layer:pandas:4"
+    }
+  }
+  ["thumbs"] {
+    image {
+      context = "thumbnailer"
+      dockerfile = "thumbnailer/Dockerfile.lambda"
+      buildArgs {
+        ["SIZE"] = "256"
+      }
+      command {
+        "app.handler"
+      }
+    }
+    environment {
+      ["REGION"] = module.region
+      ["BUCKET"] = "\(module.app)-\(kdst.stage)-files"
+      // TODO: ${file(./config.json):key}: there is no ./config.json next to serverless.yml
+      // was: ${file(./config.json):key}
+      ["SHARED"] = kdst.stageOutput("shared", "prod", "QueueUrl")
+      ["LOG_LEVEL"] = read?("env:LOG_LEVEL") ?? "info"
+    }
+  }
+  // TODO: image runs a prebuilt image, which koldstart does not take: build it from its dockerfile. was: 123456789012.dkr.ecr.eu-central-1.amazonaws.com/legacy:latest
   ["worker"] {
     runtime = "provided.al2023"
     // TODO: the package to build, such as ./cmd/worker; serverless.yml had "bootstrap".
@@ -21,7 +67,8 @@ functions {
       ["SHARED"] = kdst.stageOutput("shared", "prod", "QueueUrl")
       ["LOG_LEVEL"] = read?("env:LOG_LEVEL") ?? "info"
     }
-    // TODO: layers has no equivalent in koldstart yet. was: ['arn:aws:lambda:eu-central-1:123456789012:layer:tools:1']
+    // TODO: a go function has no layers: build what they hold into the binary
+    // was: ['arn:aws:lambda:eu-central-1:123456789012:layer:tools:1']
   }
   ["old-api"] {
     runtime = "nodejs22.x"

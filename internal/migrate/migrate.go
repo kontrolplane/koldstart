@@ -3,8 +3,10 @@
 package migrate
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -277,18 +279,19 @@ func orEmpty(n *yaml.Node) *yaml.Node {
 
 // The runtimes koldstart runs, and those it takes another for.
 var (
-	nodeRuntimes  = []string{"nodejs22.x", "nodejs24.x"}
-	olderNode     = []string{"nodejs14.x", "nodejs16.x", "nodejs18.x", "nodejs20.x"}
-	customRuntime = []string{"provided", "provided.al2", config.RuntimeGo, "go1.x"}
+	nodeRuntimes   = []string{"nodejs22.x", "nodejs24.x"}
+	olderNode      = []string{"nodejs14.x", "nodejs16.x", "nodejs18.x", "nodejs20.x"}
+	customRuntime  = []string{"provided", "provided.al2", config.RuntimeGo, "go1.x"}
+	pythonRuntimes = []string{config.RuntimePy312, config.RuntimePy313}
+	olderPython    = []string{"python3.7", "python3.8", "python3.9", "python3.10", "python3.11"}
 )
 
 // function writes one function, with what provider sets for every function.
 func (c *converter) function(w *writer, name string, fn, provider *yaml.Node) {
 	where := "functions." + name
 	pklName := c.functionNames[name]
-	if get(fn, "image") != nil {
-		c.todo(where, "a container image function, which koldstart does not deploy yet: it is left out")
-		w.comment(fmt.Sprintf("TODO: %s is a container image function, which koldstart does not deploy yet.", name))
+	if image := get(fn, "image"); image != nil {
+		c.imageFunction(w, name, fn, provider, image)
 		return
 	}
 	runtime := str(get(fn, "runtime"))
@@ -302,6 +305,10 @@ func (c *converter) function(w *writer, name string, fn, provider *yaml.Node) {
 		runtime = "nodejs22.x"
 	case slices.Contains(customRuntime, runtime):
 		runtime = config.RuntimeGo
+	case slices.Contains(pythonRuntimes, runtime):
+	case slices.Contains(olderPython, runtime):
+		c.todo(where, runtime+" is deprecated or old on lambda: it runs on python3.12 now")
+		runtime = config.RuntimePy312
 	default:
 		c.todo(where, fmt.Sprintf("the runtime %q is not one koldstart builds yet: the function is left out", runtime))
 		w.comment(fmt.Sprintf("TODO: %s runs on %s, which koldstart does not build yet.", name, runtime))
@@ -316,18 +323,83 @@ func (c *converter) function(w *writer, name string, fn, provider *yaml.Node) {
 		w.comment("TODO: the package to build, such as ./cmd/" + pklName + "; serverless.yml had " + quote(handler) + ".")
 		handler = "./cmd/" + pklName
 	}
+	if strings.HasPrefix(runtime, "python") {
+		handler = pythonHandler(handler)
+	}
 	w.line("handler = %s", quote(handler))
 	c.settings(w, where, fn, provider)
 	c.environment(w, where, fn, provider)
 	c.permissions(w, where, fn, provider)
 	c.url(w, where, get(fn, "url"))
 	c.events(w, where, get(fn, "events"))
-	for _, key := range []string{"layers", "destinations", "onError", "provisionedConcurrency", "role", "tags", "name", "fileSystemConfig"} {
+	if layers := get(fn, "layers"); layers != nil && runtime == config.RuntimeGo {
+		c.leaveOut(w, where+".layers", "a go function has no layers: build what they hold into the binary", layers)
+	} else if layers != nil {
+		c.member(w, where+".layers", "layers", layers)
+	}
+	for _, key := range []string{"destinations", "onError", "provisionedConcurrency", "role", "tags", "name", "fileSystemConfig"} {
 		if v := get(fn, key); v != nil {
 			c.todo(where+"."+key, key+" has no equivalent in koldstart yet")
 			w.comment("TODO: " + key + " has no equivalent in koldstart yet. was: " + flow(v))
 		}
 	}
+	w.close()
+}
+
+// pythonHandler writes a python handler as koldstart takes it, the module's path and the
+// function: src.handler.main is src/handler.main.
+func pythonHandler(handler string) string {
+	i := strings.LastIndex(handler, ".")
+	if i <= 0 {
+		return handler
+	}
+	return strings.ReplaceAll(handler[:i], ".", "/") + handler[i:]
+}
+
+// imageFunction writes a container image function: the image serverless.yml builds from
+// provider.ecr.images, by its name or as { name, command, entryPoint, workingDirectory }. A
+// prebuilt image, given by its uri, is left for you, as koldstart builds images itself.
+func (c *converter) imageFunction(w *writer, name string, fn, provider, image *yaml.Node) {
+	where := "functions." + name
+	imageName := str(image)
+	if image.Kind == yaml.MappingNode {
+		imageName = str(get(image, "name"))
+	}
+	built := get(get(get(provider, "ecr"), "images"), imageName)
+	path := str(get(built, "path"))
+	if built == nil || path == "" {
+		c.todo(where, "a prebuilt image or one without a path to build it from: koldstart builds images from a dockerfile; set image { dockerfile; context }")
+		w.comment(fmt.Sprintf("TODO: %s runs a prebuilt image, which koldstart does not take: build it from its dockerfile. was: %s", name, flow(image)))
+		return
+	}
+	context := strings.TrimSuffix(strings.TrimPrefix(path, "./"), "/")
+	if context == "" {
+		context = "."
+	}
+	dockerfile := cmp.Or(str(get(built, "file")), "Dockerfile")
+	w.open(fmt.Sprintf("[%s]", quote(c.functionNames[name])))
+	w.open("image")
+	w.line("context = %s", quote(context))
+	w.line("dockerfile = %s", quote(filepath.ToSlash(filepath.Join(context, dockerfile))))
+	if args := get(built, "buildArgs"); args != nil {
+		c.mapping(w, where+".image.buildArgs", "buildArgs", args)
+	}
+	if image.Kind == yaml.MappingNode {
+		for _, key := range []string{"command", "entryPoint"} {
+			if v := get(image, key); v != nil {
+				c.member(w, where+".image."+key, key, v)
+			}
+		}
+		if dir := get(image, "workingDirectory"); dir != nil {
+			c.member(w, where+".image.workingDirectory", "workingDirectory", dir)
+		}
+	}
+	w.close()
+	c.settings(w, where, fn, provider)
+	c.environment(w, where, fn, provider)
+	c.permissions(w, where, fn, provider)
+	c.url(w, where, get(fn, "url"))
+	c.events(w, where, get(fn, "events"))
 	w.close()
 }
 
@@ -591,6 +663,7 @@ var plugins = map[string]string{
 	"serverless-domain-manager":         "set http.domain and http.certificate",
 	"serverless-dotenv-plugin":          "read variables with read(\"env:NAME\")",
 	"serverless-plugin-log-retention":   "set logRetention on the function",
+	"serverless-python-requirements":    "koldstart installs requirements.txt or pyproject.toml with uv itself: it can go",
 }
 
 // leftOver lists what serverless.yml has that is not converted: custom, plugins, and the rest.
@@ -611,7 +684,10 @@ func (c *converter) leftOver() {
 			}
 		}
 	}
-	for _, key := range []string{"layers", "stepFunctions", "useDotenv"} {
+	if get(c.doc, "layers") != nil {
+		c.todo("layers", "koldstart does not build layers: publish them, and give functions their arns in layers")
+	}
+	for _, key := range []string{"stepFunctions", "useDotenv"} {
 		if get(c.doc, key) != nil {
 			c.todo(key, key+" has no equivalent in koldstart")
 		}
