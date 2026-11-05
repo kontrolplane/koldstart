@@ -5,18 +5,23 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 )
 
-// formatInt writes n with thin groups of three, as 12,345.
+// formatInt writes n in groups of three, as 12,345 and -1,024.
 func formatInt(n int) string {
 	s := strconv.Itoa(n)
-	if n < 0 || len(s) <= 3 {
+	sign, digits := "", s
+	if n < 0 {
+		sign, digits = "-", s[1:]
+	}
+	if len(digits) <= 3 {
 		return s
 	}
-	var b []byte
-	for i, c := range []byte(s) {
-		if i > 0 && (len(s)-i)%3 == 0 {
+	b := []byte(sign)
+	for i, c := range []byte(digits) {
+		if i > 0 && (len(digits)-i)%3 == 0 {
 			b = append(b, ',')
 		}
 		b = append(b, c)
@@ -70,16 +75,35 @@ func formatTime(t time.Time) string {
 	return t.Format("2006-01-02 15:04:05")
 }
 
-// formatDuration writes a duration the way a person reads it: 340ms, 1.2s, 3m4s.
+// formatDuration writes a duration the way a person reads it: 340ms, 1.2s, 3m4s, 15m, 1h2m.
+// Under a millisecond is <1ms, and from an hour the seconds are left out.
 func formatDuration(d time.Duration) string {
 	switch {
-	case d < time.Second:
-		return d.Round(time.Millisecond).String()
-	case d < time.Minute:
-		return d.Round(100 * time.Millisecond).String()
-	default:
-		return d.Round(time.Second).String()
+	case d <= 0:
+		return "0ms"
+	case d < time.Millisecond:
+		return "<1ms"
+	case d < time.Second-time.Millisecond/2:
+		return strconv.FormatInt(d.Round(time.Millisecond).Milliseconds(), 10) + "ms"
+	case d < time.Minute-50*time.Millisecond:
+		return strings.TrimSuffix(strconv.FormatFloat(d.Round(100*time.Millisecond).Seconds(), 'f', 1, 64), ".0") + "s"
 	}
+	d = d.Round(time.Second)
+	h, m, s := int(d/time.Hour), int(d/time.Minute)%60, int(d/time.Second)%60
+	if h > 0 {
+		d = d.Round(time.Minute)
+		h, m, s = int(d/time.Hour), int(d/time.Minute)%60, 0
+	}
+	var b strings.Builder
+	for _, part := range []struct {
+		n    int
+		unit string
+	}{{h, "h"}, {m, "m"}, {s, "s"}} {
+		if part.n > 0 {
+			fmt.Fprintf(&b, "%d%s", part.n, part.unit)
+		}
+	}
+	return b.String()
 }
 
 // prettyJSON indents json, or returns the bytes as they are when they are not json.
@@ -91,19 +115,23 @@ func prettyJSON(data []byte) string {
 	return b.String()
 }
 
-// formatBytes writes a size in the largest unit that keeps it above 1: 512 b, 3.8 mb.
+// formatBytes writes a size in the largest unit that keeps it above 1, with a decimal below
+// 10: 512 b, 3.8 mb, 42 mb.
 func formatBytes(n int64) string {
-	units := []string{"b", "kb", "mb", "gb"}
-	v := float64(n)
+	if n < 1024 {
+		return fmt.Sprintf("%d b", n)
+	}
+	units := []string{"kb", "mb", "gb", "tb"}
+	v := float64(n) / 1024
 	i := 0
-	for v >= 1024 && i < len(units)-1 {
+	for v >= 1023.5 && i < len(units)-1 {
 		v /= 1024
 		i++
 	}
-	if i == 0 {
-		return fmt.Sprintf("%d b", n)
+	if v < 9.95 {
+		return fmt.Sprintf("%.1f %s", v, units[i])
 	}
-	return fmt.Sprintf("%.1f %s", v, units[i])
+	return fmt.Sprintf("%.0f %s", v, units[i])
 }
 
 // formatMillis writes milliseconds the way a person reads them: 3ms, 340ms, 1.2s.

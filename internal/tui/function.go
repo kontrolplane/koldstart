@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/kontrolplane/koldstart/internal/cli"
 	"github.com/kontrolplane/koldstart/internal/desired"
@@ -209,6 +211,9 @@ func (m model) functionUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 		}
 	}
 	f.scroll = scrollBy(msg, m.keys, f.scroll, functionBodyHeight())
+	if f.tab == overviewTab {
+		f.scroll = min(f.scroll, m.functionOverview().maxScroll())
+	}
 	return m, nil
 }
 
@@ -250,10 +255,10 @@ func (m model) functionCopyValue() string {
 
 func (m model) functionView() string {
 	f := m.state.function
-	var body string
+	var body, hint string
 	switch f.tab {
 	case overviewTab:
-		body = m.overviewTabView()
+		body, hint = m.overviewTabView()
 	case logsTab:
 		body = m.logsView()
 	case invocationsTab:
@@ -265,7 +270,11 @@ func (m model) functionView() string {
 	if !f.logs.loaded {
 		counts[logsTab], counts[invocationsTab] = "", ""
 	}
-	return tabBar(functionTabs, counts, int(f.tab)) + "\n\n" + body
+	bar := tabBar(functionTabs, counts, int(f.tab))
+	if hint != "" {
+		bar = spread(bar, styles.Faint(hint), contentWidth-1)
+	}
+	return bar + "\n\n" + body
 }
 
 const labelWidth = 14
@@ -285,15 +294,160 @@ func scrolled(lines []string, offset, height int) string {
 
 func sep() styles.Span { return styles.S(" · ", styles.ToneFaint) }
 
-// liveLines say what lambda says of the function now, and where it differs from the deploy.
+// wrapped breaks text into lines of width in one tone, at most limit of them, the last ending
+// in an ellipsis when there was more.
+func wrapped(s string, tone styles.Tone, width, limit int) []string {
+	width = max(2, width)
+	lines := strings.Split(ansi.Wrap(styles.Clean(s), width, ""), "\n")
+	if len(lines) > limit {
+		lines = lines[:limit]
+		lines[limit-1] = ansi.Truncate(strings.TrimRight(lines[limit-1], " "), width-1, "") + "…"
+	}
+	for i, l := range lines {
+		lines[i] = styles.Fg(tone).Render(l)
+	}
+	return lines
+}
+
+// cutMiddle cuts plain text to width columns in the middle, keeping its start and more of its
+// end, as the end of an arn or a path names what it is.
+func cutMiddle(s string, width int) string {
+	w := ansi.StringWidth(s)
+	if w <= width || width < 8 {
+		return s
+	}
+	head := (width - 1) / 4
+	tail := width - 1 - head
+	return ansi.Truncate(s, head, "") + "…" + ansi.TruncateLeft(s, w-tail, "")
+}
+
+// functionOverview is what the overview tab draws: a notice of what changed outside koldstart,
+// and below it two columns that scroll together.
+type functionOverview struct {
+	notice     []string
+	left       []string
+	right      []string
+	leftWidth  int
+	rightWidth int
+}
+
+// height is how many lines of the columns are in sight.
+func (o functionOverview) height() int {
+	if len(o.notice) == 0 {
+		return functionBodyHeight()
+	}
+	return max(1, functionBodyHeight()-len(o.notice)-1)
+}
+
+// maxScroll is the furthest the columns scroll: to the end of the longer one.
+func (o functionOverview) maxScroll() int {
+	return max(0, max(len(o.left), len(o.right))-o.height())
+}
+
+// functionOverview lays out the overview: the configuration and what lambda says of the
+// function on the left; the last hour, the environment and what invokes it on the right.
+func (m model) functionOverview() functionOverview {
+	o := functionOverview{leftWidth: (contentWidth - 4) / 2}
+	o.rightWidth = contentWidth - 4 - o.leftWidth
+	o.notice = m.driftNotice(contentWidth - 2)
+	o.left = append(m.configLines(o.leftWidth), "")
+	o.left = append(o.left, m.liveLines(o.leftWidth)...)
+	o.right = append(m.metricLines(o.rightWidth), "")
+	o.right = append(o.right, m.envLines(o.rightWidth)...)
+	o.right = append(o.right, "")
+	o.right = append(o.right, m.triggerLines(o.rightWidth)...)
+	return o
+}
+
+// megabytes writes a size koldstart configures in mb, or nothing when it is not set.
+func megabytes(n int32) string {
+	if n <= 0 {
+		return ""
+	}
+	return formatInt(int(n)) + " mb"
+}
+
+// seconds writes a timeout koldstart configures in seconds, or nothing when it is not set.
+func seconds(n int32) string {
+	if n <= 0 {
+		return ""
+	}
+	return formatDuration(time.Duration(n) * time.Second)
+}
+
+// configLines are what koldstart deployed the function with.
+func (m model) configLines(width int) []string {
+	f := m.state.function
+	in := f.inputs
+	w := width - 2
+	value := func(s string) cell { return text(orDash(s), styles.ToneBody) }
+	long := func(s string) cell { return value(cutMiddle(styles.Clean(s), w-labelWidth)) }
+	runtime := cell{styles.S(orDash(in.Runtime), styles.ToneBody)}
+	if in.Architecture != "" {
+		runtime = append(runtime, sep(), styles.S(in.Architecture, styles.ToneMuted))
+	}
+	concurrency := text("unreserved", styles.ToneMuted)
+	if rc := in.ReservedConcurrency; rc != nil {
+		concurrency = text(formatInt(int(*rc))+" reserved", styles.ToneBody)
+		if *rc == 0 {
+			concurrency = text("0 reserved: every invocation is throttled", styles.ToneWarning)
+		}
+	}
+	lines := []string{
+		styles.SectionHeader("function", w),
+		row("name", long(f.lambdaName), w),
+		row("arn", long(f.arn), w),
+		row("runtime", runtime, w),
+		row("handler", value(in.Handler), w),
+		row("memory", value(megabytes(in.Memory)), w),
+		row("timeout", value(seconds(in.Timeout)), w),
+		row("/tmp", value(megabytes(in.EphemeralStorage)), w),
+		row("concurrency", concurrency, w),
+		row("code", text(orDash(shortSHA(in.Code.SHA256)), styles.ToneMuted), w),
+		row("role", long(in.Role), w),
+		row("log group", long(f.logGroup), w),
+	}
+	if in.VPC != nil {
+		lines = append(lines,
+			row("subnets", value(strings.Join(in.VPC.SubnetIDs, ", ")), w),
+			row("groups", value(strings.Join(in.VPC.SecurityGroupIDs, ", ")), w),
+		)
+	}
+	return lines
+}
+
+// codeChanged reports whether lambda runs other code than koldstart deployed.
+func codeChanged(in awsp.FunctionInputs, live cli.FunctionState) bool {
+	return live.CodeSHA256 != "" && in.Code.SHA256 != "" && live.CodeSHA256 != in.Code.SHA256
+}
+
+// driftNotice says what lambda runs that koldstart did not deploy, above the columns, so it is
+// in sight however far they scroll.
+func (m model) driftNotice(width int) []string {
+	f := m.state.function
+	if f.live == nil {
+		return nil
+	}
+	changed := configDrift(f.inputs, *f.live)
+	if codeChanged(f.inputs, *f.live) {
+		changed = append([]string{"code"}, changed...)
+	}
+	if len(changed) == 0 {
+		return nil
+	}
+	return wrapped("▲ changed outside koldstart: "+strings.Join(changed, ", "), styles.ToneWarning, width, 2)
+}
+
+// liveLines say what lambda says of the function now.
 func (m model) liveLines(width int) []string {
 	f := m.state.function
-	lines := []string{styles.SectionHeader("in lambda now", width-2)}
+	w := width - 2
+	lines := []string{styles.SectionHeader("in lambda now", w)}
 	switch {
 	case f.lambdaName == "":
 		return append(lines, styles.Faint("not deployed yet"))
 	case f.live == nil && f.liveErr != "":
-		return append(lines, renderCell(text(f.liveErr, styles.ToneDanger), column{width: width - 2}, nil))
+		return append(lines, wrapped("could not read it: "+f.liveErr, styles.ToneMuted, w, 3)...)
 	case f.live == nil:
 		return append(lines, styles.Faint("reading…"))
 	}
@@ -306,31 +460,42 @@ func (m model) liveLines(width int) []string {
 	if live.LastUpdateReason != "" {
 		update = append(update, sep(), styles.S(live.LastUpdateReason, styles.ToneMuted))
 	}
-	code := cell{styles.S("✓ ", styles.ToneSuccess), styles.S("what koldstart deployed", styles.ToneBody)}
-	if live.CodeSHA256 != "" && f.inputs.Code.SHA256 != "" && live.CodeSHA256 != f.inputs.Code.SHA256 {
+	modified := text("-", styles.ToneBody)
+	if !live.LastModified.IsZero() {
+		modified = text(formatTime(live.LastModified)+", "+formatAgo(live.LastModified), styles.ToneBody)
+	}
+	var code cell
+	switch {
+	case codeChanged(f.inputs, *live):
 		code = cell{styles.S("▲ ", styles.ToneWarning), styles.S("changed outside koldstart: "+shortSHA(live.CodeSHA256), styles.ToneWarning)}
+	case live.CodeSHA256 != "" && f.inputs.Code.SHA256 != "":
+		code = cell{styles.S("✓ ", styles.ToneSuccess), styles.S("what koldstart deployed", styles.ToneBody)}
 	}
-	lines = append(lines,
-		row("state", state, width),
-		row("last update", update, width),
-		row("modified", text(formatTime(live.LastModified)+", "+formatAgo(live.LastModified), styles.ToneBody), width),
-		row("code", code, width),
-		row("code size", text(formatBytes(live.CodeSize), styles.ToneBody), width),
+	if live.CodeSize > 0 {
+		if len(code) > 0 {
+			code = append(code, sep())
+		}
+		code = append(code, styles.S(formatBytes(live.CodeSize), styles.ToneMuted))
+	}
+	if len(code) == 0 {
+		code = text("-", styles.ToneBody)
+	}
+	return append(lines,
+		row("state", state, w),
+		row("last update", update, w),
+		row("modified", modified, w),
+		row("code", code, w),
 	)
-	if d := configDrift(f.inputs, *live); len(d) > 0 {
-		lines = append(lines, row("drift", text(strings.Join(d, ", ")+" changed outside koldstart", styles.ToneWarning), width))
-	}
-	return lines
 }
 
 // configDrift names what lambda runs with that differs from what koldstart deployed.
 func configDrift(in awsp.FunctionInputs, live cli.FunctionState) []string {
 	var out []string
 	if live.Memory != 0 && in.Memory != 0 && live.Memory != in.Memory {
-		out = append(out, fmt.Sprintf("memory %d → %d", in.Memory, live.Memory))
+		out = append(out, fmt.Sprintf("memory %s → %s", formatInt(int(in.Memory)), megabytes(live.Memory)))
 	}
 	if live.Timeout != 0 && in.Timeout != 0 && live.Timeout != in.Timeout {
-		out = append(out, fmt.Sprintf("timeout %ds → %ds", in.Timeout, live.Timeout))
+		out = append(out, "timeout "+seconds(in.Timeout)+" → "+seconds(live.Timeout))
 	}
 	if live.Runtime != "" && in.Runtime != "" && live.Runtime != in.Runtime {
 		out = append(out, "runtime "+in.Runtime+" → "+live.Runtime)
@@ -338,37 +503,51 @@ func configDrift(in awsp.FunctionInputs, live cli.FunctionState) []string {
 	return out
 }
 
+// stateTone is the tone of a state lambda reports. An inactive function is one lambda reclaimed
+// after weeks without invocations: the next invocation wakes it, so it warns rather than fails.
 func stateTone(state string) styles.Tone {
 	switch strings.ToLower(state) {
 	case "active", "successful":
 		return styles.ToneSuccess
-	case "pending", "inprogress":
+	case "pending", "inprogress", "inactive":
 		return styles.ToneWarning
-	case "failed", "inactive":
+	case "failed":
 		return styles.ToneDanger
 	}
 	return styles.ToneBody
 }
 
-// metricLines draw the last hour of the function's metrics as sparklines, with their totals.
+// peak is the largest point of a series, 0 for none.
+func peak(series []float64) float64 {
+	if len(series) == 0 {
+		return 0
+	}
+	return slices.Max(series)
+}
+
+// metricLines draw the last hour of the function's metrics as sparklines, each ending in its
+// total, or its peak for duration and concurrency, which is the top of its sparkline.
 func (m model) metricLines(width int) []string {
 	s := m.state.stage
 	f := m.state.function
-	lines := []string{styles.SectionHeader("last hour", width-2)}
+	w := width - 2
+	lines := []string{styles.SectionHeader("last hour", w)}
 	mt, ok := s.metrics[f.lambdaName]
 	switch {
 	case !ok && s.metricsErr != "":
-		return append(lines, renderCell(text("no metrics: "+s.metricsErr, styles.ToneFaint), column{width: width - 2}, nil))
+		return append(lines, wrapped("no metrics: "+s.metricsErr, styles.ToneFaint, w, 3)...)
 	case !ok:
 		return append(lines, styles.Faint("reading…"))
+	case peak(mt.Invocations) == 0 && peak(mt.Errors) == 0 && peak(mt.Throttles) == 0:
+		return append(lines, styles.Faint("not invoked in the last hour"))
 	}
 	sum := mt.Summary()
-	spark := max(8, width-labelWidth-14)
+	spark := max(8, w-labelWidth-12)
 	line := func(label string, series []float64, tone styles.Tone, total string, totalTone styles.Tone) string {
-		if slices.Max(series) == 0 {
-			return row(label, text("none", styles.ToneFaint), width)
+		if peak(series) == 0 {
+			return row(label, text("none", styles.ToneFaint), w)
 		}
-		return row(label, cell{styles.S(sparkline(series, spark), tone), styles.S("  "+total, totalTone)}, width)
+		return row(label, cell{styles.S(sparkline(series, spark), tone), styles.S("  "+total, totalTone)}, w)
 	}
 	errTone := styles.ToneFaint
 	if sum.Errors > 0 {
@@ -382,8 +561,8 @@ func (m model) metricLines(width int) []string {
 		line("invocations", mt.Invocations, styles.ToneAccent, formatInt(int(sum.Invocations)), styles.ToneBody),
 		line("errors", mt.Errors, styles.ToneDanger, formatInt(int(sum.Errors)), errTone),
 		line("throttles", mt.Throttles, styles.ToneWarning, formatInt(int(sum.Throttles)), throttleTone),
-		line("duration", mt.Duration, styles.ToneInfo, "p99 "+formatMillis(sum.DurationP99), styles.ToneBody),
-		line("concurrency", mt.Concurrency, styles.ToneMuted, "max "+formatInt(int(slices.Max(mt.Concurrency))), styles.ToneBody),
+		line("duration", mt.DurationP99, styles.ToneInfo, "p99 "+formatMillis(sum.DurationP99), styles.ToneBody),
+		line("concurrency", mt.Concurrency, styles.ToneMuted, "max "+formatInt(int(peak(mt.Concurrency))), styles.ToneBody),
 	)
 }
 
@@ -414,57 +593,115 @@ func sparkline(series []float64, width int) string {
 	return b.String()
 }
 
-func (m model) overviewTabView() string {
-	f := m.state.function
-	in := f.inputs
-	left := (contentWidth - 4) / 2
-	right := contentWidth - 4 - left
-	concurrency := "unreserved"
-	if in.ReservedConcurrency != nil {
-		concurrency = formatInt(int(*in.ReservedConcurrency))
-	}
-	value := func(s string) cell { return text(orDash(s), styles.ToneBody) }
-	lines := []string{
-		styles.SectionHeader("function", left-2),
-		row("name in lambda", value(f.lambdaName), left),
-		row("arn", value(f.arn), left),
-		row("runtime", cell{styles.S(orDash(in.Runtime), styles.ToneBody), sep(), styles.S(orDash(in.Architecture), styles.ToneMuted)}, left),
-		row("handler", value(in.Handler), left),
-		row("memory", value(formatInt(int(in.Memory))+" mb"), left),
-		row("timeout", value(formatInt(int(in.Timeout))+"s"), left),
-		row("/tmp", value(formatInt(int(in.EphemeralStorage))+" mb"), left),
-		row("concurrency", value(concurrency), left),
-		row("code", text(orDash(shortSHA(in.Code.SHA256)), styles.ToneMuted), left),
-		row("role", value(in.Role), left),
-		row("log group", value(f.logGroup), left),
-		row("url", value(f.url), left),
-	}
-	if in.VPC != nil {
-		lines = append(lines, row("subnets", value(strings.Join(in.VPC.SubnetIDs, ", ")), left))
-	}
-	lines = append(lines, "")
-	lines = append(lines, m.liveLines(left)...)
+// hidden stands in for a value that looks like a secret.
+const hidden = "••••••••"
 
-	side := m.metricLines(right)
-	side = append(side, "", styles.SectionHeader("environment", right-2))
-	for _, k := range slices.Sorted(maps.Keys(f.env)) {
-		side = append(side, renderCell(cell{styles.S(k, styles.ToneMuted), styles.S(" = ", styles.ToneFaint), styles.S(engine.Describe(f.env[k]), styles.ToneBody)}, column{width: right - 2}, nil))
+// secretWords mark an environment variable whose value is a secret, by its name.
+var secretWords = []string{"SECRET", "PASSWORD", "PASSWD", "PASSPHRASE", "TOKEN", "CREDENTIAL", "PRIVATE", "API_KEY", "APIKEY", "ACCESS_KEY"}
+
+// urlPassword is the password in a url's user info, as in postgres://app:password@db/orders.
+var urlPassword = regexp.MustCompile(`(://[^/@:\s]*:)[^/@\s]+@`)
+
+// looksSecret reports whether an environment variable holds a secret as it is, by its name or
+// a private key in its value. A secret koldstart reads from ssm or secrets manager is shown by
+// where it is instead.
+func looksSecret(name, value string) bool {
+	upper := strings.ToUpper(name)
+	return slices.ContainsFunc(secretWords, func(w string) bool { return strings.Contains(upper, w) }) ||
+		strings.HasPrefix(strings.TrimSpace(value), "-----BEGIN")
+}
+
+// envValue is how an environment variable's value is shown: a value as it is, with secrets
+// hidden, and a secret, output or reference by what it stands for.
+func envValue(name string, v any) styles.Span {
+	switch v := v.(type) {
+	case string:
+		switch {
+		case v == "":
+			return styles.S(`""`, styles.ToneFaint)
+		case looksSecret(name, v):
+			return styles.S(hidden, styles.ToneFaint)
+		}
+		return styles.S(urlPassword.ReplaceAllString(v, "${1}"+hidden+"@"), styles.ToneBody)
+	case map[string]any:
+		return styles.S(engine.Describe(v), styles.ToneInfo)
 	}
+	return styles.S(engine.Describe(v), styles.ToneBody)
+}
+
+// envLines list the function's environment, the names in a column of their own.
+func (m model) envLines(width int) []string {
+	f := m.state.function
+	w := width - 2
+	lines := []string{styles.SectionHeader("environment", w)}
 	if len(f.env) == 0 {
-		side = append(side, styles.Faint("none"))
+		return append(lines, styles.Faint("none"))
 	}
-	side = append(side, "", styles.SectionHeader("invoked by", right-2))
+	names := slices.Sorted(maps.Keys(f.env))
+	nameWidth := 0
+	for _, k := range names {
+		nameWidth = max(nameWidth, ansi.StringWidth(styles.Clean(k)))
+	}
+	nameWidth = min(nameWidth, w/3)
+	for _, k := range names {
+		name := renderCell(text(k, styles.ToneMuted), column{width: nameWidth}, nil)
+		value := renderCell(cell{styles.S(" = ", styles.ToneFaint), envValue(k, f.env[k])}, column{width: max(1, w-nameWidth)}, nil)
+		lines = append(lines, name+value)
+	}
+	return lines
+}
+
+// triggerLines list what invokes the function: its url, routes, schedules, queues, topics and
+// buckets, each by its kind and name.
+func (m model) triggerLines(width int) []string {
+	f := m.state.function
+	w := width - 2
+	lines := []string{styles.SectionHeader("invoked by", w)}
+	type trigger struct{ kind, name string }
+	var triggers []trigger
+	if f.url != "" {
+		triggers = append(triggers, trigger{"url", f.url})
+	}
 	for _, id := range f.triggers {
-		side = append(side, renderCell(text(id, styles.ToneBody), column{width: right - 2}, nil))
+		kind, rest, _ := strings.Cut(id, "/")
+		triggers = append(triggers, trigger{kind, strings.TrimPrefix(rest, f.name+"/")})
 	}
-	if len(f.triggers) == 0 {
-		side = append(side, styles.Faint("nothing: invoke it with i"))
+	if len(triggers) == 0 {
+		return append(lines, styles.Faint("nothing: invoke it with "+m.keys.Invoke.Help().Key))
 	}
-	height := functionBodyHeight()
+	kindWidth := 0
+	for _, t := range triggers {
+		kindWidth = max(kindWidth, ansi.StringWidth(styles.Clean(t.kind)))
+	}
+	for _, t := range triggers {
+		kind := renderCell(text(t.kind, styles.ToneFaint), column{width: kindWidth + 2}, nil)
+		lines = append(lines, kind+renderCell(text(t.name, styles.ToneBody), column{width: max(1, w-kindWidth-2)}, nil))
+	}
+	return lines
+}
+
+// overviewTabView draws the overview at its scroll, and a hint of what is above or below it.
+func (m model) overviewTabView() (string, string) {
+	o := m.functionOverview()
+	height := o.height()
+	scroll := min(m.state.function.scroll, o.maxScroll())
 	body := lipgloss.JoinHorizontal(lipgloss.Top,
-		fill(scrolled(lines, f.scroll, height), left, height),
+		fill(scrolled(o.left, scroll, height), o.leftWidth, height),
 		"  ",
-		fill(scrolled(side, f.scroll, height), right, height),
+		fill(scrolled(o.right, scroll, height), o.rightWidth, height),
 	)
-	return lipgloss.NewStyle().PaddingLeft(1).Render(body)
+	if len(o.notice) > 0 {
+		body = strings.Join(o.notice, "\n") + "\n\n" + body
+	}
+	var hint string
+	switch {
+	case o.maxScroll() == 0:
+	case scroll == 0:
+		hint = "↓ more"
+	case scroll == o.maxScroll():
+		hint = "↑ more"
+	default:
+		hint = "↑↓ more"
+	}
+	return lipgloss.NewStyle().PaddingLeft(1).Render(body), hint
 }

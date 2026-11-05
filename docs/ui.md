@@ -20,7 +20,7 @@ The header shows the aws profile, account, region and state bucket in use, the p
   - outputs; a value of more than one line shows its first, and `c` copies all of it
   - history: the deploys, each the versions of the state it wrote; one shows what it changed from the deploy before, and each change opens for its full diff
 - `function`, in tabs:
-  - overview: its configuration; what lambda says of it now, its state, its last update, and code or configuration changed outside koldstart; sparklines of its invocations, errors, throttles, duration and concurrency in the last hour; its environment and what invokes it
+  - overview: its configuration; what lambda says of it now, its state and its last update, with a notice on top when code or configuration was changed outside koldstart; sparklines of its invocations, errors, throttles, p99 duration and concurrency in the last hour; its environment, values that look like secrets hidden; and what invokes it, its url too
   - logs: the last half hour, followed with a live tail, or read again every few seconds where there is none; json and logfmt tinted so the message stands out; `/` filters the lines, and ↑ at the top reads the hour before
   - invocations: the requests in the logs read, with their duration, billed duration, memory, cold start, and whether they failed or timed out; one opens with its lines of the log
   - invoke: the events kept for it, and what the last invocation with each returned
