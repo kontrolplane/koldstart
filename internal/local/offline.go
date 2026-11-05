@@ -239,7 +239,7 @@ func (o *Offline) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	route, params, ok := match(o.Routes, req.Method, req.URL.Path)
 	if !ok {
 		writeMessage(w, http.StatusNotFound)
-		o.log(req, http.StatusNotFound, "", start)
+		o.log(req, http.StatusNotFound, "no route", start)
 		return
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, req.Body, 10<<20))
@@ -275,7 +275,11 @@ func (o *Offline) log(req *http.Request, status int, note string, start time.Tim
 	if o.Log == nil {
 		return
 	}
-	line := fmt.Sprintf("%s %s %d %s", req.Method, req.URL.RequestURI(), status, time.Since(start).Round(time.Millisecond))
+	took := time.Since(start).Round(time.Millisecond).String()
+	if took == "0s" {
+		took = "<1ms"
+	}
+	line := fmt.Sprintf("%s %s %d %s", req.Method, req.URL.RequestURI(), status, took)
 	if note != "" {
 		line += "  " + note
 	}
