@@ -317,6 +317,9 @@ func (m model) invoke(event string, payload []byte, local bool) (model, tea.Cmd)
 	gen := m.next()
 	f := &m.state.function
 	f.invokeGen, f.invoking = gen, true
+	r := f.results[event]
+	r.running, r.local = true, local
+	f.results[event] = r
 	ref, lambdaName, name := m.state.stage.ref, f.lambdaName, f.name
 	ctx, cancel := m.withTimeout(invokeTimeout)
 	return m, func() tea.Msg {

@@ -205,10 +205,7 @@ func (m model) functionUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 	case invocationsTab:
 		return m.invocationsUpdate(msg)
 	case invokeTab:
-		if f.events.move(msg, m.keys) {
-			f.scroll = 0
-			return m, nil
-		}
+		return m.invokeUpdate(msg)
 	}
 	f.scroll = scrollBy(msg, m.keys, f.scroll, functionBodyHeight())
 	if f.tab == overviewTab {

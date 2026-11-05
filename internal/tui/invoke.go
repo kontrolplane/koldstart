@@ -1,6 +1,9 @@
 package tui
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -8,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -19,22 +23,37 @@ import (
 // defaultEvent is the event a function is invoked with when its events directory has none.
 const defaultEvent = "{}"
 
-// invocationResult is the last invocation with an event.
+// defaultEventFile is the event e creates when the function has none.
+const defaultEventFile = "event.json"
+
+// invocationResult is the last invocation with an event. While running is set, one more is on
+// its way, and the rest is the one before it.
 type invocationResult struct {
-	inv   cli.Invocation
-	local bool
-	at    time.Time
-	err   error
+	inv     cli.Invocation
+	local   bool
+	running bool
+	at      time.Time
+	err     error
 }
+
+// errNotJSON is an event file that does not hold json.
+var errNotJSON = errors.New("not json")
 
 var eventColumns = []column{{title: "event", width: 12, grow: 1}}
 
 func eventsWidth() int { return min(36, contentWidth/3) }
 
-// readEventFiles lists the events kept for the function, keeping the cursor on the one it was on.
+// resultWidth is the width of what an invocation returned, right of the events.
+func resultWidth() int { return contentWidth - 4 - eventsWidth() - 2 }
+
+// readEventFiles lists the events kept for the function, marking the ones that are not json, and
+// keeps the cursor on the one it was on.
+//
+//nolint:gosec // reads the event files of the project
 func (m model) readEventFiles() model {
 	f := &m.state.function
-	entries, _ := os.ReadDir(m.b.EventsDir(f.name))
+	dir := m.b.EventsDir(f.name)
+	entries, _ := os.ReadDir(dir)
 	var files []string
 	for _, e := range entries {
 		if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
@@ -45,10 +64,14 @@ func (m model) readEventFiles() model {
 	f.eventFiles = files
 	rows := make([]tableRow, 0, len(files))
 	for _, name := range files {
-		rows = append(rows, tableRow{text(strings.TrimSuffix(name, ".json"), styles.ToneText)})
+		c := cell{styles.S(strings.TrimSuffix(name, ".json"), styles.ToneText)}
+		if data, err := os.ReadFile(filepath.Join(dir, name)); err == nil && !json.Valid(bytes.TrimSpace(data)) {
+			c = append(c, styles.S("  not json", styles.ToneDanger))
+		}
+		rows = append(rows, tableRow{c})
 	}
 	if len(files) == 0 {
-		rows = []tableRow{{cell{styles.S(defaultEvent, styles.ToneText), styles.S("  e to edit", styles.ToneFaint)}}}
+		rows = []tableRow{{cell{styles.S(defaultEvent, styles.ToneText), styles.S("  e creates "+defaultEventFile, styles.ToneFaint)}}}
 	}
 	f.events.setRows(rows)
 	for i, name := range files {
@@ -68,7 +91,8 @@ func (m model) selectedEvent() string {
 	return ""
 }
 
-// eventPayload reads the selected event.
+// eventPayload reads the selected event, and checks it is json, as lambda takes nothing else.
+// The error of one that is not says the line it breaks on.
 //
 //nolint:gosec // reads an event file of the project
 func (m model) eventPayload() ([]byte, error) {
@@ -80,18 +104,36 @@ func (m model) eventPayload() ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading the event %s: %w", name, err)
 	}
+	var v any
+	if err := json.Unmarshal(data, &v); err != nil {
+		if syntax, ok := errors.AsType[*json.SyntaxError](err); ok {
+			line := 1 + bytes.Count(data[:min(int(syntax.Offset), len(data))], []byte("\n"))
+			return nil, fmt.Errorf("%s is %w, on line %d: %s", name, errNotJSON, line, syntax.Error())
+		}
+		return nil, fmt.Errorf("%s is %w: %w", name, errNotJSON, err)
+	}
 	return data, nil
 }
 
+// editor is the command of $VISUAL, or $EDITOR, or vi, split into its words.
+func editor() []string {
+	return strings.Fields(cmpOr(strings.TrimSpace(os.Getenv("VISUAL")), strings.TrimSpace(os.Getenv("EDITOR")), "vi"))
+}
+
 // editEvent opens the selected event in $VISUAL or $EDITOR, creating event.json with {} when the
-// function has no events yet.
+// function has no events yet. An editor that cannot be found is said before anything is created.
 //
 //nolint:gosec // runs the editor the user set, on an event of the project
 func (m model) editEvent() (model, tea.Cmd) {
+	args := editor()
+	if _, err := exec.LookPath(args[0]); err != nil {
+		m.error = "could not find the editor " + args[0] + ": set $EDITOR, or $VISUAL, to the command of the one to use"
+		return m, nil
+	}
 	dir := m.b.EventsDir(m.state.function.name)
 	name := m.selectedEvent()
 	if name == "" {
-		name = "event.json"
+		name = defaultEventFile
 		if err := os.MkdirAll(dir, 0o750); err != nil {
 			m.error = "could not create " + dir + ": " + err.Error()
 			return m, nil
@@ -101,14 +143,27 @@ func (m model) editEvent() (model, tea.Cmd) {
 			return m, nil
 		}
 	}
-	editor := cmpOr(os.Getenv("VISUAL"), os.Getenv("EDITOR"), "vi")
-	args := strings.Fields(editor)
 	cmd := exec.Command(args[0], append(args[1:], filepath.Join(dir, name))...)
 	return m, tea.ExecProcess(cmd, func(err error) tea.Msg { return eventEditedMsg{err: err} })
 }
 
+// applyEventEdited lists the events again once the editor closes, and warns when the one edited
+// is no longer json.
+func (m model) applyEventEdited(msg eventEditedMsg) (model, tea.Cmd) {
+	m = m.readEventFiles()
+	m.state.function.scroll = 0
+	if msg.err != nil {
+		m.error = "the editor exited with an error: " + msg.err.Error()
+		return m, nil
+	}
+	if _, err := m.eventPayload(); err != nil {
+		return m.setStatus(m.selectedEvent()+" is not json: e edits it", styles.ToneWarning)
+	}
+	return m, nil
+}
+
 // startInvoke invokes the function with the selected event, in aws or on this machine. Against
-// prod, running here asks first.
+// prod, running here asks first. An event that is not json is not sent.
 func (m model) startInvoke(local bool) (model, tea.Cmd) {
 	f := &m.state.function
 	ref := m.state.stage.ref
@@ -120,12 +175,15 @@ func (m model) startInvoke(local bool) (model, tea.Cmd) {
 	case !local && f.lambdaName == "":
 		return m.setStatus(f.name+" is not deployed yet", styles.ToneWarning)
 	}
+	f.tab = invokeTab
 	payload, err := m.eventPayload()
-	if err != nil {
+	switch {
+	case errors.Is(err, errNotJSON):
+		return m.setStatus(m.selectedEvent()+" is not json: e edits it", styles.ToneWarning)
+	case err != nil:
 		m.error = err.Error()
 		return m, nil
 	}
-	f.tab = invokeTab
 	if local && ref.Stage == "prod" {
 		m.state.runLocal = runLocalState{event: m.selectedEvent(), payload: payload}
 		return m.switchPage(runLocalPage), nil
@@ -145,52 +203,155 @@ func (m model) applyInvoked(msg invokedMsg) (model, tea.Cmd) {
 	case msg.err != nil:
 		return m.setStatus("could not invoke "+f.name, styles.ToneDanger)
 	case msg.inv.Error != "":
-		return m.setStatus(f.name+" failed: "+msg.inv.Error, styles.ToneDanger)
+		return m.setStatus(f.name+" failed: "+functionError(msg.inv), styles.ToneDanger)
 	}
 	return m.setStatus(f.name+" returned in "+formatDuration(msg.inv.Duration), styles.ToneSuccess)
+}
+
+// invokeUpdate handles a key on the invoke tab: ↑ and ↓ choose the event, pgup and pgdn scroll
+// what it returned.
+func (m model) invokeUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
+	f := &m.state.function
+	switch {
+	case key.Matches(msg, m.keys.PageUp, m.keys.PageDown):
+		height := functionBodyHeight()
+		f.scroll = min(scrollBy(msg, m.keys, f.scroll, height-1), maxResultScroll(len(m.invokeLines(resultWidth())), height))
+	case f.events.move(msg, m.keys):
+		f.scroll = 0
+	}
+	return m, nil
+}
+
+// invokeLines are what the right of the invoke tab shows for the selected event: the invocation
+// running, what the last one returned, or how to invoke it.
+func (m model) invokeLines(width int) []string {
+	f := m.state.function
+	name := styles.Clean(f.name)
+	r, ok := f.results[m.selectedEvent()]
+	switch {
+	case ok && r.running:
+		what := "invoking " + name + " in aws…"
+		if r.local {
+			what = "running " + name + " on this machine…"
+		}
+		return []string{styles.Accent(m.spinner.View()) + " " + styles.Muted(what)}
+	case !ok:
+		if _, err := m.eventPayload(); err != nil {
+			var lines []string
+			for _, c := range wrapCell(text("✗ "+err.Error(), styles.ToneDanger), width-2) {
+				lines = append(lines, renderCell(c, column{width: width - 2}, nil))
+			}
+			return append(lines, "", styles.Faint("e edits it, and i sends it once it is json"))
+		}
+		return m.invokeHints(name)
+	case r.err != nil:
+		lines := []string{styles.Render(styles.S("✗ could not invoke "+f.name, styles.ToneDanger)), ""}
+		for _, c := range wrapCell(text(r.err.Error(), styles.ToneDanger), width-2) {
+			lines = append(lines, renderCell(c, column{width: width - 2}, nil))
+		}
+		return append(lines, "", styles.Faint("i tries again"))
+	}
+	return resultLines(r, width)
+}
+
+// invokeHints say how the selected event can be sent: i where the function is deployed, shift+i
+// where it is the project here.
+func (m model) invokeHints(name string) []string {
+	f := m.state.function
+	local := m.b.Local(m.state.stage.ref)
+	var lines []string
+	switch {
+	case f.lambdaName != "":
+		lines = append(lines, styles.Muted("i invokes "+name+" in aws with this event"))
+		if local {
+			lines = append(lines, styles.Faint("shift+i runs it on this machine"))
+		}
+	case local:
+		lines = append(lines, styles.Muted(name+" is not deployed yet: shift+i runs it on this machine"))
+	default:
+		lines = append(lines, styles.Muted(name+" is not deployed yet"))
+	}
+	return append(lines, styles.Faint("e edits the event"))
+}
+
+// maxResultScroll is how far n lines of a result scroll in height, the last line of which says
+// where they are when they do not fit.
+func maxResultScroll(n, height int) int {
+	if n <= height {
+		return 0
+	}
+	return n - height + 1
 }
 
 func (m model) invokeView() string {
 	f := m.state.function
 	height := functionBodyHeight()
-	left := eventsWidth()
-	right := contentWidth - 4 - left - 2
-	r, ok := f.results[m.selectedEvent()]
-	var lines []string
-	switch {
-	case f.invoking:
-		lines = []string{styles.Accent(m.spinner.View()) + " " + styles.Muted("invoking "+f.name+"…")}
-	case !ok:
-		lines = []string{styles.Muted("i invokes " + f.name + " with this event"), styles.Faint("shift+i runs it on this machine, e edits the event")}
-	case r.err != nil:
-		lines = []string{styles.Render(styles.S("✗ ", styles.ToneDanger), styles.S(r.err.Error(), styles.ToneDanger))}
-	default:
-		lines = resultLines(r, right)
+	left, right := eventsWidth(), resultWidth()
+	lines := m.invokeLines(right)
+	body := scrolled(lines, f.scroll, height)
+	if len(lines) > height {
+		offset := min(f.scroll, maxResultScroll(len(lines), height))
+		end := min(len(lines), offset+height-1)
+		body = scrolled(lines, offset, height-1) + "\n" +
+			styles.Faint(fmt.Sprintf("lines %d-%d of %d · pgup/pgdn scroll", offset+1, end, len(lines)))
 	}
 	return lipgloss.NewStyle().PaddingLeft(1).Render(lipgloss.JoinHorizontal(lipgloss.Top,
 		fill(f.events.View(), left, height),
 		"  ",
-		fill(scrolled(lines, f.scroll, height), right, height),
+		fill(body, right, height),
 	))
 }
 
-// resultLines show what an invocation returned, and its log.
+// functionError is what a function failed with: the type and message of the error it returned,
+// or the kind of error lambda says when its payload has neither.
+func functionError(inv cli.Invocation) string {
+	var e struct {
+		Type    string `json:"errorType"`
+		Message string `json:"errorMessage"`
+	}
+	_ = json.Unmarshal(inv.Payload, &e)
+	switch {
+	case e.Type != "" && e.Message != "":
+		return e.Type + ": " + e.Message
+	case e.Message != "":
+		return e.Message
+	case e.Type != "":
+		return e.Type
+	}
+	return inv.Error
+}
+
+// resultLines show what an invocation returned, or the error it failed with, and its log.
 func resultLines(r invocationResult, width int) []string {
-	where := "in aws"
+	took := ""
+	if r.inv.Duration > 0 {
+		took = " in " + formatDuration(r.inv.Duration)
+	}
+	where := " in aws"
 	if r.local {
-		where = "on this machine"
+		where = " on this machine"
 	}
-	outcome := styles.S("✓ returned", styles.ToneSuccess)
-	if r.inv.Error != "" {
-		outcome = styles.S("✗ failed: "+r.inv.Error, styles.ToneDanger)
-	}
-	status := []styles.Span{outcome, styles.S(" in "+formatDuration(r.inv.Duration)+" "+where+", "+formatAgo(r.at), styles.ToneFaint)}
-	lines := []string{styles.Render(status...), "", styles.SectionHeader("returned", width-2)}
+	facts := styles.S(took+where+", "+formatAgo(r.at), styles.ToneFaint)
 	wrap := func(s string) []string {
 		return strings.Split(ansi.Hardwrap(styles.CleanBlock(strings.TrimRight(s, "\n")), width-2, true), "\n")
 	}
-	for _, line := range wrap(prettyJSON(r.inv.Payload)) {
-		lines = append(lines, styles.Body(line))
+	outcome, section := styles.S("✓ returned", styles.ToneSuccess), "returned"
+	if r.inv.Error != "" {
+		outcome, section = styles.S("✗ failed", styles.ToneDanger), "error"
+	}
+	lines := []string{styles.Render(outcome, facts)}
+	if r.inv.Error != "" {
+		for _, line := range wrap(functionError(r.inv)) {
+			lines = append(lines, styles.Render(styles.S(line, styles.ToneDanger)))
+		}
+	}
+	lines = append(lines, "", styles.SectionHeader(section, width-2))
+	if len(bytes.TrimSpace(r.inv.Payload)) == 0 {
+		lines = append(lines, styles.Faint("nothing"))
+	} else {
+		for _, line := range wrap(prettyJSON(r.inv.Payload)) {
+			lines = append(lines, styles.Body(line))
+		}
 	}
 	if strings.TrimSpace(r.inv.Logs) != "" {
 		lines = append(lines, "", styles.SectionHeader("log", width-2))

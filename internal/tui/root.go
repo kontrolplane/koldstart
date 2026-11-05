@@ -136,10 +136,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 	case unlockedMsg:
 		return m.applyUnlocked(msg)
 	case eventEditedMsg:
-		if msg.err != nil {
-			m.error = "the editor failed: " + msg.err.Error()
-		}
-		return m.readEventFiles(), nil
+		return m.applyEventEdited(msg)
 	case statusClearMsg:
 		if msg.gen == m.statusGen {
 			m.status = ""
