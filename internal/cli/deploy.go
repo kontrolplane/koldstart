@@ -22,15 +22,18 @@ func planCommand(name string, opts *Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "plan",
 		Short: "show what a deploy would create, change and delete",
-		Long: `plan builds every function and compares the configuration with the state, without changing
-anything in aws. It reads secrets, to tell whether they changed.
+		Long: `plan builds every function, compares the configuration with what the state says is deployed,
+and prints what a deploy would create, update, replace and delete. It changes nothing in aws and
+writes no state; it reads secrets and other stages' outputs, to tell whether they changed.
 
 With --refresh it also reads every resource as it is in aws: one deleted outside koldstart is
-created again, and one changed outside koldstart is set back to what the configuration says.
-It tells which inputs of functions and of resources were changed; of the rest, only whether
+planned to be created again, and one changed outside koldstart to be set back to what the
+configuration says. Functions and resources say which inputs were changed; the rest only whether
 they are still there.`,
-		Example: fmt.Sprintf("  %[1]s plan\n  %[1]s plan --stage prod --refresh", name),
-		Args:    cobra.NoArgs,
+		Example: fmt.Sprintf(`  %[1]s plan
+  %[1]s plan --stage prod --refresh
+  %[1]s plan --allow-replace`, name),
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
 			s, err := openStage(ctx, opts, false)
@@ -56,10 +59,16 @@ func deployCommand(name string, opts *Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "deploy",
 		Short: "build, upload and apply the plan",
-		Long: `deploy builds every function, uploads the zips, plans, asks, and applies the plan. Every step
-is written to the state as it is made: a deploy that fails or is stopped is finished by the next.`,
-		Example: fmt.Sprintf("  %[1]s deploy\n  %[1]s deploy --stage prod --yes", name),
-		Args:    cobra.NoArgs,
+		Long: `deploy builds every function, uploads the zips, prints the plan, asks, applies it and prints the
+outputs, holding the stage's lock throughout. Every step is written to the state as it is made, so
+a deploy that fails or is stopped is finished by the next.
+
+Without a terminal to ask on, pass --yes. Progress goes to stderr: a status line on a terminal,
+and plain lines elsewhere, as in ci.`,
+		Example: fmt.Sprintf(`  %[1]s deploy
+  %[1]s deploy --stage prod --yes
+  %[1]s deploy --refresh`, name),
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
 			s, err := openStage(ctx, opts, true)
@@ -98,10 +107,12 @@ func deployFunctionCommand(name string, opts *Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "function",
 		Short: "deploy only the code of one function",
-		Long: `deploy function builds one function, uploads it, and replaces its code in place. It refuses when
-the function's configuration changed too: run deploy for that.`,
-		Example: fmt.Sprintf("  %[1]s deploy function -f api", name),
-		Args:    cobra.NoArgs,
+		Long: `deploy function builds one function, uploads it, and replaces its code in place, without asking,
+holding the stage's lock. It says so when the code is the code deployed, and refuses when the
+function is not deployed yet or its configuration changed too: run deploy for those.`,
+		Example: fmt.Sprintf(`  %[1]s deploy function -f api
+  %[1]s deploy function -f worker --stage prod`, name),
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
 			s, err := openStage(ctx, opts, true)

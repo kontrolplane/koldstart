@@ -20,10 +20,15 @@ import (
 func outputsCommand(name string, opts *Options) *cobra.Command {
 	var output string
 	cmd := &cobra.Command{
-		Use:     "outputs",
-		Short:   "print the stage's outputs, such as the http api url",
-		Example: fmt.Sprintf("  %[1]s outputs --stage prod", name),
-		Args:    cobra.NoArgs,
+		Use:   "outputs",
+		Short: "print the stage's outputs, such as the http api url",
+		Long: `outputs prints the outputs the last deploy of the stage recorded: those of the configuration,
+httpApiUrl, webSocketUrl and a <function>Url for each function url. -o json prints them as one
+json object, {} when there are none.`,
+		Example: fmt.Sprintf(`  %[1]s outputs
+  %[1]s outputs --stage prod
+  %[1]s outputs -o json | jq -r .httpApiUrl`, name),
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if output != outputText && output != outputJSON {
 				return fmt.Errorf("-o %q: want text or json", output)

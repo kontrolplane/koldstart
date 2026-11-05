@@ -18,9 +18,11 @@ func packageCommand(name string, opts *Options) *cobra.Command {
 		Use:   "package",
 		Short: "build and zip every function, without deploying",
 		Long: `package builds every function the way deploy does, into .koldstart/build/<stage>/<function>.zip,
-and prints the size and hash of each zip.`,
+and prints the size and hash of each zip. It needs no aws credentials. A container image is built
+by deploy, not here.`,
 		Example: fmt.Sprintf(`  %[1]s package
-  %[1]s package --stage prod`, name),
+  %[1]s package --stage prod
+  %[1]s package && unzip -l .koldstart/build/dev/api.zip`, name),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			p, err := loadProject(cmd.Context(), opts)

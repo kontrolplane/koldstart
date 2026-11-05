@@ -18,11 +18,13 @@ func removeCommand(name string, opts *Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "remove",
 		Short: "delete everything the stage deployed",
-		Long: `remove deletes everything the stage's state lists, in reverse order, after asking you to type the
-stage's name. Retained resources, such as tables and buckets, are left in place, and the next deploy
-of the stage takes them over again.`,
-		Example: fmt.Sprintf("  %[1]s remove --stage pr-12", name),
-		Args:    cobra.NoArgs,
+		Long: `remove prints the plan of deleting everything the stage's state lists, asks you to type the
+stage's name, and deletes it in reverse dependency order, holding the stage's lock. Retained
+resources, such as tables and buckets, are left in place and listed, and the next deploy of the
+stage takes them over again; when nothing is left, the state is deleted too.`,
+		Example: fmt.Sprintf(`  %[1]s remove --stage pr-12
+  %[1]s remove --stage pr-12 --yes`, name),
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
 			s, err := openStage(ctx, opts, false)
@@ -113,10 +115,11 @@ func unlockCommand(name string, opts *Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "unlock",
 		Short: "release a stage's lock left by a deploy that did not finish",
-		Long: `unlock shows who holds the stage's lock, and releases it. Make sure that deploy is really gone:
-two deploys of one stage at once can leave its state wrong.`,
-		Example: fmt.Sprintf("  %[1]s unlock --stage prod", name),
-		Args:    cobra.NoArgs,
+		Long: `unlock shows who holds the stage's lock, doing what and since when, asks, and releases it. Make
+sure that deploy is really gone: two deploys of one stage at once can leave its state wrong.`,
+		Example: fmt.Sprintf(`  %[1]s unlock --stage prod
+  %[1]s unlock --stage prod --yes`, name),
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
 			s, err := openStage(ctx, opts, false)

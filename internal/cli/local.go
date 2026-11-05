@@ -222,11 +222,14 @@ func invokeCommand(name string, opts *Options) *cobra.Command {
 		Use:   "invoke",
 		Short: "invoke a function with an event, in aws or with --local on this machine",
 		Long: `invoke runs a function with the event from --data or --path, {} without either, and prints what it
-returns. In aws, the end of its log follows. With --local, it is built and run here against the
-lambda runtime api, with the variables the stage deployed and your credentials, so it reads and
-writes what the stage deployed; .koldstart/local.<stage>.pkl overrides variables.`,
+returns on stdout; the end of its log, or with --local its output, goes to stderr. With --local, it
+is built and run here against an emulator of the lambda runtime api, with the variables the stage
+deployed and your credentials, so it reads and writes what the stage deployed;
+.koldstart/local.<stage>.pkl overrides variables, and prod asks first.`,
 		Example: fmt.Sprintf(`  %[1]s invoke -f api --path events/get-order.json
-  %[1]s invoke -f worker --local --data '{"job": 1}'`, name),
+  %[1]s invoke -f api --local --path event.json
+  %[1]s invoke -f worker --local --data '{"job": 1}'
+  %[1]s invoke -f api | jq -r .body`, name),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()

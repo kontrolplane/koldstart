@@ -84,8 +84,14 @@ func Root(name string, ui UI) *cobra.Command {
 
 	cobra.EnableCommandSorting = false
 	root := &cobra.Command{
-		Use:               name,
-		Short:             "deploy serverless applications to aws lambda",
+		Use:   name,
+		Short: "deploy serverless applications to aws lambda",
+		Long: fmt.Sprintf(`%s builds the functions a koldstart.pkl describes and deploys them, with their events and
+resources, into your own aws account, recording what it deployed in a bucket there. A command that
+works on a stage works on the one --stage names, dev without it.`, name),
+		Example: fmt.Sprintf(`  %[1]s init orders
+  %[1]s plan
+  %[1]s deploy --stage prod`, name),
 		Version:           version.Current().String(),
 		SilenceUsage:      true,
 		SilenceErrors:     true,
@@ -169,8 +175,11 @@ func versionCommand(name string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "version",
 		Short: "print the version",
+		Long: `version prints the version of this binary. -o json prints it with the commit, the build date,
+the version of go and the platform it was built for.`,
 		Example: fmt.Sprintf(`  %[1]s version
-  %[1]s version -o json`, name),
+  %[1]s version -o json
+  %[1]s version -o json | jq -r .commit`, name),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if output != outputText && output != outputJSON {
@@ -204,6 +213,7 @@ func helpCommand(name string) *cobra.Command {
 	return &cobra.Command{
 		Use:     "help [command]",
 		Short:   "print the help of a command",
+		Long:    "help prints what a command does, its flags and examples, as --help does.",
 		Example: fmt.Sprintf("  %[1]s help deploy\n  %[1]s help deploy function", name),
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]cobra.Completion, cobra.ShellCompDirective) {
 			parent, rest, err := cmd.Root().Find(args)

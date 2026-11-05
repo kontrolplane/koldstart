@@ -28,11 +28,14 @@ func offlineCommand(name string, opts *Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "offline",
 		Short: "serve the http routes on this machine",
-		Long: `offline serves every http route of the stage on 127.0.0.1, each request an invocation of its
-function on this machine, as invoke --local runs it. A change to a source file of the project
-rebuilds the functions, and the next request runs the new code.`,
-		Example: fmt.Sprintf("  %[1]s offline\n  %[1]s offline --port 8080", name),
-		Args:    cobra.NoArgs,
+		Long: `offline serves every http route of the stage on 127.0.0.1:3000, or --port, each request an
+invocation of its function on this machine, as invoke --local runs it, until ctrl+c. A change to a
+source file of the project rebuilds the functions, and the next request runs the new code. Against
+prod it asks first.`,
+		Example: fmt.Sprintf(`  %[1]s offline
+  %[1]s offline --port 8080
+  %[1]s offline --stage pr-12`, name),
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
 			s, err := openStage(ctx, opts, false)

@@ -71,7 +71,7 @@ identifier cloud control knows it by: a table's name, a queue's url, a bucket's 
 resource into the state and changes nothing in aws; the next deploy brings it in line with the
 configuration. An imported resource is retained, so remove leaves it in place, unless its
 deletionPolicy says delete.`,
-		Example: fmt.Sprintf(`  %[1]s import orders orders-prod
+		Example: fmt.Sprintf(`  %[1]s import orders orders-prod --stage prod
   %[1]s import jobs https://sqs.eu-west-1.amazonaws.com/123456789012/jobs`, name),
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {

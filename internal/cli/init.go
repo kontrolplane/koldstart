@@ -25,15 +25,16 @@ func initCommand(name string, opts *Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "init [directory]",
 		Short: "start a project: a koldstart.pkl, a handler and the .gitignore entries",
-		Long: fmt.Sprintf(`init writes a koldstart.pkl with one function behind an http route, GET /hello, and its
-handler in typescript, go or python, into the directory, this one without it. It adds .koldstart/build/ and
-.koldstart/local/ to .gitignore. Files that are there already are kept; koldstart.pkl is refused
-unless --force is passed.
+		Long: fmt.Sprintf(`init writes a koldstart.pkl with one function behind GET /hello, and its handler in typescript,
+go or python, into the directory, this one without it, and adds .koldstart/build/ and
+.koldstart/local/ to .gitignore. It keeps any other file that is there already, and writes over a
+koldstart.pkl only with --force.
 
-The app is named after the directory, and deploys to --region, or the region of the aws profile,
-or %s.`, defaultRegion),
+The app is named after the directory, or --app, and deploys to --region, the region of the aws
+profile, or %s.`, defaultRegion),
 		Example: fmt.Sprintf(`  %[1]s init
-  %[1]s init orders --template go --region eu-west-1`, name),
+  %[1]s init orders --template go --region eu-west-1
+  %[1]s init --app orders --template python`, name),
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir := "."

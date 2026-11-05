@@ -41,7 +41,8 @@ it. What it cannot convert is left in the file as a TODO comment above where it 
 listed at the end. The file is checked with pkl before it is written, so it is valid even where it
 is not complete.`,
 		Example: fmt.Sprintf(`  %[1]s migrate
-  %[1]s migrate path/to/serverless.yml --out koldstart.pkl`, name),
+  %[1]s migrate path/to/serverless.yml --out koldstart.pkl
+  %[1]s migrate --force`, name),
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()

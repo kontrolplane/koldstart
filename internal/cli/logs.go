@@ -31,10 +31,12 @@ func logsCommand(name string, opts *Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "logs",
 		Short: "print a function's logs, --tail to follow them",
-		Long: `logs prints a function's logs of the last --since, and with --tail follows them as they come.
---filter takes a cloudwatch logs filter pattern, such as ERROR or "{ $.level = \"error\" }".`,
+		Long: `logs prints a function's logs of the last --since, 10m by default, in local time, the date too
+when --since is 24h or more. --tail follows them as they come, until ctrl+c. --filter takes a
+cloudwatch logs filter pattern, such as ERROR or "{ $.level = \"error\" }".`,
 		Example: fmt.Sprintf(`  %[1]s logs -f api
-  %[1]s logs -f api --tail --filter ERROR`, name),
+  %[1]s logs -f api --tail
+  %[1]s logs -f api --since 2h --filter ERROR`, name),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if since <= 0 {
