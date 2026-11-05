@@ -1,11 +1,14 @@
 package tui
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/kontrolplane/koldstart/internal/cli"
 )
@@ -100,6 +103,23 @@ func TestInvokeResult(t *testing.T) {
 				t.Errorf("status %q, want %q", m.status, tt.status)
 			}
 		})
+	}
+}
+
+// TestResultErrorWraps checks the error a function failed with wraps between its words at every
+// width, as a long message from node was broken in the middle of them. A word wider than half the
+// result may still be cut, rather than leave a short line.
+func TestResultErrorWraps(t *testing.T) {
+	message := "This file is being treated as an ES module because it has a '.js' file extension and '/private/tmp/shop/package.json' contains \"type\": \"module\". To treat it as a CommonJS script, rename it to use the '.cjs' file extension."
+	payload, _ := json.Marshal(map[string]string{"errorType": "ReferenceError", "errorMessage": message})
+	r := invocationResult{inv: cli.Invocation{Error: "Unhandled", Payload: payload}}
+	for width := 30; width <= 90; width++ {
+		v := ansi.Strip(strings.Join(resultLines(r, width), "\n"))
+		for _, word := range strings.Fields(message) {
+			if len(word) <= width/2 && !strings.Contains(v, word) {
+				t.Fatalf("width %d: %q is broken over two lines:\n%s", width, word, v)
+			}
+		}
 	}
 }
 

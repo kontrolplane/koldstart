@@ -156,8 +156,10 @@ func (m model) headLines(width int) []string {
 func (m model) appliedLines(width int) []string {
 	res := m.state.resource.res.res
 	lines := []string{"", styles.SectionHeader("attributes", width)}
-	for _, k := range slices.Sorted(maps.Keys(res.Attributes)) {
-		lines = append(lines, row(styles.Clean(k), text(orDash(res.Attributes[k]), styles.ToneBody), width))
+	keys := slices.Sorted(maps.Keys(res.Attributes))
+	labels := labelsFor(keys, width)
+	for _, k := range keys {
+		lines = append(lines, rowIn(labels, styles.Clean(k), text(orDash(res.Attributes[k]), styles.ToneBody), width))
 	}
 	if len(res.Attributes) == 0 {
 		lines = append(lines, styles.Faint("none"))
@@ -214,8 +216,9 @@ func (m model) liveLinesOf(width int) []string {
 	switch {
 	case len(drift) > 0:
 		lines = append(lines, renderCell(cell{styles.S("▲ ", styles.ToneWarning), styles.S("changed outside koldstart: "+strings.Join(drift, ", "), styles.ToneWarning)}, column{width: width}, nil))
+		labels := labelsFor(drift, width)
 		for _, k := range drift {
-			lines = append(lines, row(styles.Clean(k), cell{
+			lines = append(lines, rowIn(labels, styles.Clean(k), cell{
 				styles.S(compactJSON(applied[k]), styles.ToneBody), styles.S("  →  ", styles.ToneFaint), styles.S(compactJSON(r.live[k]), styles.ToneWarning),
 			}, width))
 		}

@@ -116,6 +116,21 @@ func TestDriftedLines(t *testing.T) {
 	}
 }
 
+// TestResourceLongAttributes checks an attribute named as cloud control names them, longer than
+// the labels koldstart writes, shows whole, as VisibilityTimeout of a queue was cut.
+func TestResourceLongAttributes(t *testing.T) {
+	f := newFake(t)
+	f.states[ordersDev].Resources["resource/table"].Attributes = map[string]string{
+		"VisibilityTimeout": "60", "AttributeDefinitions": "id", "Arn": "arn:aws:dynamodb:table",
+	}
+	v := screen(openTable(t, f))
+	for _, want := range []string{"VisibilityTimeout  60", "AttributeDefinitions  id", "Arn  arn:aws:dynamodb:table"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("the attributes do not show %q:\n%s", want, v)
+		}
+	}
+}
+
 // TestResourceCopy checks c copies the id in aws, or the arn of a resource that has no id.
 func TestResourceCopy(t *testing.T) {
 	tests := []struct {

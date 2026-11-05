@@ -338,8 +338,8 @@ func resultLines(r invocationResult, width int) []string {
 	}
 	lines := []string{styles.Render(outcome, facts)}
 	if r.inv.Error != "" {
-		for _, line := range wrap(functionError(r.inv)) {
-			lines = append(lines, styles.Render(styles.S(line, styles.ToneDanger)))
+		for line := range strings.SplitSeq(styles.CleanBlock(strings.TrimRight(functionError(r.inv), "\n")), "\n") {
+			lines = append(lines, cellLines(text(line, styles.ToneDanger), width-2)...)
 		}
 	}
 	lines = append(lines, "", styles.SectionHeader(section, width-2))

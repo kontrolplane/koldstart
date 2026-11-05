@@ -309,8 +309,24 @@ const labelWidth = 14
 
 // row renders a label right aligned next to its value, cut to width.
 func row(label string, value cell, width int) string {
-	l := styles.Fg(styles.ToneFaint).Width(labelWidth).Align(lipgloss.Right).PaddingRight(2).Render(truncate(label, labelWidth-2))
-	return l + renderCell(value, column{width: max(1, width-labelWidth)}, nil)
+	return rowIn(labelWidth, label, value, width)
+}
+
+// rowIn is row with labels as wide as labels, for the names of a resource's attributes, which
+// run longer than the labels koldstart writes.
+func rowIn(labels int, label string, value cell, width int) string {
+	l := styles.Fg(styles.ToneFaint).Width(labels).Align(lipgloss.Right).PaddingRight(2).Render(truncate(label, labels-2))
+	return l + renderCell(value, column{width: max(1, width-labels)}, nil)
+}
+
+// labelsFor is how wide the labels of keys are drawn: the longest with its padding, at least
+// labelWidth and at most half of width.
+func labelsFor(keys []string, width int) int {
+	w := labelWidth
+	for _, k := range keys {
+		w = max(w, ansi.StringWidth(k)+2)
+	}
+	return max(labelWidth, min(w, width/2))
 }
 
 // scrolled shows height lines of lines from offset, as far as there are.
