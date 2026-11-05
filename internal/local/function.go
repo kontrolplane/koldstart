@@ -35,6 +35,12 @@ const (
 	pythonRuntimeFile = ".koldstart-runtime.py"
 )
 
+// commonJSPackage is the package.json written beside a node function's bundle. The bundle is
+// commonjs in a .js file, as in lambda, where no package.json is beside it; here the project's own
+// could be found above it instead, and with "type": "module" node would load the bundle as an es
+// module and fail.
+var commonJSPackage = []byte(`{"type": "commonjs"}` + "\n")
+
 // Function is a function to run on this machine.
 type Function struct {
 	// Name is its name in the configuration, LambdaName its name in lambda.
@@ -74,7 +80,7 @@ func (l Runner) Build(ctx context.Context, f Function) error {
 	}
 	switch {
 	case f.Config.IsNode():
-		files = append(files, build.File{Name: runtimeFile, Data: nodeRuntime})
+		files = append(files, build.File{Name: runtimeFile, Data: nodeRuntime}, build.File{Name: "package.json", Data: commonJSPackage})
 	case f.Config.IsPython():
 		files = append(files, build.File{Name: pythonRuntimeFile, Data: pythonRuntime})
 	}
