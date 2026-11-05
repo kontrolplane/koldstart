@@ -37,7 +37,12 @@ type S3API interface {
 
 // BucketName is the state bucket of an account and region.
 func BucketName(account, region string) string {
-	return "koldstart-state-" + account + "-" + region
+	return BucketPrefix(account) + region
+}
+
+// BucketPrefix starts the names of the state buckets of an account, one for each region.
+func BucketPrefix(account string) string {
+	return "koldstart-state-" + account + "-"
 }
 
 // S3 is a Backend in the state bucket of an account and region. Every call passes the account

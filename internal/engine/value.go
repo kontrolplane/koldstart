@@ -208,3 +208,32 @@ func hasUnknown(v any) bool {
 	})
 	return found
 }
+
+// Describe writes a value of the inputs for a person: koldstart's own values by what they stand
+// for, as ssm:/orders/key for a secret, so no secret's value is shown, and anything else as json.
+func Describe(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	if s, ok := asSecret(v); ok {
+		out := s.Source + ":" + s.Name
+		if s.Key != "" {
+			out += "#" + s.Key
+		}
+		return out
+	}
+	if app, stage, output, ok := asOutput(v); ok {
+		return "output " + app + "/" + stage + "." + output
+	}
+	if r, ok := asRef(v); ok {
+		return "ref " + r.Node + "." + r.Attribute
+	}
+	if IsUnknown(v) {
+		return "known after apply"
+	}
+	data, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Sprint(v)
+	}
+	return string(data)
+}

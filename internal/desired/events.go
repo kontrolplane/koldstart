@@ -11,6 +11,7 @@ import (
 	"github.com/kontrolplane/koldstart/internal/config"
 	"github.com/kontrolplane/koldstart/internal/engine"
 	"github.com/kontrolplane/koldstart/internal/provider/awsp"
+	"github.com/kontrolplane/koldstart/internal/state"
 )
 
 // The ids of the nodes events add.
@@ -293,5 +294,26 @@ func (b *builder) sourceStatements(fn config.Function) []any {
 			out = append(out, statement("Allow", slices.Concat(kinesisRead, dynamoRead), []any{b.value(e.Stream)}))
 		}
 	}
+	return out
+}
+
+// Triggers lists the nodes of a state that invoke a function: its routes, schedules, mappings,
+// subscriptions and the notifications of its buckets, sorted.
+func Triggers(resources map[string]*state.Resource, fn string) []string {
+	var out []string
+	for id, r := range resources {
+		kind, rest, _ := strings.Cut(id, "/")
+		switch {
+		case kind == "schedule" || kind == "mapping" || kind == "subscription":
+			if strings.HasPrefix(rest, fn+"/") {
+				out = append(out, id)
+			}
+		case kind == "route" && slices.Contains(r.Dependencies, integrationID(fn)):
+			out = append(out, id)
+		case kind == "notification" && slices.ContainsFunc(r.Dependencies, func(d string) bool { return strings.HasPrefix(d, permissionID(fn, "")) }):
+			out = append(out, id)
+		}
+	}
+	slices.Sort(out)
 	return out
 }

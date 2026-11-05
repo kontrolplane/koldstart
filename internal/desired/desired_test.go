@@ -11,6 +11,7 @@ import (
 	"github.com/kontrolplane/koldstart/internal/build"
 	"github.com/kontrolplane/koldstart/internal/config"
 	"github.com/kontrolplane/koldstart/internal/engine"
+	"github.com/kontrolplane/koldstart/internal/state"
 )
 
 func project(t *testing.T) *config.Project {
@@ -267,5 +268,41 @@ func TestName(t *testing.T) {
 	}
 	if a != Name(64, long, "pr-1234", long+"x") {
 		t.Error("the same long name gives another result")
+	}
+}
+
+// TestTriggers checks the nodes that invoke a function are found in a state: its routes,
+// mappings, schedules, subscriptions and the notifications of its buckets, and none of another function.
+func TestTriggers(t *testing.T) {
+	p := project(t)
+	worker := p.Functions["worker"]
+	worker.Events = append(worker.Events,
+		config.Event{Type: config.EventSchedule, Expression: "rate(5 minutes)"},
+		config.Event{Type: config.EventTopic, Topic: config.Value{Literal: "arn:aws:sns:eu-west-1:123456789012:alerts"}},
+		config.Event{Type: config.EventBucket, Bucket: config.Value{Literal: "uploads"}},
+	)
+	p.Functions["worker"] = worker
+	nodes, err := Build(p, target())
+	if err != nil {
+		t.Fatal(err)
+	}
+	resources := map[string]*state.Resource{}
+	for _, n := range nodes {
+		resources[n.ID] = &state.Resource{Type: n.Type, Dependencies: n.Deps()}
+	}
+	tests := []struct {
+		function string
+		want     []string
+	}{
+		{function: "worker", want: []string{"mapping/worker/jobs", "notification/uploads", "schedule/worker/0", "subscription/worker/alerts"}},
+		{function: "api", want: []string{"route/GET /orders/{id}", "route/POST /orders"}},
+		{function: "missing"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.function, func(t *testing.T) {
+			if got := Triggers(resources, tt.function); !slices.Equal(got, tt.want) {
+				t.Errorf("Triggers = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

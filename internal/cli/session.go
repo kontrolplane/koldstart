@@ -33,9 +33,11 @@ type session struct {
 	cfg     aws.Config
 	Account string
 	Region  string
-	S3      *s3.Client
-	Lambda  *lambda.Client
-	Logs    *cloudwatchlogs.Client
+	// Caller is the arn of who the credentials belong to.
+	Caller string
+	S3     *s3.Client
+	Lambda *lambda.Client
+	Logs   *cloudwatchlogs.Client
 	// CloudControl applies resources, with the schemas of their types.
 	CloudControl *awscloudcontrol.Client
 	Schemas      *cloudcontrol.Registry
@@ -63,8 +65,7 @@ func awsConfig(ctx context.Context, opts *Options, region string) (aws.Config, e
 	return cfg, nil
 }
 
-// openSession connects to the account the credentials belong to, in region. With an endpoint of
-// an emulator, which answers on one host, buckets go in the path rather than the host name.
+// openSession connects to the account the credentials belong to, in region.
 func openSession(ctx context.Context, opts *Options, region string) (*session, error) {
 	cfg, err := awsConfig(ctx, opts, region)
 	if err != nil {
@@ -74,9 +75,17 @@ func openSession(ctx context.Context, opts *Options, region string) (*session, e
 	if err != nil {
 		return nil, fmt.Errorf("finding the aws account: are there credentials? %w", err)
 	}
+	s := newSession(cfg, aws.ToString(ident.Account))
+	s.Caller = aws.ToString(ident.Arn)
+	return s, nil
+}
+
+// newSession makes the clients for an account, in the config's region. With an endpoint of an
+// emulator, which answers on one host, buckets go in the path rather than the host name.
+func newSession(cfg aws.Config, account string) *session {
 	return &session{
 		cfg:     cfg,
-		Account: aws.ToString(ident.Account),
+		Account: account,
 		Region:  cfg.Region,
 		S3: s3.NewFromConfig(cfg, func(o *s3.Options) {
 			o.UsePathStyle = os.Getenv("AWS_ENDPOINT_URL") != "" || os.Getenv("AWS_ENDPOINT_URL_S3") != ""
@@ -86,7 +95,19 @@ func openSession(ctx context.Context, opts *Options, region string) (*session, e
 		CloudControl: awscloudcontrol.NewFromConfig(cfg),
 		Schemas:      &cloudcontrol.Registry{Client: cloudformation.NewFromConfig(cfg)},
 		Secrets:      &resolve.Secrets{SSM: ssm.NewFromConfig(cfg), SecretsManager: secretsmanager.NewFromConfig(cfg)},
-	}, nil
+	}
+}
+
+// in returns the session in another region of the same account.
+func (s *session) in(region string) *session {
+	if region == s.Region {
+		return s
+	}
+	cfg := s.cfg.Copy()
+	cfg.Region = region
+	other := newSession(cfg, s.Account)
+	other.Caller = s.Caller
+	return other
 }
 
 // engine returns an engine with the providers for this session.
