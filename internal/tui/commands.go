@@ -341,7 +341,8 @@ func (m model) loadPlan() (model, tea.Cmd) {
 	p := &m.state.plan
 	p.gen = gen
 	ref, function, remove, refresh := p.ref, p.function, p.remove, p.refresh
-	ctx, cancel := m.withTimeout(10 * time.Minute)
+	ctx, cancel := m.withTimeout(planTimeout)
+	p.cancel = cancel
 	return m, func() tea.Msg {
 		defer cancel()
 		var plan *engine.Plan
@@ -355,8 +356,13 @@ func (m model) loadPlan() (model, tea.Cmd) {
 	}
 }
 
+// planTimeout bounds building and planning, which bundles every function first.
+const planTimeout = 10 * time.Minute
+
 // apply applies the plan on screen in the background, sending its progress on a channel the
-// returned command reads from. Quitting stops it and waits for it.
+// returned command reads from. Quitting stops it and waits for it: once the interface is gone
+// nothing reads the channel, so a send gives up when the context ends rather than hold the apply,
+// and its lock, open.
 func (m model) apply() tea.Cmd {
 	p := m.state.plan
 	ch := make(chan tea.Msg, 64)
@@ -364,18 +370,25 @@ func (m model) apply() tea.Cmd {
 	if p.remove {
 		name = "the remove of " + p.ref.String()
 	}
+	ctx := m.ctx
+	send := func(msg tea.Msg) {
+		select {
+		case ch <- msg:
+		case <-ctx.Done():
+		}
+	}
 	m.ops.start(name)
 	go func() {
 		defer m.ops.done(name)
 		defer close(ch)
-		onEvent := func(ev engine.Event) { ch <- progressMsg{event: ev, ch: ch} }
+		onEvent := func(ev engine.Event) { send(progressMsg{event: ev, ch: ch}) }
 		var msg appliedMsg
 		if p.remove {
-			msg.plan, msg.applied, msg.gone, msg.err = m.b.Remove(m.ctx, p.ref, p.plan, onEvent)
+			msg.plan, msg.applied, msg.gone, msg.err = m.b.Remove(ctx, p.ref, p.plan, onEvent)
 		} else {
-			msg.plan, msg.applied, msg.err = m.b.Deploy(m.ctx, p.ref, p.function, p.plan, onEvent)
+			msg.plan, msg.applied, msg.err = m.b.Deploy(ctx, p.ref, p.function, p.plan, onEvent)
 		}
-		ch <- msg
+		send(msg)
 	}()
 	return waitFor(ch)
 }

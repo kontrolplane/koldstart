@@ -545,19 +545,7 @@ func (m model) shortHelp() [][2]string {
 	case invocationPage:
 		return [][2]string{scrollHint, hint(k.Copy, "copy id"), hint(k.Help), hint(k.Quit)}
 	case planPage:
-		p := m.state.plan
-		switch {
-		case p.applying:
-			return [][2]string{scrollHint, hint(k.ForceQuit, "stop and quit")}
-		case p.plan == nil:
-			return [][2]string{hint(k.Help), hint(k.Quit)}
-		case p.done:
-			return [][2]string{hint(k.View, "diff"), chooseHint, hint(k.Help), hint(k.Quit)}
-		}
-		if p.remove || p.function != "" || p.refresh {
-			return [][2]string{hint(k.Apply, m.planWhat()), hint(k.View, "diff"), chooseHint, hint(k.Help), hint(k.Quit)}
-		}
-		return [][2]string{hint(k.Apply, m.planWhat()), hint(k.View, "diff"), hint(k.Refresh, "read aws"), chooseHint, hint(k.Help), hint(k.Quit)}
+		return m.planHints()
 	case removePage:
 		return [][2]string{hint(k.View, "remove"), hint(k.Back, "cancel")}
 	case unlockPage, runLocalPage:

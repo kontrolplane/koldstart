@@ -1,12 +1,14 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/kontrolplane/koldstart/internal/cli"
 	"github.com/kontrolplane/koldstart/internal/engine"
@@ -20,19 +22,28 @@ type planState struct {
 	remove   bool
 	from     page
 	gen      int
+	// cancel stops the plan being made, when the page is left before it is shown.
+	cancel   context.CancelFunc
 	plan     *engine.Plan
 	applying bool
 	done     bool
+	// failed is an apply that ended in an error, part way or before it began.
+	failed   bool
 	progress map[string]nodeProgress
-	scroll   int
-	cursor   int
+	// startedAt and finishedAt time the apply.
+	startedAt  time.Time
+	finishedAt time.Time
+	scroll     int
+	cursor     int
 	// refresh plans with every resource read as it is in aws.
 	refresh bool
 }
 
-// nodeProgress is how far applying a node got.
+// nodeProgress is how far applying a node got, from the first event about it. action is what the
+// engine does, which can differ from the plan's when the resource changed since.
 type nodeProgress struct {
-	started  bool
+	action   engine.Action
+	since    time.Time
 	done     bool
 	err      error
 	duration time.Duration
@@ -65,7 +76,7 @@ func (m model) applyPlanLoaded(msg planLoadedMsg) (model, tea.Cmd) {
 	if msg.gen != p.gen || m.page != planPage {
 		return m, nil
 	}
-	m.loading = false
+	m.loading, p.cancel = false, nil
 	if msg.err != nil {
 		m.error = "could not plan: " + msg.err.Error()
 		return m.switchPage(p.from), nil
@@ -84,7 +95,8 @@ func (m model) applyPlanLoaded(msg planLoadedMsg) (model, tea.Cmd) {
 // startApply applies the plan on screen.
 func (m model) startApply() (model, tea.Cmd) {
 	p := &m.state.plan
-	p.applying, p.progress, p.scroll = true, map[string]nodeProgress{}, 0
+	p.applying, p.failed, p.progress, p.scroll = true, false, map[string]nodeProgress{}, 0
+	p.startedAt, p.finishedAt = time.Now(), time.Time{}
 	return m, m.apply()
 }
 
@@ -92,18 +104,26 @@ func (m model) applyProgress(msg progressMsg) (model, tea.Cmd) {
 	p := &m.state.plan
 	ev := msg.event
 	if p.progress != nil {
-		p.progress[ev.ID] = nodeProgress{started: true, done: ev.Done, err: ev.Err, duration: ev.Duration}
+		pr, ok := p.progress[ev.ID]
+		if !ok {
+			pr.since = time.Now()
+		}
+		pr.action, pr.done, pr.err, pr.duration = ev.Action, ev.Done, ev.Err, ev.Duration
+		p.progress[ev.ID] = pr
 	}
 	return m, waitFor(msg.ch)
 }
 
 func (m model) applied(msg appliedMsg) (model, tea.Cmd) {
 	p := &m.state.plan
-	p.applying = false
+	p.applying, p.finishedAt = false, time.Now()
 	switch {
 	case msg.err != nil:
-		p.done = true
-		m.error = "the " + m.planWhat() + " failed: " + msg.err.Error()
+		p.done, p.failed = true, true
+		m.error = "the " + m.planWhat() + " of " + p.ref.String() + " failed: " + msg.err.Error()
+		if len(p.progress) > 0 {
+			m.error += "\n\n" + m.planAgain()
+		}
 		return m, nil
 	case !msg.applied:
 		p.plan, p.progress = msg.plan, nil
@@ -132,12 +152,20 @@ func (m model) applied(msg appliedMsg) (model, tea.Cmd) {
 	return m.setStatus(done, styles.ToneSuccess)
 }
 
+// planAgain says how to finish an apply that failed part way.
+func (m model) planAgain() string {
+	if m.state.plan.remove {
+		return "what was done is in the state: fix the cause, then ctrl+d removes what is left"
+	}
+	return "what was done is in the state: fix the cause, then d plans what is left"
+}
+
 func (m model) planUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 	p := &m.state.plan
 	switch {
 	case key.Matches(msg, m.keys.Back, m.keys.Quit):
 		if p.applying {
-			return m.setStatus("the "+m.planWhat()+" is running: wait for it, or ctrl+c to stop it", styles.ToneWarning)
+			return m.setStatus("the "+m.planWhat()+" is running: wait for it, or ctrl+c to stop it and quit", styles.ToneWarning)
 		}
 		return m.leavePlan()
 	case key.Matches(msg, m.keys.Apply):
@@ -161,14 +189,19 @@ func (m model) planUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 	case key.Matches(msg, m.keys.View):
 		if changes := m.planChanges(); p.cursor < len(changes) {
 			c := changes[p.cursor]
-			return m.openDiff(c.ID, cli.Verb(c.Action)+" "+shortType(c.Type), c.Before, c.After)
+			after := c.After
+			if c.Action == engine.Keep {
+				after = c.Before
+			}
+			return m.openDiff(c.ID, cli.Verb(c.Action)+" "+shortType(c.Type), c.Before, after)
 		}
 		return m, nil
 	}
-	lines, rows := m.planLines()
-	if cursor, ok := moveCursor(msg, m.keys, p.cursor, len(rows), contentHeight); ok {
+	head, body, rows := m.planLines()
+	height := planBodyHeight(head)
+	if cursor, ok := moveCursor(msg, m.keys, p.cursor, len(rows), height); ok {
 		p.cursor = cursor
-		_, p.scroll = selectable(lines, rows, p.cursor, p.scroll, contentHeight)
+		_, p.scroll = selectable(body, rows, p.cursor, p.scroll, height)
 	}
 	return m, nil
 }
@@ -202,8 +235,13 @@ func (m model) planWhat() string {
 	return planDeployWord
 }
 
-// leavePlan goes back to where the plan was asked from, reading the stage again.
+// leavePlan goes back to where the plan was asked from, reading the stage again. A plan still
+// being made is stopped.
 func (m model) leavePlan() (model, tea.Cmd) {
+	if cancel := m.state.plan.cancel; cancel != nil {
+		cancel()
+		m.state.plan.cancel = nil
+	}
 	switch from := m.state.plan.from; from {
 	case overviewPage:
 		m = m.switchPage(overviewPage)
@@ -215,19 +253,26 @@ func (m model) leavePlan() (model, tea.Cmd) {
 	return m.openStage(m.state.plan.ref)
 }
 
-// planSummary counts the changes of each action, as plan does.
-func planSummary(plan *engine.Plan) string {
+// summaryActions are the actions in the order plan counts them.
+var summaryActions = []engine.Action{engine.Create, engine.Update, engine.Replace, engine.Delete, engine.Keep, engine.Adopt}
+
+// planSummary counts the changes of each action, as plan does, each in the tone of its action.
+func planSummary(plan *engine.Plan) []styles.Span {
 	counts := plan.Counts()
-	var parts []string
-	for _, a := range []engine.Action{engine.Create, engine.Update, engine.Replace, engine.Delete, engine.Keep, engine.Adopt} {
-		if counts[a] > 0 {
-			parts = append(parts, fmt.Sprintf("%d to %s", counts[a], cli.Verb(a)))
+	var spans []styles.Span
+	for _, a := range summaryActions {
+		if counts[a] == 0 {
+			continue
 		}
+		if len(spans) > 0 {
+			spans = append(spans, styles.S(", ", styles.ToneFaint))
+		}
+		spans = append(spans, styles.S(fmt.Sprintf("%d to %s", counts[a], cli.Verb(a)), actionTones[a]))
 	}
-	if len(parts) == 0 {
-		return "no changes"
+	if len(spans) == 0 {
+		return []styles.Span{styles.S("no changes", styles.ToneBody)}
 	}
-	return strings.Join(parts, ", ")
+	return spans
 }
 
 var actionTones = map[engine.Action]styles.Tone{
@@ -239,12 +284,29 @@ var actionTones = map[engine.Action]styles.Tone{
 	engine.Adopt:   styles.ToneInfo,
 }
 
-// planLines are the lines of the plan, with the index of the line of each change.
-func (m model) planLines() ([]string, []int) {
+// doing says what an action is doing, for a node in flight.
+var doing = map[engine.Action]string{
+	engine.Create:  "creating",
+	engine.Update:  "updating",
+	engine.Replace: "replacing",
+	engine.Delete:  "deleting",
+	engine.Keep:    "leaving in place",
+	engine.Adopt:   "taking over",
+}
+
+// planStatusWidth is the room on the right of each change for its progress.
+const planStatusWidth = 24
+
+// maxErrorLines bounds the lines of a node's error under it in the plan.
+const maxErrorLines = 3
+
+// planLines are the lines of the plan: the head, which stays in place, and the body of changes,
+// with the index of the line of each change.
+func (m model) planLines() ([]string, []string, []int) {
 	p := m.state.plan
 	width := contentWidth - 6
 	if p.plan == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	title := "deploy of " + p.ref.String()
 	switch {
@@ -255,64 +317,179 @@ func (m model) planLines() ([]string, []int) {
 	}
 	summary := planSummary(p.plan)
 	if p.plan.OnlyCode() {
-		summary += ": only code, replaced in place"
+		summary = append(summary, styles.S(": only code, replaced in place", styles.ToneMuted))
 	}
 	if p.plan.Refreshed {
-		summary += ", with every resource read as it is in aws"
+		summary = append(summary, styles.S(", with every resource read as it is in aws", styles.ToneMuted))
 	}
-	lines := []string{
+	head := make([]string, 0, 5)
+	head = append(head,
 		styles.SectionHeader(title+" in "+p.ref.Region, width),
-		" " + styles.Render(styles.S(summary, styles.ToneBody)),
-		"",
-	}
+		" "+renderCell(summary, column{width: width - 1}, nil),
+	)
+	head = append(head, m.applyLines(width)...)
+	head = append(head, "")
+	var body []string
 	var rows []int
 	for _, c := range m.planChanges() {
-		rows = append(rows, len(lines))
-		head := cell{
+		rows = append(rows, len(body))
+		line := cell{
 			styles.S(fmt.Sprintf(" %-4s", cli.Symbol(c.Action)), actionTones[c.Action]),
 			styles.S(c.ID, styles.ToneText),
 		}
 		switch {
 		case c.Resume:
-			head = append(head, styles.S("  finishing what a deploy started", styles.ToneFaint))
+			line = append(line, styles.S("  finishing what a deploy started", styles.ToneFaint))
 		case c.Gone:
-			head = append(head, styles.S("  deleted outside koldstart", styles.ToneWarning))
+			line = append(line, styles.S("  deleted outside koldstart", styles.ToneWarning))
 		}
-		status := m.progressCell(c)
-		lines = append(lines, spread(renderCell(head, column{width: width - 16}, nil), styles.Render(status...), width))
+		status := renderCell(m.progressCell(c), column{width: planStatusWidth, right: true}, nil)
+		body = append(body, renderCell(line, column{width: width - planStatusWidth - 1}, nil)+" "+status)
 		if len(c.Drift) > 0 {
-			lines = append(lines, renderCell(text("        changed outside koldstart: "+strings.Join(c.Drift, ", "), styles.ToneWarning), column{width: width}, nil))
+			body = append(body, renderCell(text("        changed outside koldstart: "+strings.Join(c.Drift, ", "), styles.ToneWarning), column{width: width}, nil))
 		}
 		if c.Action == engine.Update || c.Action == engine.Replace || c.Action == engine.Adopt {
 			for _, change := range cli.FieldChanges(c) {
-				lines = append(lines, renderCell(text("        "+change, styles.ToneMuted), column{width: width}, nil))
+				body = append(body, renderCell(text("        "+change, styles.ToneMuted), column{width: width}, nil))
+			}
+		}
+		if pr := p.progress[c.ID]; pr.err != nil {
+			for _, l := range errorLines(c.ID, pr.err, width-8) {
+				body = append(body, "        "+styles.Render(styles.S(l, styles.ToneDanger)))
 			}
 		}
 	}
-	return lines, rows
+	if len(rows) == 0 {
+		body = append(body, " "+styles.Faint(p.ref.String()+" is as the configuration says: there is nothing to "+m.planWhat()))
+	}
+	return head, body, rows
+}
+
+// errorLines are a node's error wrapped to width, without the node's id the engine puts first,
+// at most maxErrorLines of them.
+func errorLines(id string, err error, width int) []string {
+	msg := strings.TrimPrefix(strings.Join(strings.Fields(err.Error()), " "), id+": ")
+	lines := strings.Split(ansi.Wrap(styles.Clean(msg), max(10, width), ""), "\n")
+	if len(lines) > maxErrorLines {
+		lines = lines[:maxErrorLines]
+		lines[maxErrorLines-1] = ansi.Truncate(lines[maxErrorLines-1], max(10, width)-1, "") + "…"
+	}
+	return lines
+}
+
+// applyLines say how the apply goes: how many nodes are done and for how long, and once it ended,
+// whether it failed.
+func (m model) applyLines(width int) []string {
+	p := m.state.plan
+	if p.progress == nil {
+		return nil
+	}
+	total, done, failed := len(m.planChanges()), 0, 0
+	for _, pr := range p.progress {
+		switch {
+		case pr.err != nil:
+			failed++
+		case pr.done:
+			done++
+		}
+	}
+	counts := fmt.Sprintf("%d of %d done", done, total)
+	if failed > 0 {
+		counts += fmt.Sprintf(", %d failed", failed)
+	}
+	var line cell
+	switch {
+	case p.applying:
+		line = cell{styles.S(m.spinner.View()+" ", styles.ToneAccent), styles.S(applyingWord(p.remove)+" · "+counts, styles.ToneBody),
+			styles.S(" · "+elapsed(time.Since(p.startedAt)), styles.ToneFaint)}
+	case p.failed:
+		line = cell{styles.S("✗ ", styles.ToneDanger), styles.S("failed after "+formatDuration(p.finishedAt.Sub(p.startedAt))+" · "+counts, styles.ToneDanger)}
+		return []string{" " + renderCell(line, column{width: width - 1}, nil), " " + renderCell(text(m.planAgain(), styles.ToneFaint), column{width: width - 1}, nil)}
+	default:
+		what := "deployed"
+		if p.remove {
+			what = "removed"
+		}
+		line = cell{styles.S("✓ ", styles.ToneSuccess), styles.S(what+" in "+formatDuration(p.finishedAt.Sub(p.startedAt)), styles.ToneSuccess),
+			styles.S(" · "+counts, styles.ToneFaint)}
+	}
+	return []string{" " + renderCell(line, column{width: width - 1}, nil)}
+}
+
+// applyingWord names an apply in flight.
+func applyingWord(remove bool) string {
+	if remove {
+		return "removing"
+	}
+	return "deploying"
+}
+
+// elapsed is how long something has run, in whole seconds.
+func elapsed(d time.Duration) string {
+	return max(0, d).Truncate(time.Second).String()
 }
 
 // progressCell says how far a node got while applying.
 func (m model) progressCell(c engine.Change) cell {
 	p := m.state.plan
+	if p.progress == nil {
+		return nil
+	}
 	pr, ok := p.progress[c.ID]
 	switch {
-	case p.progress == nil:
-		return nil
 	case !ok && p.applying:
-		return cell{styles.S("waiting", styles.ToneFaint)}
+		return text("waiting", styles.ToneFaint)
+	case !ok && p.failed:
+		return text("not applied", styles.ToneFaint)
 	case !ok:
-		return cell{styles.S("not applied", styles.ToneFaint)}
+		return text("unchanged", styles.ToneFaint)
 	case pr.err != nil:
-		return cell{styles.S("✗ failed", styles.ToneDanger)}
+		return cell{styles.S("✗ failed after ", styles.ToneDanger), styles.S(formatDuration(pr.duration), styles.ToneFaint)}
 	case pr.done:
-		return cell{styles.S("✓ ", styles.ToneSuccess), styles.S(formatDuration(pr.duration), styles.ToneFaint)}
+		return cell{styles.S("✓ "+cli.PastTense(pr.action)+" in ", styles.ToneSuccess), styles.S(formatDuration(pr.duration), styles.ToneFaint)}
+	case p.applying:
+		return cell{styles.S(m.spinner.View()+" ", styles.ToneAccent), styles.S(doing[pr.action]+" ", styles.ToneMuted), styles.S(elapsed(time.Since(pr.since)), styles.ToneFaint)}
 	}
-	return cell{styles.S(m.spinner.View()+" ", styles.ToneAccent), styles.S(cli.Verb(c.Action), styles.ToneMuted)}
+	return text("✗ stopped", styles.ToneWarning)
+}
+
+// planBodyHeight is the room the changes get below the head.
+func planBodyHeight(head []string) int {
+	return max(1, contentHeight-len(head))
 }
 
 func (m model) planView() string {
-	lines, rows := m.planLines()
-	view, _ := selectable(lines, rows, m.state.plan.cursor, m.state.plan.scroll, contentHeight)
-	return view
+	head, body, rows := m.planLines()
+	view, _ := selectable(body, rows, m.state.plan.cursor, m.state.plan.scroll, planBodyHeight(head))
+	if len(head) == 0 {
+		return view
+	}
+	return "  " + strings.Join(head, "\n  ") + "\n" + view
+}
+
+// planHints are the footer's hints on the plan page.
+func (m model) planHints() [][2]string {
+	k := m.keys
+	p := m.state.plan
+	switch {
+	case m.loading:
+		return [][2]string{hint(k.Help), hint(k.Back, "cancel")}
+	case p.applying:
+		return [][2]string{hint(k.View, "diff"), chooseHint, hint(k.ForceQuit, "stop and quit")}
+	case p.plan == nil:
+		return [][2]string{hint(k.Help), hint(k.Quit)}
+	case p.done:
+		return [][2]string{hint(k.View, "diff"), chooseHint, hint(k.Help), hint(k.Quit)}
+	}
+	var h [][2]string
+	if p.plan.HasChanges() {
+		h = append(h, hint(k.Apply, m.planWhat()), hint(k.View, "diff"))
+	}
+	if !p.remove && p.function == "" && !p.refresh {
+		h = append(h, hint(k.Refresh, "read aws"))
+	}
+	if p.plan.HasChanges() {
+		h = append(h, chooseHint)
+	}
+	return append(h, hint(k.Help), hint(k.Quit))
 }
