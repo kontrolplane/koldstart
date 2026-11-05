@@ -1,6 +1,7 @@
 package awsp
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/lambda/types"
 
+	"github.com/kontrolplane/koldstart/internal/awserr"
 	"github.com/kontrolplane/koldstart/internal/engine"
 )
 
@@ -51,24 +53,11 @@ func (in MappingInputs) filters() *types.FilterCriteria {
 // retry calls fn while lambda says the mapping is busy, or that the role may not read the source
 // yet, which happens until iam spreads the role's new policy.
 func (p Mapping) retry(ctx context.Context, fn func() error) error {
-	wait := p.Wait
-	if wait == 0 {
-		wait = 2 * time.Minute
+	retryable := func(err error) bool {
+		return awserr.Is(err, "ResourceInUseException", "TooManyRequestsException") ||
+			(awserr.Is(err, "InvalidParameterValueException") && strings.Contains(err.Error(), "permission"))
 	}
-	deadline := time.Now().Add(wait)
-	for {
-		err := fn()
-		retryable := isCode(err, "ResourceInUseException", "TooManyRequestsException") ||
-			(isCode(err, "InvalidParameterValueException") && strings.Contains(err.Error(), "permission"))
-		if err == nil || !retryable || time.Now().After(deadline) {
-			return err
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(2 * time.Second):
-		}
-	}
+	return retry(ctx, cmp.Or(p.Wait, 2*time.Minute), 2*time.Second, retryable, fn)
 }
 
 func mappingResult(id string) engine.Result {
@@ -98,7 +87,7 @@ func (p Mapping) Create(ctx context.Context, req engine.Request) (engine.Result,
 		out, err = p.Client.CreateEventSourceMapping(ctx, create)
 		return err
 	})
-	if isCode(err, "ResourceConflictException") {
+	if awserr.Is(err, "ResourceConflictException") {
 		return engine.Result{}, engine.ErrExists
 	}
 	if err != nil {
@@ -118,12 +107,12 @@ func (p Mapping) Read(ctx context.Context, req engine.Request) (engine.Result, b
 		if err == nil {
 			return mappingResult(aws.ToString(out.UUID)), true, nil
 		}
-		if !isCode(err, "ResourceNotFoundException") {
+		if !awserr.Is(err, "ResourceNotFoundException") {
 			return engine.Result{}, false, fmt.Errorf("reading the mapping %s: %w", req.PhysicalID, err)
 		}
 	}
 	out, err := p.Client.ListEventSourceMappings(ctx, &lambda.ListEventSourceMappingsInput{FunctionName: &in.Function, EventSourceArn: &in.Source})
-	if isCode(err, "ResourceNotFoundException") {
+	if awserr.Is(err, "ResourceNotFoundException") {
 		return engine.Result{}, false, nil
 	}
 	if err != nil {
@@ -161,7 +150,7 @@ func (p Mapping) Delete(ctx context.Context, req engine.Request) error {
 		_, err := p.Client.DeleteEventSourceMapping(ctx, &lambda.DeleteEventSourceMappingInput{UUID: &req.PhysicalID})
 		return err
 	})
-	if err != nil && !isCode(err, "ResourceNotFoundException") {
+	if err != nil && !awserr.Is(err, "ResourceNotFoundException") {
 		return fmt.Errorf("deleting the mapping %s: %w", req.PhysicalID, err)
 	}
 	return nil
@@ -169,8 +158,6 @@ func (p Mapping) Delete(ctx context.Context, req engine.Request) error {
 
 // Replaces implements engine.Provider: the source and where a stream starts cannot change.
 func (Mapping) Replaces(prior, desired json.RawMessage) bool {
-	var a, b MappingInputs
-	_ = json.Unmarshal(prior, &a)
-	_ = json.Unmarshal(desired, &b)
+	a, b := decodeBoth[MappingInputs](prior, desired)
 	return a.Source != b.Source || a.StartingPosition != b.StartingPosition || a.Function != b.Function
 }

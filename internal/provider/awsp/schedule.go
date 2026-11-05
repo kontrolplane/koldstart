@@ -1,6 +1,7 @@
 package awsp
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/scheduler"
 	"github.com/aws/aws-sdk-go-v2/service/scheduler/types"
 
+	"github.com/kontrolplane/koldstart/internal/awserr"
 	"github.com/kontrolplane/koldstart/internal/engine"
 )
 
@@ -49,22 +51,10 @@ func (in ScheduleInputs) state() types.ScheduleState {
 
 // retry calls fn until the scheduler may assume the role, which iam takes a few seconds to spread.
 func (p Schedule) retry(ctx context.Context, fn func() error) error {
-	wait := p.Wait
-	if wait == 0 {
-		wait = 2 * time.Minute
+	retryable := func(err error) bool {
+		return awserr.Is(err, "ValidationException") && strings.Contains(err.Error(), "assume")
 	}
-	deadline := time.Now().Add(wait)
-	for {
-		err := fn()
-		if err == nil || !isCode(err, "ValidationException") || !strings.Contains(err.Error(), "assume") || time.Now().After(deadline) {
-			return err
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(2 * time.Second):
-		}
-	}
+	return retry(ctx, cmp.Or(p.Wait, 2*time.Minute), 2*time.Second, retryable, fn)
 }
 
 func scheduleResult(name, arn string) engine.Result {
@@ -87,7 +77,7 @@ func (p Schedule) Create(ctx context.Context, req engine.Request) (engine.Result
 		})
 		return err
 	})
-	if isCode(err, "ConflictException") {
+	if awserr.Is(err, "ConflictException") {
 		return engine.Result{}, engine.ErrExists
 	}
 	if err != nil {
@@ -99,7 +89,7 @@ func (p Schedule) Create(ctx context.Context, req engine.Request) (engine.Result
 // Read implements engine.Provider. Schedules carry no tags, so one with the name is taken as ours.
 func (p Schedule) Read(ctx context.Context, req engine.Request) (engine.Result, bool, error) {
 	out, err := p.Client.GetSchedule(ctx, &scheduler.GetScheduleInput{Name: &req.PhysicalID})
-	if isCode(err, "ResourceNotFoundException") {
+	if awserr.Is(err, "ResourceNotFoundException") {
 		return engine.Result{}, false, nil
 	}
 	if err != nil {
@@ -133,7 +123,7 @@ func (p Schedule) Update(ctx context.Context, req engine.Request) (engine.Result
 // Delete implements engine.Provider.
 func (p Schedule) Delete(ctx context.Context, req engine.Request) error {
 	_, err := p.Client.DeleteSchedule(ctx, &scheduler.DeleteScheduleInput{Name: &req.PhysicalID})
-	if err != nil && !isCode(err, "ResourceNotFoundException") {
+	if err != nil && !awserr.Is(err, "ResourceNotFoundException") {
 		return fmt.Errorf("deleting the schedule %s: %w", req.PhysicalID, err)
 	}
 	return nil
@@ -141,8 +131,6 @@ func (p Schedule) Delete(ctx context.Context, req engine.Request) error {
 
 // Replaces implements engine.Provider: a schedule cannot be renamed.
 func (Schedule) Replaces(prior, desired json.RawMessage) bool {
-	var a, b ScheduleInputs
-	_ = json.Unmarshal(prior, &a)
-	_ = json.Unmarshal(desired, &b)
+	a, b := decodeBoth[ScheduleInputs](prior, desired)
 	return a.Name != b.Name
 }

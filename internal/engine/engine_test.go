@@ -21,7 +21,7 @@ func stack(memory int) []Node {
 	return []Node{
 		{ID: "loggroup/api", Type: fakeType, Name: "/aws/lambda/orders-dev-api", Inputs: map[string]any{"retention": 30}},
 		{ID: "role/api", Type: fakeType, Name: "orders-dev-api", Inputs: map[string]any{"logGroup": Ref("loggroup/api", "Arn")}},
-		{ID: "resource/orders", Type: fakeType, Name: "orders-dev-orders", Inputs: map[string]any{"key": "id"}, DeletionPolicy: Retain},
+		{ID: "resource/orders", Type: fakeType, Name: "orders-dev-orders", Inputs: map[string]any{"key": "id"}, DeletionPolicy: PolicyRetain},
 		{
 			ID: "function/api", Type: fakeType, Name: "orders-dev-api",
 			Inputs: map[string]any{

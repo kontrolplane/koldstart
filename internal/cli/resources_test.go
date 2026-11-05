@@ -23,11 +23,11 @@ func TestImportedEntry(t *testing.T) {
 	if len(in.Properties) != 2 || in.Properties["BillingMode"] != "PROVISIONED" {
 		t.Errorf("inputs = %s, want the live TableName and BillingMode alone", r.Inputs)
 	}
-	if r.DeletionPolicy != engine.Retain || !r.Imported || r.Hash != "" || r.Attributes["Arn"] != "arn:table" || r.PhysicalID != "orders-prod" {
+	if r.DeletionPolicy != engine.PolicyRetain || !r.Imported || r.Hash != "" || r.Attributes["Arn"] != "arn:table" || r.PhysicalID != "orders-prod" {
 		t.Errorf("entry = %+v", r)
 	}
 	r, _ = importedEntry("AWS::DynamoDB::Table", "orders-prod", "delete", configured, live)
-	if r.DeletionPolicy != engine.DeletePolicy {
+	if r.DeletionPolicy != engine.PolicyDelete {
 		t.Errorf("deletionPolicy delete became %q", r.DeletionPolicy)
 	}
 }

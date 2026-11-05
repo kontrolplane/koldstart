@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -15,7 +14,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/aws/smithy-go"
+
+	"github.com/kontrolplane/koldstart/internal/awserr"
 )
 
 // S3API is the part of the s3 client the backend uses.
@@ -61,7 +61,7 @@ const keptStateVersions = 100
 func Find(ctx context.Context, client S3API, account, region string) (*S3, bool, error) {
 	b := &S3{Client: client, Bucket: BucketName(account, region), Account: account}
 	_, err := client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: &b.Bucket, ExpectedBucketOwner: &b.Account})
-	switch code := errorCode(err); {
+	switch code := awserr.Code(err); {
 	case err == nil:
 		return b, true, nil
 	case code == "NotFound" || code == "NoSuchBucket":
@@ -89,7 +89,7 @@ func (b *S3) create(ctx context.Context, region string) error {
 		in.CreateBucketConfiguration = &types.CreateBucketConfiguration{LocationConstraint: types.BucketLocationConstraint(region)}
 	}
 	if _, err := b.Client.CreateBucket(ctx, in); err != nil {
-		if code := errorCode(err); code == "BucketAlreadyExists" {
+		if code := awserr.Code(err); code == "BucketAlreadyExists" {
 			return fmt.Errorf("the state bucket %s is taken by another account: koldstart will not write to it", b.Bucket)
 		} else if code != "BucketAlreadyOwnedByYou" {
 			return fmt.Errorf("creating the state bucket %s: %w", b.Bucket, err)
@@ -270,19 +270,20 @@ func (b *S3) LockInfo(ctx context.Context, app, stage string) (*LockInfo, error)
 	return &info, nil
 }
 
-// PutZip implements Backend.
-func (b *S3) PutZip(ctx context.Context, app, stage, sha string, data []byte) (string, string, error) {
-	key := zipKey(app, stage, sha)
+// PutZip implements Backend. It checks the zip has the hash it is stored under, and has s3 check
+// it arrived whole.
+func (b *S3) PutZip(ctx context.Context, app, stage, sha string, data []byte) error {
+	key := ZipKey(app, stage, sha)
 	_, err := b.Client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: &b.Bucket, Key: &key, ExpectedBucketOwner: &b.Account})
 	if err == nil {
-		return b.Bucket, key, nil
+		return nil
 	}
 	if !isNotFound(err) {
-		return "", "", fmt.Errorf("looking for %s: %w", key, err)
+		return fmt.Errorf("looking for %s: %w", key, err)
 	}
 	sum := sha256.Sum256(data)
 	if hex.EncodeToString(sum[:]) != sha {
-		return "", "", fmt.Errorf("the zip for %s does not have sha256 %s", key, sha)
+		return fmt.Errorf("the zip for %s does not have sha256 %s", key, sha)
 	}
 	_, err = b.Client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket: &b.Bucket, Key: &key, ExpectedBucketOwner: &b.Account,
@@ -290,9 +291,9 @@ func (b *S3) PutZip(ctx context.Context, app, stage, sha string, data []byte) (s
 		ChecksumSHA256: aws.String(base64.StdEncoding.EncodeToString(sum[:])),
 	})
 	if err != nil {
-		return "", "", fmt.Errorf("uploading %s: %w", key, err)
+		return fmt.Errorf("uploading %s: %w", key, err)
 	}
-	return b.Bucket, key, nil
+	return nil
 }
 
 // History implements Backend.
@@ -349,26 +350,12 @@ func (b *S3) Stages(ctx context.Context) ([]string, error) {
 	return out, nil
 }
 
-func errorCode(err error) string {
-	if api, ok := errors.AsType[smithy.APIError](err); ok {
-		return api.ErrorCode()
-	}
-	return ""
-}
-
 func isNotFound(err error) bool {
-	if err == nil {
-		return false
-	}
-	var noKey *types.NoSuchKey
-	var notFound *types.NotFound
-	code := errorCode(err)
-	return errors.As(err, &noKey) || errors.As(err, &notFound) || code == "NoSuchKey" || code == "NotFound" || code == "NoSuchBucket"
+	return awserr.Is(err, "NoSuchKey", "NotFound", "NoSuchBucket")
 }
 
 // isPreconditionFailed is a conditional write that lost: the object exists, or changed. A
 // conditional write racing another one on the same key gets ConditionalRequestConflict.
 func isPreconditionFailed(err error) bool {
-	code := errorCode(err)
-	return code == "PreconditionFailed" || code == "ConditionalRequestConflict"
+	return awserr.Is(err, "PreconditionFailed", "ConditionalRequestConflict")
 }

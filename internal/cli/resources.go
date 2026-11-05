@@ -12,9 +12,9 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awscloudcontrol "github.com/aws/aws-sdk-go-v2/service/cloudcontrol"
-	cftypes "github.com/aws/aws-sdk-go-v2/service/cloudformation/types"
 	"github.com/spf13/cobra"
 
+	"github.com/kontrolplane/koldstart/internal/awserr"
 	"github.com/kontrolplane/koldstart/internal/desired"
 	"github.com/kontrolplane/koldstart/internal/engine"
 	"github.com/kontrolplane/koldstart/internal/provider/cloudcontrol"
@@ -28,7 +28,7 @@ func (s *stage) checkTypes(ctx context.Context) error {
 	for _, name := range slices.Sorted(maps.Keys(s.Resources)) {
 		typ := s.Resources[name].Type
 		schema, err := s.sess.Schemas.Schema(ctx, typ)
-		if _, missing := errors.AsType[*cftypes.TypeNotFoundException](err); missing {
+		if awserr.Is(err, "TypeNotFoundException") {
 			errs = append(errs, fmt.Errorf("resources[%s]: %s is not a resource type: see https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-template-resource-type-ref.html", name, typ))
 			continue
 		}
@@ -87,7 +87,7 @@ deletionPolicy says delete.`,
 			if err != nil {
 				return err
 			}
-			store := engine.NewStore(s.backend, s.state, s.etag, lockInfo("import").Who)
+			store := engine.NewStore(s.backend, s.state, s.etag, whoIsDeploying())
 			if err := store.Update(ctx, func(st *state.State) {
 				st.Resources[id] = entry
 				delete(st.Retained, id)
@@ -116,10 +116,10 @@ func importedEntry(typ, identifier, policy string, configured, live map[string]a
 		return nil, err
 	}
 	if policy == "" {
-		policy = engine.Retain
+		policy = engine.PolicyRetain
 	}
-	if strings.EqualFold(policy, engine.DeletePolicy) {
-		policy = engine.DeletePolicy
+	if strings.EqualFold(policy, engine.PolicyDelete) {
+		policy = engine.PolicyDelete
 	}
 	return &state.Resource{
 		Type:           typ,

@@ -169,9 +169,8 @@ type Backend interface {
 	// LockInfo returns who holds a stage's lock, or nil.
 	LockInfo(ctx context.Context, app, stage string) (*LockInfo, error)
 
-	// PutZip stores a function's zip under its sha256, unless it is there already, and
-	// returns its bucket and key for lambda.
-	PutZip(ctx context.Context, app, stage, sha256 string, data []byte) (bucket, key string, err error)
+	// PutZip stores a function's zip under ZipKey, unless it is there already.
+	PutZip(ctx context.Context, app, stage, sha256 string, data []byte) error
 
 	// History lists the versions of a stage's state, newest first.
 	History(ctx context.Context, app, stage string) ([]ObjectVersion, error)
@@ -181,9 +180,11 @@ type Backend interface {
 	Stages(ctx context.Context) ([]string, error)
 }
 
-// The keys of the bucket.
+// The keys of the bucket: a stage's state and lock, and its functions' zips by their sha256.
 func stateKey(app, stage string) string { return app + "/" + stage + "/state.json" }
 func lockKey(app, stage string) string  { return app + "/" + stage + "/lock" }
-func zipKey(app, stage, sha string) string {
+
+// ZipKey is where a function's zip goes in the state bucket, which lambda reads it from.
+func ZipKey(app, stage, sha string) string {
 	return "zips/" + app + "/" + stage + "/" + sha + ".zip"
 }

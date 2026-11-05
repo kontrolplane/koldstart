@@ -98,11 +98,10 @@ func testZips(t *testing.T, b Backend, app string) {
 	{
 		data := []byte("zip")
 		sum := sha256Hex(data)
-		bucket, key, err := b.PutZip(ctx, app, "dev", sum, data)
-		if err != nil || bucket == "" || key != "zips/"+app+"/dev/"+sum+".zip" {
-			t.Fatalf("PutZip = %q, %q, %v", bucket, key, err)
+		if err := b.PutZip(ctx, app, "dev", sum, data); err != nil {
+			t.Fatalf("PutZip: %v", err)
 		}
-		if _, _, err := b.PutZip(ctx, app, "dev", sum, data); err != nil {
+		if err := b.PutZip(ctx, app, "dev", sum, data); err != nil {
 			t.Fatalf("PutZip of a zip already there: %v", err)
 		}
 	}

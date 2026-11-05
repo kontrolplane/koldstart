@@ -60,7 +60,7 @@ func (s *Store) Update(ctx context.Context, fn func(st *state.State)) error {
 // the state, so the next deploy plans from there.
 func (e *Engine) Apply(ctx context.Context, plan *Plan, nodes []Node, store *Store) error {
 	if snap := store.Snapshot(); snap.Serial != plan.Serial {
-		return fmt.Errorf("the state changed since the plan was made: plan again")
+		return errors.New("the state changed since the plan was made: plan again")
 	}
 	levels, err := order(nodes)
 	if err != nil {
@@ -122,16 +122,16 @@ func (e *Engine) tags(id string, app, stage string) map[string]string {
 	if tags == nil {
 		tags = map[string]string{}
 	}
-	tags["koldstart:app"] = app
-	tags["koldstart:stage"] = stage
-	tags["koldstart:node"] = id
+	tags[TagApp] = app
+	tags[TagStage] = stage
+	tags[TagNode] = id
 	return tags
 }
 
 // applyNode creates or updates one node, its refs resolved against the state as it is now that
-// what it depends on is applied. When they come out the same as before, nothing is done. The
-// operation is recorded as pending before the call, so a deploy that dies during it knows the
-// resource may exist.
+// what it depends on is applied. When its inputs come out the same as before, nothing is done.
+// The operation is recorded as pending before the call, so a deploy that dies during it knows
+// the resource may exist.
 func (e *Engine) applyNode(ctx context.Context, n Node, c Change, store *Store) (err error) {
 	start := time.Now()
 	p, err := e.provider(n.Type)
@@ -139,43 +139,15 @@ func (e *Engine) applyNode(ctx context.Context, n Node, c Change, store *Store) 
 		return err
 	}
 	snap := store.Snapshot()
-	inputs, err := normalise(n.Inputs)
-	if err != nil {
-		return err
-	}
-	resolved, err := resolveRefs(inputs, snap, nil)
+	in, err := e.prepare(ctx, n, snap)
 	if err != nil {
 		return fmt.Errorf("%s: %w", n.ID, err)
 	}
-	if hasUnknown(resolved) {
-		return fmt.Errorf("%s: refers to something that does not exist after applying what it depends on", n.ID)
-	}
-	withSecrets, err := e.resolveSecrets(ctx, resolved)
-	if err != nil {
-		return fmt.Errorf("%s: %w", n.ID, err)
-	}
-	hash, err := hashOf(n.Type, withSecrets)
-	if err != nil {
-		return err
-	}
-	desired, err := json.Marshal(withSecrets)
-	if err != nil {
-		return err
-	}
-	secretsHash, err := e.secretsHash(ctx, resolved)
-	if err != nil {
-		return fmt.Errorf("%s: %w", n.ID, err)
-	}
-	recorded, err := json.Marshal(resolved)
-	if err != nil {
-		return err
-	}
-
 	prior := snap.Resources[n.ID]
-	if prior == nil && snap.Retained != nil {
+	if prior == nil {
 		prior = snap.Retained[n.ID]
 	}
-	action, err := e.decide(p, c, prior, hash, recorded)
+	action, err := e.decide(p, c, prior, in.hash, in.stored)
 	if err != nil {
 		return fmt.Errorf("%s: %w", n.ID, err)
 	}
@@ -188,36 +160,93 @@ func (e *Engine) applyNode(ctx context.Context, n Node, c Change, store *Store) 
 		e.event(Event{ID: n.ID, Action: action, Done: true, Err: err, Duration: time.Since(start)})
 	}()
 
-	req, startedAt, err := e.request(ctx, n, snap, prior, desired, secretsHash, store)
+	req, startedAt, err := e.request(ctx, n, snap, prior, in.sent, in.externalHash, store)
 	if err != nil {
 		return fmt.Errorf("%s: %w", n.ID, err)
 	}
-
-	if err := store.Update(ctx, func(st *state.State) {
-		r := &state.Resource{Type: n.Type, PhysicalID: n.Name}
-		if prior != nil {
-			r = cloneResource(prior)
-		}
-		r.Pending = &state.Pending{Operation: string(action), StartedAt: startedAt, Token: req.Token}
-		st.Resources[n.ID] = r
-		if st.Retained != nil {
-			delete(st.Retained, n.ID)
-		}
-	}); err != nil {
+	if err := e.recordPending(ctx, store, n, prior, action, startedAt, req.Token); err != nil {
 		return fmt.Errorf("%s: recording the %s: %w", n.ID, action, err)
 	}
-
 	res, err := e.call(ctx, p, action, prior, req)
 	if err != nil {
 		return fmt.Errorf("%s: %w", n.ID, err)
 	}
+	if err := e.recordApplied(ctx, store, n, prior, action, res, in); err != nil {
+		return fmt.Errorf("%s: recording it: %w", n.ID, err)
+	}
+	return nil
+}
+
+// prepared are a node's inputs as they are applied.
+type prepared struct {
+	// sent are the inputs with refs, secrets and outputs of other stages resolved: what the
+	// provider gets.
+	sent json.RawMessage
+	// stored are the inputs with refs resolved and secrets and outputs left as references: what
+	// the state keeps.
+	stored json.RawMessage
+	// hash is the hash of what is sent, and externalHash of the secrets and outputs alone.
+	hash         string
+	externalHash string
+}
+
+// prepare resolves a node's inputs against the state, now that what it depends on is applied.
+func (e *Engine) prepare(ctx context.Context, n Node, snap *state.State) (prepared, error) {
+	inputs, err := normalise(n.Inputs)
+	if err != nil {
+		return prepared{}, err
+	}
+	resolved, err := resolveRefs(inputs, snap, nil)
+	if err != nil {
+		return prepared{}, err
+	}
+	if hasUnknown(resolved) {
+		return prepared{}, errors.New("it refers to something that does not exist after applying what it depends on")
+	}
+	withExternal, err := e.resolveExternal(ctx, resolved)
+	if err != nil {
+		return prepared{}, err
+	}
+	var in prepared
+	if in.hash, err = hashOf(n.Type, withExternal); err != nil {
+		return prepared{}, err
+	}
+	if in.externalHash, err = e.externalHash(ctx, resolved); err != nil {
+		return prepared{}, err
+	}
+	if in.sent, err = json.Marshal(withExternal); err != nil {
+		return prepared{}, err
+	}
+	if in.stored, err = json.Marshal(resolved); err != nil {
+		return prepared{}, err
+	}
+	return in, nil
+}
+
+// recordPending writes that action on the node has started, before the call to aws.
+func (e *Engine) recordPending(ctx context.Context, store *Store, n Node, prior *state.Resource, action Action, startedAt time.Time, token string) error {
+	return store.Update(ctx, func(st *state.State) {
+		r := &state.Resource{Type: n.Type, PhysicalID: n.Name}
+		if prior != nil {
+			r = cloneResource(prior)
+		}
+		r.Pending = &state.Pending{Operation: string(action), StartedAt: startedAt, Token: token}
+		st.Resources[n.ID] = r
+		delete(st.Retained, n.ID)
+	})
+}
+
+// recordApplied writes what exists after action on the node. A retained resource that was
+// replaced stays in the state, as retained, under its node and its old id. An imported resource
+// stays retained unless the configuration says delete.
+func (e *Engine) recordApplied(ctx context.Context, store *Store, n Node, prior *state.Resource, action Action, res Result, in prepared) error {
 	policy := n.DeletionPolicy
 	imported := prior != nil && prior.Imported && action != Replace
 	if policy == "" && imported {
-		policy = Retain
+		policy = PolicyRetain
 	}
-	if err := store.Update(ctx, func(st *state.State) {
-		if action == Replace && prior.DeletionPolicy == Retain {
+	return store.Update(ctx, func(st *state.State) {
+		if action == Replace && prior.DeletionPolicy == PolicyRetain {
 			if st.Retained == nil {
 				st.Retained = map[string]*state.Resource{}
 			}
@@ -228,18 +257,15 @@ func (e *Engine) applyNode(ctx context.Context, n Node, c Change, store *Store) 
 		st.Resources[n.ID] = &state.Resource{
 			Type:           n.Type,
 			PhysicalID:     res.PhysicalID,
-			Inputs:         recorded,
-			Hash:           hash,
-			SecretsHash:    secretsHash,
+			Inputs:         in.stored,
+			Hash:           in.hash,
+			SecretsHash:    in.externalHash,
 			Attributes:     res.Attributes,
 			Dependencies:   n.Deps(),
 			DeletionPolicy: policy,
 			Imported:       imported,
 		}
-	}); err != nil {
-		return fmt.Errorf("%s: recording it: %w", n.ID, err)
-	}
-	return nil
+	})
 }
 
 // decide is what to do to a node now that its inputs are known: what was planned, unless the
@@ -258,8 +284,8 @@ func (e *Engine) decide(p Provider, c Change, prior *state.Resource, hash string
 	case prior.Hash == hash:
 		return NoOp, nil
 	case p.Replaces(prior.Inputs, recorded):
-		if prior.DeletionPolicy == Retain && !e.AllowReplace {
-			return "", errors.New("the change needs a new resource, and the old one is retained: pass --allow-replace")
+		if prior.DeletionPolicy == PolicyRetain && !e.AllowReplace {
+			return "", retainedReplace(ChangedKeys(decode(prior.Inputs), decode(recorded)))
 		}
 		return Replace, nil
 	default:
@@ -269,13 +295,13 @@ func (e *Engine) decide(p Provider, c Change, prior *state.Resource, hash string
 
 // request is what the provider is asked for one node, and when the operation started: now, or
 // when a crashed deploy started it, which keeps its client token the same.
-func (e *Engine) request(ctx context.Context, n Node, snap *state.State, prior *state.Resource, desired json.RawMessage, secretsHash string, store *Store) (Request, time.Time, error) {
+func (e *Engine) request(ctx context.Context, n Node, snap *state.State, prior *state.Resource, sent json.RawMessage, externalHash string, store *Store) (Request, time.Time, error) {
 	startedAt := time.Now().UTC()
-	req := Request{ID: n.ID, Name: n.Name, Inputs: desired, Tags: e.tags(n.ID, snap.App, snap.Stage)}
+	req := Request{ID: n.ID, Name: n.Name, Inputs: sent, Tags: e.tags(n.ID, snap.App, snap.Stage)}
 	if prior != nil {
 		var err error
 		req.PhysicalID, req.Attributes = prior.PhysicalID, prior.Attributes
-		req.Prior, err = e.priorWithSecrets(ctx, prior, secretsHash)
+		req.Prior, err = e.priorWithExternal(ctx, prior, externalHash)
 		if err != nil {
 			return Request{}, startedAt, err
 		}
@@ -306,7 +332,7 @@ func (e *Engine) call(ctx context.Context, p Provider, action Action, prior *sta
 		}
 		return e.adopt(ctx, p, req)
 	case Replace:
-		retained := prior.DeletionPolicy == Retain
+		retained := prior.DeletionPolicy == PolicyRetain
 		if !retained {
 			if err := p.Delete(ctx, req); err != nil {
 				return Result{}, fmt.Errorf("deleting the old one: %w", err)
@@ -361,14 +387,7 @@ func (e *Engine) applyDeletes(ctx context.Context, plan *Plan, store *Store) err
 		snap := store.Snapshot()
 		var ready []Change
 		for _, id := range slices.Sorted(maps.Keys(todo)) {
-			needed := false
-			for other := range todo {
-				if r := snap.Resources[other]; other != id && r != nil && slices.Contains(r.Dependencies, id) {
-					needed = true
-					break
-				}
-			}
-			if !needed {
+			if !dependedOn(snap, todo, id) {
 				ready = append(ready, todo[id])
 			}
 		}
@@ -385,6 +404,16 @@ func (e *Engine) applyDeletes(ctx context.Context, plan *Plan, store *Store) err
 		}
 	}
 	return nil
+}
+
+// dependedOn reports whether another node still to be deleted depends on id.
+func dependedOn(snap *state.State, todo map[string]Change, id string) bool {
+	for other := range todo {
+		if r := snap.Resources[other]; other != id && r != nil && slices.Contains(r.Dependencies, id) {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *Engine) deleteNode(ctx context.Context, c Change, store *Store) (err error) {
@@ -440,16 +469,16 @@ func isExternal(v any) bool {
 	return secret || output
 }
 
-// secretsHash is the hash of the values of the secrets and stage outputs in v, in a stable order,
+// externalHash is the hash of the values of the secrets and stage outputs in v, in a stable order,
 // or "" when there are none.
-func (e *Engine) secretsHash(ctx context.Context, v any) (string, error) {
+func (e *Engine) externalHash(ctx context.Context, v any) (string, error) {
 	var values []string
 	var errs []error
 	walk(v, func(x any) bool {
 		if !isExternal(x) {
 			return false
 		}
-		val, err := e.resolveSecrets(ctx, x)
+		val, err := e.resolveExternal(ctx, x)
 		if err != nil {
 			errs = append(errs, err)
 			return true
@@ -463,10 +492,10 @@ func (e *Engine) secretsHash(ctx context.Context, v any) (string, error) {
 	return hashOf("secrets", values)
 }
 
-// priorWithSecrets returns the inputs a resource was last applied with as a provider compares
+// priorWithExternal returns the inputs a resource was last applied with as a provider compares
 // them: each secret its current value when no secret changed since, so only real changes are
 // sent, and changedMarker when one did.
-func (e *Engine) priorWithSecrets(ctx context.Context, prior *state.Resource, current string) (json.RawMessage, error) {
+func (e *Engine) priorWithExternal(ctx context.Context, prior *state.Resource, current string) (json.RawMessage, error) {
 	if len(prior.Inputs) == 0 {
 		return prior.Inputs, nil
 	}
@@ -482,7 +511,7 @@ func (e *Engine) priorWithSecrets(ctx context.Context, prior *state.Resource, cu
 		if changed {
 			return changedMarker, true, nil
 		}
-		val, err := e.resolveSecrets(ctx, x)
+		val, err := e.resolveExternal(ctx, x)
 		return val, true, err
 	})
 	if err != nil {

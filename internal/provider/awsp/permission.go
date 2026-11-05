@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 
+	"github.com/kontrolplane/koldstart/internal/awserr"
 	"github.com/kontrolplane/koldstart/internal/engine"
 )
 
@@ -52,7 +53,7 @@ func (p Permission) Create(ctx context.Context, req engine.Request) (engine.Resu
 		return engine.Result{}, err
 	}
 	_, err := p.Client.AddPermission(ctx, in.add())
-	if isCode(err, "ResourceConflictException") {
+	if awserr.Is(err, "ResourceConflictException") {
 		return engine.Result{}, engine.ErrExists
 	}
 	if err != nil {
@@ -68,7 +69,7 @@ func (p Permission) Read(ctx context.Context, req engine.Request) (engine.Result
 		return engine.Result{}, false, err
 	}
 	out, err := p.Client.GetPolicy(ctx, &lambda.GetPolicyInput{FunctionName: &in.Function})
-	if isCode(err, "ResourceNotFoundException") {
+	if awserr.Is(err, "ResourceNotFoundException") {
 		return engine.Result{}, false, nil
 	}
 	if err != nil {
@@ -110,7 +111,7 @@ func (p Permission) Delete(ctx context.Context, req engine.Request) error {
 		return err
 	}
 	_, err := p.Client.RemovePermission(ctx, &lambda.RemovePermissionInput{FunctionName: &in.Function, StatementId: &in.StatementID})
-	if err != nil && !isCode(err, "ResourceNotFoundException") {
+	if err != nil && !awserr.Is(err, "ResourceNotFoundException") {
 		return fmt.Errorf("removing %s from %s: %w", in.StatementID, in.Function, err)
 	}
 	return nil
@@ -118,8 +119,6 @@ func (p Permission) Delete(ctx context.Context, req engine.Request) error {
 
 // Replaces implements engine.Provider.
 func (Permission) Replaces(prior, desired json.RawMessage) bool {
-	var a, b PermissionInputs
-	_ = json.Unmarshal(prior, &a)
-	_ = json.Unmarshal(desired, &b)
+	a, b := decodeBoth[PermissionInputs](prior, desired)
 	return a.Function != b.Function || a.StatementID != b.StatementID
 }

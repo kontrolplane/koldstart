@@ -4,21 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"maps"
-	"reflect"
-	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/kontrolplane/koldstart/internal/engine"
 )
-
-func jsonUnmarshal(data []byte, v any) error {
-	if len(data) == 0 {
-		return nil
-	}
-	return json.Unmarshal(data, v)
-}
 
 // symbols mark each action in a plan.
 var symbols = map[engine.Action]string{
@@ -87,7 +78,7 @@ func fieldChanges(c engine.Change) []string {
 	for _, f := range c.Fields {
 		before, isMapB := c.Before[f].(map[string]any)
 		after, isMapA := c.After[f].(map[string]any)
-		if f == "(a secret)" {
+		if f == engine.SecretChanged {
 			out = append(out, "a secret or another stage's output changed")
 			continue
 		}
@@ -95,17 +86,8 @@ func fieldChanges(c engine.Change) []string {
 			out = append(out, f+": "+describeChange(c.Before[f], c.After[f]))
 			continue
 		}
-		keys := map[string]bool{}
-		for k := range before {
-			keys[k] = true
-		}
-		for k := range after {
-			keys[k] = true
-		}
-		for _, k := range slices.Sorted(maps.Keys(keys)) {
-			if !reflect.DeepEqual(before[k], after[k]) {
-				out = append(out, f+"."+k+": "+describeChange(before[k], after[k]))
-			}
+		for _, k := range engine.ChangedKeys(before, after) {
+			out = append(out, f+"."+k+": "+describeChange(before[k], after[k]))
 		}
 	}
 	return out
@@ -116,7 +98,7 @@ func describeChange(before, after any) string {
 	switch {
 	case engine.IsUnknown(after):
 		return "known after apply"
-	case isSecret(after):
+	case engine.IsSecret(after):
 		return "(a secret)"
 	}
 	if b, a := codeHash(before), codeHash(after); b != "" && a != "" {
@@ -148,11 +130,6 @@ func codeHash(v any) string {
 	return sha[:12]
 }
 
-func isSecret(v any) bool {
-	m, ok := v.(map[string]any)
-	return ok && m["$koldstart"] == "secret"
-}
-
 // short returns a value as one short line, or "" when it does not fit one.
 func short(v any) string {
 	switch x := v.(type) {
@@ -169,7 +146,7 @@ func short(v any) string {
 		if len(x) > 4 {
 			return ""
 		}
-		data, _ := json.Marshal(sortedMap(x))
+		data, _ := json.Marshal(x)
 		if len(data) > 60 {
 			return ""
 		}
@@ -179,12 +156,14 @@ func short(v any) string {
 	}
 }
 
-func sortedMap(m map[string]any) map[string]any {
-	out := make(map[string]any, len(m))
-	for _, k := range slices.Sorted(maps.Keys(m)) {
-		out[k] = m[k]
-	}
-	return out
+// pastTenses say what each action did, for progress.
+var pastTenses = map[engine.Action]string{
+	engine.Create:  "created",
+	engine.Update:  "updated",
+	engine.Replace: "replaced",
+	engine.Delete:  "deleted",
+	engine.Keep:    "left in place",
+	engine.Adopt:   "taken over",
 }
 
 // progress returns an event handler that writes a line as each node finishes.
@@ -197,28 +176,9 @@ func progress(w io.Writer) func(engine.Event) {
 		mu.Lock()
 		defer mu.Unlock()
 		if ev.Err != nil {
-			_, _ = fmt.Fprintf(w, "  ✗ %s: %s failed after %s\n", ev.ID, verbs[ev.Action], ev.Duration.Round(100*1e6))
+			_, _ = fmt.Fprintf(w, "  ✗ %s: %s failed after %s\n", ev.ID, verbs[ev.Action], ev.Duration.Round(100*time.Millisecond))
 			return
 		}
-		_, _ = fmt.Fprintf(w, "  ✓ %s: %s in %s\n", ev.ID, pastTense(ev.Action), ev.Duration.Round(100*1e6))
-	}
-}
-
-func pastTense(a engine.Action) string {
-	switch a {
-	case engine.Create:
-		return "created"
-	case engine.Update:
-		return "updated"
-	case engine.Replace:
-		return "replaced"
-	case engine.Delete:
-		return "deleted"
-	case engine.Keep:
-		return "left in place"
-	case engine.Adopt:
-		return "taken over"
-	default:
-		return string(a)
+		_, _ = fmt.Fprintf(w, "  ✓ %s: %s in %s\n", ev.ID, pastTenses[ev.Action], ev.Duration.Round(100*time.Millisecond))
 	}
 }

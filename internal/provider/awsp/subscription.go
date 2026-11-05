@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sns"
 
+	"github.com/kontrolplane/koldstart/internal/awserr"
 	"github.com/kontrolplane/koldstart/internal/engine"
 )
 
@@ -62,10 +63,10 @@ func (p Subscription) Read(ctx context.Context, req engine.Request) (engine.Resu
 	if err := decodeInputs(req.Inputs, &in); err != nil {
 		return engine.Result{}, false, err
 	}
-	p2 := sns.NewListSubscriptionsByTopicPaginator(p.Client, &sns.ListSubscriptionsByTopicInput{TopicArn: &in.Topic})
-	for p2.HasMorePages() {
-		page, err := p2.NextPage(ctx)
-		if isCode(err, "NotFound") {
+	pages := sns.NewListSubscriptionsByTopicPaginator(p.Client, &sns.ListSubscriptionsByTopicInput{TopicArn: &in.Topic})
+	for pages.HasMorePages() {
+		page, err := pages.NextPage(ctx)
+		if awserr.Is(err, "NotFound") {
 			return engine.Result{}, false, nil
 		}
 		if err != nil {
@@ -102,7 +103,7 @@ func (p Subscription) Update(ctx context.Context, req engine.Request) (engine.Re
 // Delete implements engine.Provider.
 func (p Subscription) Delete(ctx context.Context, req engine.Request) error {
 	_, err := p.Client.Unsubscribe(ctx, &sns.UnsubscribeInput{SubscriptionArn: &req.PhysicalID})
-	if err != nil && !isCode(err, "NotFound") {
+	if err != nil && !awserr.Is(err, "NotFound") {
 		return fmt.Errorf("unsubscribing %s: %w", req.PhysicalID, err)
 	}
 	return nil
@@ -110,8 +111,6 @@ func (p Subscription) Delete(ctx context.Context, req engine.Request) error {
 
 // Replaces implements engine.Provider.
 func (Subscription) Replaces(prior, desired json.RawMessage) bool {
-	var a, b SubscriptionInputs
-	_ = json.Unmarshal(prior, &a)
-	_ = json.Unmarshal(desired, &b)
+	a, b := decodeBoth[SubscriptionInputs](prior, desired)
 	return a.Topic != b.Topic || a.Function != b.Function
 }

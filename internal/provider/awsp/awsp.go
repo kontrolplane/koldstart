@@ -1,16 +1,15 @@
-// Package awsp holds the providers koldstart writes by hand, for what every function needs: its
-// role, log group, the function itself and its url. They call the aws apis directly, so a
-// change that lambda can make in place takes one call.
+// Package awsp holds the providers koldstart writes by hand: a function with its role, log group
+// and url, the http api with its routes, integrations, authorizers and domain, and the
+// schedules, mappings, subscriptions, notifications and permissions of its events. They call the
+// aws apis directly, so a change aws can make in place takes one call.
 package awsp
 
 import (
+	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"slices"
 	"strings"
-
-	"github.com/aws/smithy-go"
+	"time"
 
 	"github.com/kontrolplane/koldstart/internal/engine"
 )
@@ -37,17 +36,6 @@ const (
 	TypeNotification = "koldstart::S3::BucketNotification"
 )
 
-func errorCode(err error) string {
-	if api, ok := errors.AsType[smithy.APIError](err); ok {
-		return api.ErrorCode()
-	}
-	return ""
-}
-
-func isCode(err error, codes ...string) bool {
-	return slices.Contains(codes, errorCode(err))
-}
-
 // decodeInputs reads the request's inputs into v.
 func decodeInputs(data json.RawMessage, v any) error {
 	if len(data) == 0 {
@@ -61,10 +49,35 @@ func decodeInputs(data json.RawMessage, v any) error {
 
 // ours checks the resource's tags say this node created it.
 func ours(name string, tags map[string]string, req engine.Request) error {
-	if tags["koldstart:node"] != req.ID || tags["koldstart:stage"] != req.Tags["koldstart:stage"] || tags["koldstart:app"] != req.Tags["koldstart:app"] {
+	if tags[engine.TagNode] != req.ID || tags[engine.TagStage] != req.Tags[engine.TagStage] || tags[engine.TagApp] != req.Tags[engine.TagApp] {
 		return fmt.Errorf("%s %w: give it another name, or delete it", name, engine.ErrNotOurs)
 	}
 	return nil
+}
+
+// decodeBoth reads the inputs a Replaces compares. Inputs that do not decode compare as empty.
+func decodeBoth[T any](prior, desired json.RawMessage) (before, after T) {
+	_ = json.Unmarshal(prior, &before)
+	_ = json.Unmarshal(desired, &after)
+	return before, after
+}
+
+// retry calls fn until it succeeds, fails with an error retryable does not accept, or wait has
+// passed, trying again every every. AWS refuses some calls for a while: a role iam has not spread
+// yet, or a resource still busy with the call before.
+func retry(ctx context.Context, wait, every time.Duration, retryable func(error) bool, fn func() error) error {
+	deadline := time.Now().Add(wait)
+	for {
+		err := fn()
+		if err == nil || !retryable(err) || time.Now().After(deadline) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(every):
+		}
+	}
 }
 
 // changed reports whether the json of a and b differ.

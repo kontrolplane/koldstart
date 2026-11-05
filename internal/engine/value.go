@@ -71,24 +71,30 @@ func unknown() map[string]any {
 	return map[string]any{marker: kindUnknown}
 }
 
+// IsSecret reports whether v is a secret, which a plan shows without its value.
+func IsSecret(v any) bool {
+	_, ok := asSecret(v)
+	return ok
+}
+
 // IsUnknown reports whether v is a value not known until apply.
 func IsUnknown(v any) bool {
 	m, ok := v.(map[string]any)
 	return ok && m[marker] == kindUnknown
 }
 
-type refTo struct {
+type nodeRef struct {
 	Node, Attribute string
 }
 
-func asRef(v any) (refTo, bool) {
+func asRef(v any) (nodeRef, bool) {
 	m, ok := v.(map[string]any)
 	if !ok || m[marker] != kindRef {
-		return refTo{}, false
+		return nodeRef{}, false
 	}
 	node, _ := m["node"].(string)
 	attr, _ := m["attribute"].(string)
-	return refTo{Node: node, Attribute: attr}, true
+	return nodeRef{Node: node, Attribute: attr}, true
 }
 
 func asSecret(v any) (config.Secret, bool) {
@@ -105,8 +111,8 @@ func asSecret(v any) (config.Secret, bool) {
 }
 
 // refs returns the refs inside v, in a stable order.
-func refs(v any) []refTo {
-	var out []refTo
+func refs(v any) []nodeRef {
+	var out []nodeRef
 	walk(v, func(x any) bool {
 		if r, ok := asRef(x); ok {
 			out = append(out, r)

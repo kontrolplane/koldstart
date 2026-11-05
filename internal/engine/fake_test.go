@@ -115,7 +115,7 @@ func (f *Fake) Read(_ context.Context, req Request) (Result, bool, error) {
 	if !ok {
 		return Result{}, false, nil
 	}
-	if r.Tags["koldstart:node"] != req.ID {
+	if r.Tags[TagNode] != req.ID {
 		return Result{}, false, fmt.Errorf("%s %w", req.PhysicalID, ErrNotOurs)
 	}
 	return Result{PhysicalID: req.PhysicalID, Attributes: f.attrs(req.PhysicalID)}, true, nil

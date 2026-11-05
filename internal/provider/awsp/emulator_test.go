@@ -81,7 +81,7 @@ func TestProvidersEmulator(t *testing.T) {
 			t.Fatal(err)
 		}
 		data, _ := os.ReadFile(arc.Path)
-		if _, _, err := backend.PutZip(ctx, app, "dev", arc.SHA256, data); err != nil {
+		if err := backend.PutZip(ctx, app, "dev", arc.SHA256, data); err != nil {
 			t.Fatal(err)
 		}
 		nodes, err := desired.Build(p, desired.Target{Account: account, Region: awstest.Region, Bucket: backend.Bucket, Archives: map[string]build.Archive{"api": arc}})
@@ -207,7 +207,7 @@ func TestEventsEmulator(t *testing.T) {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(arc.Path)
-	if _, _, err := backend.PutZip(ctx, app, "dev", arc.SHA256, data); err != nil {
+	if err := backend.PutZip(ctx, app, "dev", arc.SHA256, data); err != nil {
 		t.Fatal(err)
 	}
 	nodes, err := desired.Build(p, desired.Target{Account: account, Region: awstest.Region, Bucket: backend.Bucket, Archives: map[string]build.Archive{"api": arc}})

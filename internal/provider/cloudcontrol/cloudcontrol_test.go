@@ -220,12 +220,13 @@ func TestCreateAfterCrash(t *testing.T) {
 	}
 }
 
-// TestCreateExists checks a resource that exists already, not by koldstart, says how to take it over.
+// TestCreateExists checks a resource that exists already, not by koldstart, is an ExistsError
+// naming its node, which the cli turns into how to take it over.
 func TestCreateExists(t *testing.T) {
 	f := newFake()
 	f.tables["orders"] = map[string]any{"TableName": "orders"}
 	_, err := provider(f).Create(context.Background(), engine.Request{ID: "resource/orders", Inputs: table("orders", nil), ClientToken: "koldstart-1"})
-	if err == nil || !strings.Contains(err.Error(), "kdst import orders") {
+	if exists, ok := errors.AsType[*ExistsError](err); !ok || exists.Node != "resource/orders" {
 		t.Fatalf("Create of a table that exists = %v", err)
 	}
 }

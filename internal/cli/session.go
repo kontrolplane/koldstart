@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/user"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -118,26 +116,12 @@ func (s *session) engine(tags map[string]string) *engine.Engine {
 	}
 }
 
-// backend returns the state bucket, creating it when create is set and it does not exist; then
-// exists says whether it did.
+// backend returns the state bucket and whether it exists. With create, a bucket that does not
+// exist yet is created, so it always does.
 func (s *session) backend(ctx context.Context, create bool) (*state.S3, bool, error) {
 	if create {
 		b, err := state.Open(ctx, s.S3, s.Account, s.Region)
 		return b, err == nil, err
 	}
 	return state.Find(ctx, s.S3, s.Account, s.Region)
-}
-
-// lockInfo says who is deploying, and from where, for the lock.
-func lockInfo(operation string) state.LockInfo {
-	who := "someone"
-	if u, err := user.Current(); err == nil {
-		who = u.Username
-	}
-	where, _ := os.Hostname()
-	if os.Getenv("GITHUB_ACTIONS") == "true" {
-		who = os.Getenv("GITHUB_ACTOR")
-		where = os.Getenv("GITHUB_SERVER_URL") + "/" + os.Getenv("GITHUB_REPOSITORY") + "/actions/runs/" + os.Getenv("GITHUB_RUN_ID")
-	}
-	return state.LockInfo{Who: who, Where: where, Operation: operation, Since: time.Now().UTC()}
 }

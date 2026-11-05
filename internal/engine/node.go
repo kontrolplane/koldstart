@@ -26,8 +26,8 @@ type Node struct {
 // The deletion policies: retain leaves a resource in place, delete deletes it even when it was
 // imported, and none is the type's default.
 const (
-	Retain       = "retain"
-	DeletePolicy = "delete"
+	PolicyRetain = "retain"
+	PolicyDelete = "delete"
 )
 
 // Deps returns the nodes this one is applied after, sorted.

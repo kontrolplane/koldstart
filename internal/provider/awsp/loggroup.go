@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 
+	"github.com/kontrolplane/koldstart/internal/awserr"
 	"github.com/kontrolplane/koldstart/internal/engine"
 )
 
@@ -19,7 +21,8 @@ type LogGroupInputs struct {
 }
 
 // LogGroup is the provider of a function's log group, which koldstart creates before the
-// function so lambda never makes one of its own that keeps logs forever.
+// function so lambda never makes one of its own that keeps logs forever. Its arn ends in :*, as
+// DescribeLogGroups returns it; the tagging apis take it without.
 type LogGroup struct {
 	Client *cloudwatchlogs.Client
 }
@@ -31,7 +34,7 @@ func (p LogGroup) Create(ctx context.Context, req engine.Request) (engine.Result
 		return engine.Result{}, err
 	}
 	_, err := p.Client.CreateLogGroup(ctx, &cloudwatchlogs.CreateLogGroupInput{LogGroupName: &in.Name, Tags: req.Tags})
-	if isCode(err, "ResourceAlreadyExistsException") {
+	if awserr.Is(err, "ResourceAlreadyExistsException") {
 		return engine.Result{}, engine.ErrExists
 	}
 	if err != nil {
@@ -85,7 +88,7 @@ func (p LogGroup) Read(ctx context.Context, req engine.Request) (engine.Result, 
 	if err != nil || !ok {
 		return engine.Result{}, false, err
 	}
-	tags, err := p.Client.ListTagsForResource(ctx, &cloudwatchlogs.ListTagsForResourceInput{ResourceArn: aws.String(trimWildcard(arn))})
+	tags, err := p.Client.ListTagsForResource(ctx, &cloudwatchlogs.ListTagsForResourceInput{ResourceArn: aws.String(strings.TrimSuffix(arn, ":*"))})
 	if err != nil {
 		return engine.Result{}, false, fmt.Errorf("reading the tags of %s: %w", req.PhysicalID, err)
 	}
@@ -108,7 +111,7 @@ func (p LogGroup) Update(ctx context.Context, req engine.Request) (engine.Result
 	if err != nil {
 		return res, err
 	}
-	if _, err := p.Client.TagResource(ctx, &cloudwatchlogs.TagResourceInput{ResourceArn: aws.String(trimWildcard(res.Attributes[attrArn])), Tags: maps.Clone(req.Tags)}); err != nil {
+	if _, err := p.Client.TagResource(ctx, &cloudwatchlogs.TagResourceInput{ResourceArn: aws.String(strings.TrimSuffix(res.Attributes[attrArn], ":*")), Tags: maps.Clone(req.Tags)}); err != nil {
 		return res, fmt.Errorf("tagging %s: %w", in.Name, err)
 	}
 	return res, nil
@@ -117,7 +120,7 @@ func (p LogGroup) Update(ctx context.Context, req engine.Request) (engine.Result
 // Delete implements engine.Provider.
 func (p LogGroup) Delete(ctx context.Context, req engine.Request) error {
 	_, err := p.Client.DeleteLogGroup(ctx, &cloudwatchlogs.DeleteLogGroupInput{LogGroupName: &req.PhysicalID})
-	if err != nil && !isCode(err, "ResourceNotFoundException") {
+	if err != nil && !awserr.Is(err, "ResourceNotFoundException") {
 		return fmt.Errorf("deleting the log group %s: %w", req.PhysicalID, err)
 	}
 	return nil
@@ -125,17 +128,6 @@ func (p LogGroup) Delete(ctx context.Context, req engine.Request) error {
 
 // Replaces implements engine.Provider: a log group cannot be renamed.
 func (LogGroup) Replaces(prior, desired json.RawMessage) bool {
-	var a, b LogGroupInputs
-	_ = json.Unmarshal(prior, &a)
-	_ = json.Unmarshal(desired, &b)
+	a, b := decodeBoth[LogGroupInputs](prior, desired)
 	return a.Name != b.Name
-}
-
-// trimWildcard turns the arn DescribeLogGroups returns, which ends in :*, into the one the
-// tagging apis take.
-func trimWildcard(arn string) string {
-	if len(arn) > 2 && arn[len(arn)-2:] == ":*" {
-		return arn[:len(arn)-2]
-	}
-	return arn
 }

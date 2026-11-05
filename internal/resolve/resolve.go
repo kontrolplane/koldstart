@@ -5,7 +5,6 @@ package resolve
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -14,10 +13,9 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
-	smtypes "github.com/aws/aws-sdk-go-v2/service/secretsmanager/types"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
-	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 
+	"github.com/kontrolplane/koldstart/internal/awserr"
 	"github.com/kontrolplane/koldstart/internal/config"
 	"github.com/kontrolplane/koldstart/internal/state"
 )
@@ -73,7 +71,7 @@ func (s *Secrets) Resolve(ctx context.Context, source, name, key string, atRunti
 
 func (s *Secrets) parameter(ctx context.Context, name string, atRuntime bool) (string, error) {
 	out, err := s.SSM.GetParameter(ctx, &ssm.GetParameterInput{Name: &name, WithDecryption: aws.Bool(!atRuntime)})
-	if _, missing := errors.AsType[*ssmtypes.ParameterNotFound](err); missing {
+	if awserr.Is(err, "ParameterNotFound") {
 		return "", fmt.Errorf("no ssm parameter %s: create it, or check its name and the region", name)
 	}
 	if err != nil {
@@ -88,7 +86,7 @@ func (s *Secrets) parameter(ctx context.Context, name string, atRuntime bool) (s
 func (s *Secrets) secret(ctx context.Context, name, key string, atRuntime bool) (string, error) {
 	if atRuntime {
 		out, err := s.SecretsManager.DescribeSecret(ctx, &secretsmanager.DescribeSecretInput{SecretId: &name})
-		if _, missing := errors.AsType[*smtypes.ResourceNotFoundException](err); missing {
+		if awserr.Is(err, "ResourceNotFoundException") {
 			return "", fmt.Errorf("no secret %s in secrets manager: create it, or check its name and the region", name)
 		}
 		if err != nil {
@@ -97,7 +95,7 @@ func (s *Secrets) secret(ctx context.Context, name, key string, atRuntime bool) 
 		return aws.ToString(out.ARN), nil
 	}
 	out, err := s.SecretsManager.GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{SecretId: &name})
-	if _, missing := errors.AsType[*smtypes.ResourceNotFoundException](err); missing {
+	if awserr.Is(err, "ResourceNotFoundException") {
 		return "", fmt.Errorf("no secret %s in secrets manager: create it, or check its name and the region", name)
 	}
 	if err != nil {

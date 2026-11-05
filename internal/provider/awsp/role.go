@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/iam/types"
 
+	"github.com/kontrolplane/koldstart/internal/awserr"
 	"github.com/kontrolplane/koldstart/internal/engine"
 )
 
@@ -31,7 +32,7 @@ type Role struct {
 	Client *iam.Client
 }
 
-func document(v any) (string, error) {
+func policyJSON(v any) (string, error) {
 	data, err := json.Marshal(v)
 	return string(data), err
 }
@@ -50,12 +51,12 @@ func (p Role) Create(ctx context.Context, req engine.Request) (engine.Result, er
 	if err := decodeInputs(req.Inputs, &in); err != nil {
 		return engine.Result{}, err
 	}
-	trust, err := document(in.AssumeRolePolicy)
+	trust, err := policyJSON(in.AssumeRolePolicy)
 	if err != nil {
 		return engine.Result{}, err
 	}
 	out, err := p.Client.CreateRole(ctx, &iam.CreateRoleInput{RoleName: &in.Name, AssumeRolePolicyDocument: &trust, Tags: iamTags(req.Tags)})
-	if isCode(err, "EntityAlreadyExists") {
+	if awserr.Is(err, "EntityAlreadyExists") {
 		return engine.Result{}, engine.ErrExists
 	}
 	if err != nil {
@@ -74,7 +75,7 @@ func roleResult(r *types.Role) engine.Result {
 // policies puts the inline policy and attaches and detaches managed ones to match in.
 func (p Role) policies(ctx context.Context, in RoleInputs, prior []string) error {
 	if in.Policy != nil {
-		doc, err := document(in.Policy)
+		doc, err := policyJSON(in.Policy)
 		if err != nil {
 			return err
 		}
@@ -83,7 +84,7 @@ func (p Role) policies(ctx context.Context, in RoleInputs, prior []string) error
 		}
 	} else {
 		_, err := p.Client.DeleteRolePolicy(ctx, &iam.DeleteRolePolicyInput{RoleName: &in.Name, PolicyName: aws.String(policyName)})
-		if err != nil && !isCode(err, "NoSuchEntity") {
+		if err != nil && !awserr.Is(err, "NoSuchEntity") {
 			return fmt.Errorf("deleting the policy of %s: %w", in.Name, err)
 		}
 	}
@@ -100,7 +101,7 @@ func (p Role) policies(ctx context.Context, in RoleInputs, prior []string) error
 			continue
 		}
 		_, err := p.Client.DetachRolePolicy(ctx, &iam.DetachRolePolicyInput{RoleName: &in.Name, PolicyArn: aws.String(arn)})
-		if err != nil && !isCode(err, "NoSuchEntity") {
+		if err != nil && !awserr.Is(err, "NoSuchEntity") {
 			return fmt.Errorf("detaching %s from %s: %w", arn, in.Name, err)
 		}
 	}
@@ -110,7 +111,7 @@ func (p Role) policies(ctx context.Context, in RoleInputs, prior []string) error
 // Read implements engine.Provider.
 func (p Role) Read(ctx context.Context, req engine.Request) (engine.Result, bool, error) {
 	out, err := p.Client.GetRole(ctx, &iam.GetRoleInput{RoleName: &req.PhysicalID})
-	if isCode(err, "NoSuchEntity") {
+	if awserr.Is(err, "NoSuchEntity") {
 		return engine.Result{}, false, nil
 	}
 	if err != nil {
@@ -146,7 +147,7 @@ func (p Role) Update(ctx context.Context, req engine.Request) (engine.Result, er
 		}
 	}
 	if changed(in.AssumeRolePolicy, prior.AssumeRolePolicy) {
-		trust, err := document(in.AssumeRolePolicy)
+		trust, err := policyJSON(in.AssumeRolePolicy)
 		if err != nil {
 			return engine.Result{}, err
 		}
@@ -171,29 +172,29 @@ func (p Role) Update(ctx context.Context, req engine.Request) (engine.Result, er
 func (p Role) Delete(ctx context.Context, req engine.Request) error {
 	name := req.PhysicalID
 	attached, err := p.Client.ListAttachedRolePolicies(ctx, &iam.ListAttachedRolePoliciesInput{RoleName: &name})
-	if isCode(err, "NoSuchEntity") {
+	if awserr.Is(err, "NoSuchEntity") {
 		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("listing the policies of %s: %w", name, err)
 	}
 	for _, a := range attached.AttachedPolicies {
-		if _, err := p.Client.DetachRolePolicy(ctx, &iam.DetachRolePolicyInput{RoleName: &name, PolicyArn: a.PolicyArn}); err != nil && !isCode(err, "NoSuchEntity") {
+		if _, err := p.Client.DetachRolePolicy(ctx, &iam.DetachRolePolicyInput{RoleName: &name, PolicyArn: a.PolicyArn}); err != nil && !awserr.Is(err, "NoSuchEntity") {
 			return fmt.Errorf("detaching %s from %s: %w", aws.ToString(a.PolicyArn), name, err)
 		}
 	}
 	inline, err := p.Client.ListRolePolicies(ctx, &iam.ListRolePoliciesInput{RoleName: &name})
-	if err != nil && !isCode(err, "NoSuchEntity") {
+	if err != nil && !awserr.Is(err, "NoSuchEntity") {
 		return fmt.Errorf("listing the policies of %s: %w", name, err)
 	}
 	if inline != nil {
 		for _, policy := range inline.PolicyNames {
-			if _, err := p.Client.DeleteRolePolicy(ctx, &iam.DeleteRolePolicyInput{RoleName: &name, PolicyName: aws.String(policy)}); err != nil && !isCode(err, "NoSuchEntity") {
+			if _, err := p.Client.DeleteRolePolicy(ctx, &iam.DeleteRolePolicyInput{RoleName: &name, PolicyName: aws.String(policy)}); err != nil && !awserr.Is(err, "NoSuchEntity") {
 				return fmt.Errorf("deleting the policy %s of %s: %w", policy, name, err)
 			}
 		}
 	}
-	if _, err := p.Client.DeleteRole(ctx, &iam.DeleteRoleInput{RoleName: &name}); err != nil && !isCode(err, "NoSuchEntity") {
+	if _, err := p.Client.DeleteRole(ctx, &iam.DeleteRoleInput{RoleName: &name}); err != nil && !awserr.Is(err, "NoSuchEntity") {
 		return fmt.Errorf("deleting the role %s: %w", name, err)
 	}
 	return nil
@@ -201,8 +202,6 @@ func (p Role) Delete(ctx context.Context, req engine.Request) error {
 
 // Replaces implements engine.Provider: a role cannot be renamed.
 func (Role) Replaces(prior, desired json.RawMessage) bool {
-	var a, b RoleInputs
-	_ = json.Unmarshal(prior, &a)
-	_ = json.Unmarshal(desired, &b)
+	a, b := decodeBoth[RoleInputs](prior, desired)
 	return a.Name != b.Name
 }

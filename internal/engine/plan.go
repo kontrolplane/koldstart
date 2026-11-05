@@ -25,7 +25,7 @@ const (
 	Replace Action = "replace"
 	Delete  Action = "delete"
 	// Keep is a node gone from the configuration whose resource is left in place.
-	Keep Action = "retain"
+	Keep Action = "keep"
 	// Adopt is a resource remove left in place, managed again.
 	Adopt Action = "adopt"
 )
@@ -80,17 +80,17 @@ func (p *Plan) Change(id string) (Change, bool) {
 // OnlyCode reports whether the plan changes nothing but the code of functions: then a deploy
 // only uploads zips and calls UpdateFunctionCode.
 func (p *Plan) OnlyCode() bool {
-	any := false
+	codeChanged := false
 	for _, c := range p.Changes {
 		switch {
 		case c.Action == NoOp:
 		case c.Action == Update && slices.Equal(c.Fields, []string{"code"}):
-			any = true
+			codeChanged = true
 		default:
 			return false
 		}
 	}
-	return any
+	return codeChanged
 }
 
 // Event is progress while applying, for the cli and the tui to show.
@@ -164,7 +164,7 @@ func (e *Engine) Plan(ctx context.Context, nodes []Node, st *state.State) (*Plan
 		}
 		r := st.Resources[id]
 		c := Change{ID: id, Type: r.Type, Action: Delete, Before: decode(r.Inputs), Resume: r.Pending != nil}
-		if r.DeletionPolicy == Retain {
+		if r.DeletionPolicy == PolicyRetain {
 			c.Action = Keep
 		}
 		plan.Changes = append(plan.Changes, c)
@@ -172,8 +172,16 @@ func (e *Engine) Plan(ctx context.Context, nodes []Node, st *state.State) (*Plan
 	return plan, errors.Join(errs...)
 }
 
-// planNode plans one node. When only a secret changed, the inputs, which hold references, look
-// the same, and the change is listed as one of a secret.
+// SecretChanged is the field a change lists when only a secret or an output of another stage
+// changed: the inputs, which hold references to them, look the same.
+const SecretChanged = "(a secret)"
+
+// retainedReplace is the error of a change that needs a new resource where the old one is retained.
+func retainedReplace(fields []string) error {
+	return fmt.Errorf("changing %s needs a new resource, and the old one is retained: pass --allow-replace to replace it, which leaves the old one in place, or undo the change", strings.Join(fields, ", "))
+}
+
+// planNode plans one node.
 func (e *Engine) planNode(ctx context.Context, n Node, st *state.State, unknownNodes map[string]bool) (Change, error) {
 	p, err := e.provider(n.Type)
 	if err != nil {
@@ -188,13 +196,13 @@ func (e *Engine) planNode(ctx context.Context, n Node, st *state.State, unknownN
 		return Change{}, err
 	}
 	c := Change{ID: n.ID, Type: n.Type, After: after.(map[string]any)}
-	withSecrets, err := e.resolveSecrets(ctx, after)
+	withSecrets, err := e.resolveExternal(ctx, after)
 	if err != nil {
 		return Change{}, err
 	}
 
 	prior, adopt := st.Resources[n.ID], false
-	if prior == nil && st.Retained != nil && st.Retained[n.ID] != nil {
+	if prior == nil && st.Retained[n.ID] != nil {
 		prior, adopt = st.Retained[n.ID], true
 	}
 	if prior == nil {
@@ -202,7 +210,7 @@ func (e *Engine) planNode(ctx context.Context, n Node, st *state.State, unknownN
 		return c, nil
 	}
 	c.Before = decode(prior.Inputs)
-	c.Fields = changedFields(c.Before, c.After)
+	c.Fields = ChangedKeys(c.Before, c.After)
 	switch {
 	case adopt:
 		c.Action = Adopt
@@ -235,13 +243,12 @@ func (e *Engine) planNode(ctx context.Context, n Node, st *state.State, unknownN
 	c.Action = Update
 	if p.Replaces(prior.Inputs, afterJSON) {
 		c.Action = Replace
-		if prior.DeletionPolicy == Retain && !e.AllowReplace {
-			return Change{}, fmt.Errorf("changing %s needs a new resource, and the old one is retained: pass --allow-replace to replace it, which leaves the old one in place, or undo the change",
-				strings.Join(c.Fields, ", "))
+		if prior.DeletionPolicy == PolicyRetain && !e.AllowReplace {
+			return Change{}, retainedReplace(c.Fields)
 		}
 	}
 	if len(c.Fields) == 0 && !hasUnknown(after) {
-		c.Fields = []string{"(a secret)"}
+		c.Fields = []string{SecretChanged}
 	}
 	return c, nil
 }
@@ -263,7 +270,7 @@ func (e *Engine) Resolve(ctx context.Context, v any, st *state.State) (any, erro
 	if err != nil {
 		return nil, err
 	}
-	return e.resolveSecrets(ctx, resolved)
+	return e.resolveExternal(ctx, resolved)
 }
 
 // resolveRefs replaces the refs in v with the attributes the state holds, or with unknown for
@@ -307,9 +314,9 @@ func resolveRefs(v any, st *state.State, unknownNodes map[string]bool) (any, err
 	})
 }
 
-// resolveSecrets replaces the secrets in v with their values, and the outputs of other stages
+// resolveExternal replaces the secrets in v with their values, and the outputs of other stages
 // with theirs.
-func (e *Engine) resolveSecrets(ctx context.Context, v any) (any, error) {
+func (e *Engine) resolveExternal(ctx context.Context, v any) (any, error) {
 	return transform(v, func(x any) (any, bool, error) {
 		if app, stage, name, ok := asOutput(x); ok {
 			if e.Outputs == nil {
@@ -333,8 +340,8 @@ func (e *Engine) resolveSecrets(ctx context.Context, v any) (any, error) {
 	})
 }
 
-// changedFields returns the top-level keys whose values differ.
-func changedFields(before, after map[string]any) []string {
+// ChangedKeys returns the top-level keys whose values differ, sorted.
+func ChangedKeys(before, after map[string]any) []string {
 	keys := map[string]bool{}
 	for k := range before {
 		keys[k] = true

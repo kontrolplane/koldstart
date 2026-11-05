@@ -128,22 +128,14 @@ func (m *Memory) LockInfo(_ context.Context, app, stage string) (*LockInfo, erro
 }
 
 // PutZip implements Backend.
-func (m *Memory) PutZip(_ context.Context, app, stage, sha string, data []byte) (string, string, error) {
+func (m *Memory) PutZip(_ context.Context, app, stage, sha string, data []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	key := zipKey(app, stage, sha)
+	key := ZipKey(app, stage, sha)
 	if _, ok := m.zips[key]; !ok {
 		m.zips[key] = data
 	}
-	return m.Bucket, key, nil
-}
-
-// Zip returns a stored zip, for tests.
-func (m *Memory) Zip(key string) ([]byte, bool) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	data, ok := m.zips[key]
-	return data, ok
+	return nil
 }
 
 // History implements Backend.

@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/lambda/types"
 
+	"github.com/kontrolplane/koldstart/internal/awserr"
 	"github.com/kontrolplane/koldstart/internal/engine"
 )
 
@@ -16,12 +17,12 @@ import (
 type URLInputs struct {
 	Function string `json:"function"`
 	// Auth is NONE or AWS_IAM.
-	Auth string   `json:"auth"`
-	CORS *URLCORS `json:"cors"`
+	Auth string `json:"auth"`
+	CORS *CORS  `json:"cors"`
 }
 
-// URLCORS is the cross-origin configuration of a function url.
-type URLCORS struct {
+// CORS is the cross-origin configuration of a function url or the http api.
+type CORS struct {
 	Origins     []string `json:"origins"`
 	Methods     []string `json:"methods"`
 	Headers     []string `json:"headers"`
@@ -42,6 +43,8 @@ type URL struct {
 	Client *lambda.Client
 }
 
+// cors is the url's cross-origin configuration. Without one it is empty rather than nil, as an
+// update with nil would leave the one the url had.
 func (u URLInputs) cors() *types.Cors {
 	if u.CORS == nil {
 		return &types.Cors{}
@@ -52,8 +55,8 @@ func (u URLInputs) cors() *types.Cors {
 	}
 }
 
-func urlResult(out string, function string) engine.Result {
-	return engine.Result{PhysicalID: function, Attributes: map[string]string{"FunctionUrl": out}}
+func urlResult(url, function string) engine.Result {
+	return engine.Result{PhysicalID: function, Attributes: map[string]string{"FunctionUrl": url}}
 }
 
 // Create implements engine.Provider.
@@ -65,7 +68,7 @@ func (p URL) Create(ctx context.Context, req engine.Request) (engine.Result, err
 	out, err := p.Client.CreateFunctionUrlConfig(ctx, &lambda.CreateFunctionUrlConfigInput{
 		FunctionName: &in.Function, AuthType: types.FunctionUrlAuthType(in.Auth), Cors: in.cors(),
 	})
-	if isCode(err, "ResourceConflictException") {
+	if awserr.Is(err, "ResourceConflictException") {
 		return engine.Result{}, engine.ErrExists
 	}
 	if err != nil {
@@ -88,7 +91,7 @@ func (p URL) permissions(ctx context.Context, in URLInputs) error {
 	}
 	for _, s := range statements {
 		_, err := p.Client.AddPermission(ctx, s)
-		if err != nil && !isCode(err, "ResourceConflictException") {
+		if err != nil && !awserr.Is(err, "ResourceConflictException") {
 			return fmt.Errorf("making the url of %s public: %w", in.Function, err)
 		}
 	}
@@ -98,7 +101,7 @@ func (p URL) permissions(ctx context.Context, in URLInputs) error {
 func (p URL) removePermissions(ctx context.Context, function string) error {
 	for _, id := range []string{statementURL, statementInvoke} {
 		_, err := p.Client.RemovePermission(ctx, &lambda.RemovePermissionInput{FunctionName: &function, StatementId: aws.String(id)})
-		if err != nil && !isCode(err, "ResourceNotFoundException") {
+		if err != nil && !awserr.Is(err, "ResourceNotFoundException") {
 			return fmt.Errorf("removing %s from %s: %w", id, function, err)
 		}
 	}
@@ -108,7 +111,7 @@ func (p URL) removePermissions(ctx context.Context, function string) error {
 // Read implements engine.Provider. A url has no tags of its own; its function's say whose it is.
 func (p URL) Read(ctx context.Context, req engine.Request) (engine.Result, bool, error) {
 	out, err := p.Client.GetFunctionUrlConfig(ctx, &lambda.GetFunctionUrlConfigInput{FunctionName: &req.PhysicalID})
-	if isCode(err, "ResourceNotFoundException") {
+	if awserr.Is(err, "ResourceNotFoundException") {
 		return engine.Result{}, false, nil
 	}
 	if err != nil {
@@ -141,7 +144,7 @@ func (p URL) Delete(ctx context.Context, req engine.Request) error {
 		return err
 	}
 	_, err := p.Client.DeleteFunctionUrlConfig(ctx, &lambda.DeleteFunctionUrlConfigInput{FunctionName: &req.PhysicalID})
-	if err != nil && !isCode(err, "ResourceNotFoundException") {
+	if err != nil && !awserr.Is(err, "ResourceNotFoundException") {
 		return fmt.Errorf("deleting the url of %s: %w", req.PhysicalID, err)
 	}
 	return nil
@@ -149,8 +152,6 @@ func (p URL) Delete(ctx context.Context, req engine.Request) error {
 
 // Replaces implements engine.Provider: a url belongs to its function.
 func (URL) Replaces(prior, desired json.RawMessage) bool {
-	var a, b URLInputs
-	_ = json.Unmarshal(prior, &a)
-	_ = json.Unmarshal(desired, &b)
+	a, b := decodeBoth[URLInputs](prior, desired)
 	return a.Function != b.Function
 }

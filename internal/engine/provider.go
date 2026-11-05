@@ -52,6 +52,14 @@ type Provider interface {
 	Replaces(prior, desired json.RawMessage) bool
 }
 
+// The tags koldstart puts on everything it creates, which say which app, stage and node a
+// resource belongs to.
+const (
+	TagApp   = "koldstart:app"
+	TagStage = "koldstart:stage"
+	TagNode  = "koldstart:node"
+)
+
 // ErrExists is a create of a resource that already exists. The engine then reads it, and takes
 // it over when its tags say a crashed deploy of this node created it.
 var ErrExists = errors.New("already exists")

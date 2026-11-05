@@ -9,13 +9,14 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/apigatewayv2"
 	"github.com/aws/aws-sdk-go-v2/service/apigatewayv2/types"
 
+	"github.com/kontrolplane/koldstart/internal/awserr"
 	"github.com/kontrolplane/koldstart/internal/engine"
 )
 
 // HTTPAPIInputs are the inputs of the stage's http api, with its $default stage.
 type HTTPAPIInputs struct {
 	Name       string      `json:"name"`
-	CORS       *URLCORS    `json:"cors"`
+	CORS       *CORS       `json:"cors"`
 	Throttling *Throttling `json:"throttling"`
 }
 
@@ -35,6 +36,8 @@ type HTTPAPI struct {
 	Region string
 }
 
+// cors is the api's cross-origin configuration, nil without one: DeleteCorsConfiguration removes
+// what an api had.
 func (in HTTPAPIInputs) cors() *types.Cors {
 	if in.CORS == nil {
 		return nil
@@ -112,7 +115,7 @@ func (p HTTPAPI) Update(ctx context.Context, req engine.Request) (engine.Result,
 	id := req.PhysicalID
 	if in.CORS == nil {
 		_, err := p.Client.DeleteCorsConfiguration(ctx, &apigatewayv2.DeleteCorsConfigurationInput{ApiId: &id})
-		if err != nil && !isCode(err, "NotFoundException") {
+		if err != nil && !awserr.Is(err, "NotFoundException") {
 			return engine.Result{}, fmt.Errorf("removing the cors of the http api %s: %w", in.Name, err)
 		}
 	}
@@ -121,7 +124,7 @@ func (p HTTPAPI) Update(ctx context.Context, req engine.Request) (engine.Result,
 		return engine.Result{}, fmt.Errorf("updating the http api %s: %w", in.Name, err)
 	}
 	_, err = p.Client.UpdateStage(ctx, &apigatewayv2.UpdateStageInput{ApiId: &id, StageName: aws.String(defaultStage), DefaultRouteSettings: in.routeSettings()})
-	if isCode(err, "NotFoundException") {
+	if awserr.Is(err, "NotFoundException") {
 		_, err = p.Client.CreateStage(ctx, &apigatewayv2.CreateStageInput{
 			ApiId: &id, StageName: aws.String(defaultStage), AutoDeploy: aws.Bool(true), DefaultRouteSettings: in.routeSettings(), Tags: req.Tags,
 		})
@@ -139,7 +142,7 @@ func (p HTTPAPI) Update(ctx context.Context, req engine.Request) (engine.Result,
 // Delete implements engine.Provider.
 func (p HTTPAPI) Delete(ctx context.Context, req engine.Request) error {
 	_, err := p.Client.DeleteApi(ctx, &apigatewayv2.DeleteApiInput{ApiId: &req.PhysicalID})
-	if err != nil && !isCode(err, "NotFoundException") {
+	if err != nil && !awserr.Is(err, "NotFoundException") {
 		return fmt.Errorf("deleting the http api %s: %w", req.PhysicalID, err)
 	}
 	return nil
@@ -186,7 +189,7 @@ func (p Integration) Read(ctx context.Context, req engine.Request) (engine.Resul
 		return engine.Result{}, false, err
 	}
 	out, err := p.Client.GetIntegrations(ctx, &apigatewayv2.GetIntegrationsInput{ApiId: &in.API})
-	if isCode(err, "NotFoundException") {
+	if awserr.Is(err, "NotFoundException") {
 		return engine.Result{}, false, nil
 	}
 	if err != nil {
@@ -222,7 +225,7 @@ func (p Integration) Delete(ctx context.Context, req engine.Request) error {
 		return err
 	}
 	_, err := p.Client.DeleteIntegration(ctx, &apigatewayv2.DeleteIntegrationInput{ApiId: &in.API, IntegrationId: &req.PhysicalID})
-	if err != nil && !isCode(err, "NotFoundException") {
+	if err != nil && !awserr.Is(err, "NotFoundException") {
 		return fmt.Errorf("deleting the integration of %s: %w", in.Function, err)
 	}
 	return nil
@@ -230,9 +233,7 @@ func (p Integration) Delete(ctx context.Context, req engine.Request) error {
 
 // Replaces implements engine.Provider: an integration belongs to its api.
 func (Integration) Replaces(prior, desired json.RawMessage) bool {
-	var a, b IntegrationInputs
-	_ = json.Unmarshal(prior, &a)
-	_ = json.Unmarshal(desired, &b)
+	a, b := decodeBoth[IntegrationInputs](prior, desired)
 	return a.API != b.API
 }
 
@@ -272,7 +273,7 @@ func (p Route) Create(ctx context.Context, req engine.Request) (engine.Result, e
 		ApiId: &in.API, RouteKey: &in.RouteKey, Target: &in.Target,
 		AuthorizationType: types.AuthorizationType(in.AuthorizationType), AuthorizerId: optional(in.Authorizer), AuthorizationScopes: in.Scopes,
 	})
-	if isCode(err, "ConflictException") {
+	if awserr.Is(err, "ConflictException") {
 		return engine.Result{}, engine.ErrExists
 	}
 	if err != nil {
@@ -288,7 +289,7 @@ func (p Route) Read(ctx context.Context, req engine.Request) (engine.Result, boo
 		return engine.Result{}, false, err
 	}
 	out, err := p.Client.GetRoutes(ctx, &apigatewayv2.GetRoutesInput{ApiId: &in.API})
-	if isCode(err, "NotFoundException") {
+	if awserr.Is(err, "NotFoundException") {
 		return engine.Result{}, false, nil
 	}
 	if err != nil {
@@ -326,7 +327,7 @@ func (p Route) Delete(ctx context.Context, req engine.Request) error {
 		return err
 	}
 	_, err := p.Client.DeleteRoute(ctx, &apigatewayv2.DeleteRouteInput{ApiId: &in.API, RouteId: &req.PhysicalID})
-	if err != nil && !isCode(err, "NotFoundException") {
+	if err != nil && !awserr.Is(err, "NotFoundException") {
 		return fmt.Errorf("deleting the route %s: %w", in.RouteKey, err)
 	}
 	return nil
@@ -334,8 +335,6 @@ func (p Route) Delete(ctx context.Context, req engine.Request) error {
 
 // Replaces implements engine.Provider: a route belongs to its api.
 func (Route) Replaces(prior, desired json.RawMessage) bool {
-	var a, b RouteInputs
-	_ = json.Unmarshal(prior, &a)
-	_ = json.Unmarshal(desired, &b)
+	a, b := decodeBoth[RouteInputs](prior, desired)
 	return a.API != b.API
 }

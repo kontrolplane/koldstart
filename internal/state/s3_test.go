@@ -116,7 +116,7 @@ func TestS3ExpectedOwner(t *testing.T) {
 		t.Errorf("Lock of a held lock = %v, want a LockedError naming ci", err)
 	}
 	_ = b.Unlock(ctx, "orders", "dev")
-	_, _, _ = b.PutZip(ctx, "orders", "dev", sha256Hex([]byte("z")), []byte("z"))
+	_ = b.PutZip(ctx, "orders", "dev", sha256Hex([]byte("z")), []byte("z"))
 	_, _ = b.History(ctx, "orders", "dev")
 	_, _ = b.Stages(ctx)
 	_ = b.Delete(ctx, "orders", "dev")
@@ -154,7 +154,7 @@ func TestOpenRefuses(t *testing.T) {
 // TestPutZipChecksHash checks a zip is not stored under a hash it does not have.
 func TestPutZipChecksHash(t *testing.T) {
 	b := &S3{Client: &ownerFake{}, Bucket: "b", Account: "1"}
-	if _, _, err := b.PutZip(context.Background(), "orders", "dev", sha256Hex([]byte("a")), []byte("b")); err == nil {
+	if err := b.PutZip(context.Background(), "orders", "dev", sha256Hex([]byte("a")), []byte("b")); err == nil {
 		t.Fatal("PutZip under the wrong hash: want an error")
 	}
 }

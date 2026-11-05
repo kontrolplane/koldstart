@@ -17,8 +17,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudcontrol"
 	"github.com/aws/aws-sdk-go-v2/service/cloudcontrol/types"
-	"github.com/aws/smithy-go"
 
+	"github.com/kontrolplane/koldstart/internal/awserr"
 	"github.com/kontrolplane/koldstart/internal/engine"
 )
 
@@ -61,16 +61,19 @@ func (p Provider) timeout() time.Duration {
 	return p.Timeout
 }
 
-func errorCode(err error) string {
-	if api, ok := errors.AsType[smithy.APIError](err); ok {
-		return api.ErrorCode()
-	}
-	return ""
+func isNotFound(err error) bool {
+	return awserr.Is(err, "ResourceNotFoundException")
 }
 
-func isNotFound(err error) bool {
-	_, ok := errors.AsType[*types.ResourceNotFoundException](err)
-	return ok || errorCode(err) == "ResourceNotFoundException"
+// ExistsError is a create of a resource that exists already, which koldstart did not create.
+// The cli says how to take it over.
+type ExistsError struct {
+	Type string
+	Node string
+}
+
+func (e *ExistsError) Error() string {
+	return fmt.Sprintf("a %s with these properties exists already, and koldstart did not create it", e.Type)
 }
 
 // requestError is a request cloud control finished without success.
@@ -171,7 +174,7 @@ func (p Provider) Create(ctx context.Context, req engine.Request) (engine.Result
 	}
 	id, err := p.wait(ctx, request)
 	if re, ok := errors.AsType[*requestError](err); ok && re.Code == types.HandlerErrorCodeAlreadyExists {
-		return engine.Result{}, fmt.Errorf("a %s with these properties exists already, and koldstart did not create it: take it over with kdst import %s <identifier>, or give it another name", in.Type, strings.TrimPrefix(req.ID, "resource/"))
+		return engine.Result{}, &ExistsError{Type: in.Type, Node: req.ID}
 	}
 	if err != nil {
 		return engine.Result{}, fmt.Errorf("creating a %s: %w", in.Type, err)

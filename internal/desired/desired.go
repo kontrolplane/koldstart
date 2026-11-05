@@ -15,6 +15,7 @@ import (
 	"github.com/kontrolplane/koldstart/internal/config"
 	"github.com/kontrolplane/koldstart/internal/engine"
 	"github.com/kontrolplane/koldstart/internal/provider/awsp"
+	"github.com/kontrolplane/koldstart/internal/state"
 )
 
 // The inputs several kinds of node have.
@@ -97,9 +98,9 @@ type builder struct {
 	errs []error
 }
 
-// nodeOf is the id of the node a name in the configuration stands for.
-func (b *builder) nodeOf(name string) string {
-	if _, ok := b.p.Functions[name]; ok {
+// NodeID is the id of the node a name in the configuration stands for: a function or a resource.
+func NodeID(p *config.Project, name string) string {
+	if _, ok := p.Functions[name]; ok {
 		return FunctionID(name)
 	}
 	return ResourceID(name)
@@ -109,7 +110,7 @@ func (b *builder) nodeOf(name string) string {
 func (b *builder) value(v config.Value) any {
 	switch {
 	case v.Ref != nil:
-		return engine.Ref(b.nodeOf(v.Ref.Resource), v.Ref.Attribute)
+		return engine.Ref(NodeID(b.p, v.Ref.Resource), v.Ref.Attribute)
 	case v.Secret != nil:
 		return engine.SecretValue(*v.Secret)
 	case v.Output != nil:
@@ -183,7 +184,7 @@ func (b *builder) function(name string, fn config.Function) ([]engine.Node, erro
 		"logGroup":            LogGroupName(b.p, name),
 		"code": map[string]any{
 			"bucket": b.t.Bucket,
-			"key":    ZipKey(b.p, archive.SHA256),
+			"key":    state.ZipKey(b.p.App, b.p.Stage, archive.SHA256),
 			"sha256": archive.SHA256,
 		},
 		"vpc": nil,
@@ -207,11 +208,6 @@ func (b *builder) function(name string, fn config.Function) ([]engine.Node, erro
 	return nodes, nil
 }
 
-// ZipKey is where a function's zip goes in the state bucket.
-func ZipKey(p *config.Project, sha string) string {
-	return "zips/" + p.App + "/" + p.Stage + "/" + sha + ".zip"
-}
-
 func urlCORS(c *config.CORS) any {
 	if c == nil {
 		return nil
@@ -229,7 +225,7 @@ func (b *builder) resource(name string, r config.Resource) engine.Node {
 	props := b.properties(r.Properties)
 	policy := r.DeletionPolicy
 	if policy == "" && Stateful(r.Type) {
-		policy = engine.Retain
+		policy = engine.PolicyRetain
 	}
 	return engine.Node{
 		ID: ResourceID(name), Type: r.Type, DeletionPolicy: policy,
@@ -242,7 +238,7 @@ func (b *builder) properties(props map[string]any) any {
 	var conv func(v any) any
 	conv = func(v any) any {
 		if r, ok := config.AsRef(v); ok {
-			return engine.Ref(b.nodeOf(r.Resource), r.Attribute)
+			return engine.Ref(NodeID(b.p, r.Resource), r.Attribute)
 		}
 		switch x := v.(type) {
 		case map[string]any:

@@ -108,7 +108,7 @@ func TestBuild(t *testing.T) {
 	if got["function/worker"].Inputs["handler"] != "bootstrap" {
 		t.Errorf("a go handler = %v, want bootstrap", got["function/worker"].Inputs["handler"])
 	}
-	if got["resource/orders"].DeletionPolicy != engine.Retain || got["resource/jobs"].DeletionPolicy != "" {
+	if got["resource/orders"].DeletionPolicy != engine.PolicyRetain || got["resource/jobs"].DeletionPolicy != "" {
 		t.Errorf("deletion policies: table %q, queue %q", got["resource/orders"].DeletionPolicy, got["resource/jobs"].DeletionPolicy)
 	}
 	if js(t, got["resource/jobs"].Inputs["properties"].(map[string]any)["RedrivePolicy"].(map[string]any)["deadLetterTargetArn"]) != js(t, engine.Ref("resource/dead", "Arn")) {

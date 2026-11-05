@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 
+	"github.com/kontrolplane/koldstart/internal/awserr"
 	"github.com/kontrolplane/koldstart/internal/engine"
 )
 
@@ -65,8 +66,9 @@ func (in NotificationInputs) configurations() []types.LambdaFunctionConfiguratio
 	return out
 }
 
-// put replaces the stage's notifications on the bucket with in's, keeping the rest.
-func (p Notification) put(ctx context.Context, bucket, prefix string, ours []types.LambdaFunctionConfiguration) error {
+// put replaces the stage's notifications on the bucket, those whose id starts with prefix, with
+// stage's, and keeps the rest.
+func (p Notification) put(ctx context.Context, bucket, prefix string, stage []types.LambdaFunctionConfiguration) error {
 	current, err := p.Client.GetBucketNotificationConfiguration(ctx, &s3.GetBucketNotificationConfigurationInput{Bucket: &bucket, ExpectedBucketOwner: &p.Account})
 	if err != nil {
 		return fmt.Errorf("reading the notifications of %s: %w", bucket, err)
@@ -75,7 +77,7 @@ func (p Notification) put(ctx context.Context, bucket, prefix string, ours []typ
 		TopicConfigurations:          current.TopicConfigurations,
 		QueueConfigurations:          current.QueueConfigurations,
 		EventBridgeConfiguration:     current.EventBridgeConfiguration,
-		LambdaFunctionConfigurations: ours,
+		LambdaFunctionConfigurations: stage,
 	}
 	for _, c := range current.LambdaFunctionConfigurations {
 		if !strings.HasPrefix(aws.ToString(c.Id), prefix) {
@@ -107,7 +109,7 @@ func (p Notification) Read(ctx context.Context, req engine.Request) (engine.Resu
 		return engine.Result{}, false, err
 	}
 	_, err := p.Client.GetBucketNotificationConfiguration(ctx, &s3.GetBucketNotificationConfigurationInput{Bucket: &in.Bucket, ExpectedBucketOwner: &p.Account})
-	if isCode(err, "NoSuchBucket") {
+	if awserr.Is(err, "NoSuchBucket") {
 		return engine.Result{}, false, nil
 	}
 	if err != nil {
@@ -135,7 +137,7 @@ func (p Notification) Delete(ctx context.Context, req engine.Request) error {
 		return err
 	}
 	err := p.put(ctx, in.Bucket, in.Prefix, nil)
-	if isCode(err, "NoSuchBucket") {
+	if awserr.Is(err, "NoSuchBucket") {
 		return nil
 	}
 	return err
@@ -143,8 +145,6 @@ func (p Notification) Delete(ctx context.Context, req engine.Request) error {
 
 // Replaces implements engine.Provider.
 func (Notification) Replaces(prior, desired json.RawMessage) bool {
-	var a, b NotificationInputs
-	_ = json.Unmarshal(prior, &a)
-	_ = json.Unmarshal(desired, &b)
+	a, b := decodeBoth[NotificationInputs](prior, desired)
 	return a.Bucket != b.Bucket
 }
