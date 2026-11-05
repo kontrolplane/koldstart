@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -150,6 +151,52 @@ func TestLoadingHints(t *testing.T) {
 	m := newTestModel(t, newFake(t))
 	if got, want := ansi.Strip(m.footer()), "? help  ·  q quit"; strings.TrimSpace(got) != want {
 		t.Errorf("footer while loading %q, want %q", got, want)
+	}
+}
+
+// TestHeaderFitsBucket checks the header gives a long state bucket the room the columns beside it
+// leave, instead of an equal share that cut it while the project's column stood half empty.
+func TestHeaderFitsBucket(t *testing.T) {
+	for _, width := range []int{100, 120, 200} {
+		t.Run(fmt.Sprint(width), func(t *testing.T) {
+			m := newTestModel(t, newFake(t))
+			m, _ = update(t, m, tea.WindowSizeMsg{Width: width, Height: 30})
+			m.ident.Bucket = "koldstart-state-000000000000-ap-southeast-2"
+			h := ansi.Strip(m.header())
+			for _, want := range []string{m.ident.Bucket, "orders · dev", "user/levi"} {
+				if !strings.Contains(h, want) {
+					t.Errorf("the header cuts %q:\n%s", want, h)
+				}
+			}
+			for line := range strings.SplitSeq(h, "\n") {
+				if w := ansi.StringWidth(line); w > width {
+					t.Errorf("a line of the header is %d wide, wider than %d", w, width)
+				}
+			}
+		})
+	}
+}
+
+// TestShareWidths checks the widths of the header's columns: equal while each fits its share,
+// and otherwise what a narrow column leaves goes to a wide one.
+func TestShareWidths(t *testing.T) {
+	tests := []struct {
+		name  string
+		want  []int
+		width int
+		got   []int
+	}{
+		{name: "equal shares fit", want: []int{20, 30, 20}, width: 90, got: []int{30, 30, 30}},
+		{name: "one wide", want: []int{20, 46, 23}, width: 115, got: []int{28, 54, 31}},
+		{name: "not enough", want: []int{20, 46, 23}, width: 75, got: []int{20, 32, 23}},
+		{name: "two wide", want: []int{10, 50, 50}, width: 70, got: []int{10, 30, 30}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shareWidths(tt.want, tt.width); fmt.Sprint(got) != fmt.Sprint(tt.got) {
+				t.Errorf("shareWidths(%v, %d) = %v, want %v", tt.want, tt.width, got, tt.got)
+			}
+		})
 	}
 }
 

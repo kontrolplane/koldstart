@@ -384,8 +384,13 @@ func (m model) header() string {
 		{{"region", text(orDash(id.Region), styles.ToneBody)}, {"bucket", text(orDash(id.Bucket), styles.ToneMuted)}},
 		{{"project", project}, {"as", text(orDash(callerName(id.Caller)), styles.ToneMuted)}},
 	}
-	width := frameWidth - 1
-	each := (width - 2*(len(columns)-1)) / len(columns)
+	want := make([]int, len(columns))
+	for i, c := range columns {
+		for _, f := range c {
+			want[i] = max(want[i], headerLabelWidth+cellWidth(f.value))
+		}
+	}
+	widths := shareWidths(want, frameWidth-1-2*(len(columns)-1))
 	var rendered []string
 	for i, c := range columns {
 		if i > 0 {
@@ -393,11 +398,68 @@ func (m model) header() string {
 		}
 		var lines []string
 		for _, f := range c {
-			lines = append(lines, styles.Faint(fmt.Sprintf("%-8s", f.label))+renderCell(f.value, column{width: max(1, each-8)}, nil))
+			value := renderCell(f.value, column{width: max(1, widths[i]-headerLabelWidth)}, nil)
+			lines = append(lines, styles.Faint(fmt.Sprintf("%-*s", headerLabelWidth, f.label))+value)
 		}
 		rendered = append(rendered, strings.Join(lines, "\n"))
 	}
 	return indent(lipgloss.JoinHorizontal(lipgloss.Top, rendered...))
+}
+
+// headerLabelWidth is the room of a label in the header, the value beside it.
+const headerLabelWidth = 8
+
+// cellWidth is how wide a cell's text is.
+func cellWidth(c cell) int {
+	w := 0
+	for _, s := range c {
+		w += ansi.StringWidth(s.Text)
+	}
+	return w
+}
+
+// shareWidths shares width among columns that want so much each. When every column fits an
+// equal share, each gets one, so the columns line up as they always do. Otherwise a column that
+// wants less than its share keeps what it wants, and what it leaves goes to the others, so a
+// long state bucket is not cut while the project beside it leaves room. What is left once every
+// column has what it wants is shared out evenly.
+func shareWidths(want []int, width int) []int {
+	n := len(want)
+	out := make([]int, n)
+	if n == 0 {
+		return out
+	}
+	if slices.Max(want) <= width/n {
+		for i := range out {
+			out[i] = width / n
+		}
+		return out
+	}
+	open := make([]bool, n)
+	for i := range open {
+		open[i] = true
+	}
+	left, count := width, n
+	for settled := true; settled && count > 0; {
+		settled = false
+		for i, w := range want {
+			if open[i] && w <= left/count {
+				out[i], open[i] = w, false
+				left -= w
+				count--
+				settled = true
+			}
+		}
+	}
+	for i := range out {
+		switch {
+		case count == 0:
+			out[i] += left / n
+		case open[i]:
+			out[i] = left / count
+		}
+	}
+	return out
 }
 
 // callerName is the arn of the caller without its partition, service and account, which the

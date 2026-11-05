@@ -107,6 +107,62 @@ func TestTableDropsColumns(t *testing.T) {
 	}
 }
 
+// TestTableFitsContent checks the room a table has goes to the columns its rows are cut in, as
+// with the long ids of a real stage, rather than to columns their rows leave empty: a column a
+// little short shows whole beside one that cannot, a fixed column gives up what no row fills,
+// and short rows let a column show that would otherwise be hidden.
+func TestTableFitsContent(t *testing.T) {
+	row := func(cells ...string) tableRow {
+		r := make(tableRow, len(cells))
+		for i, c := range cells {
+			r[i] = text(c, styles.ToneBody)
+		}
+		return r
+	}
+	tests := []struct {
+		name    string
+		columns []column
+		rows    []tableRow
+		width   int
+		whole   []string
+		shows   []string
+	}{
+		{
+			name: "resources", columns: resourceColumns, width: 116,
+			rows: []tableRow{
+				row("├─ permission/api/httpapi", "ApiGatewayV2::Integration", "r2ui-shop-dev-api/koldstart-aba93bd69165933a", ""),
+				row("resource/jobs", "AWS::SQS::Queue", "http://localhost:4566/000000000000/cloudcontrol-resource-14d4ee40e893", "0 queued"),
+			},
+			whole: []string{"├─ permission/api/httpapi", "ApiGatewayV2::Integration", "r2ui-shop-dev-api/koldstart-aba93bd69165933a", "0 queued"},
+		},
+		{
+			name: "functions on 80 columns", columns: functionColumns, width: 76,
+			rows:  []tableRow{row("api", "nodejs22.x", "384 mb", "14s", "0", "0", "-", "d5e474f8c12a", "r2ui-shop-dev-api")},
+			whole: []string{"api", "nodejs22.x"},
+			shows: []string{"function", "runtime", "memory", "timeout", "calls 1h", "errors", "p99"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tbl := newTable(tt.columns, "")
+			tbl.setSize(tt.width, 4)
+			tbl.setRows(tt.rows)
+			v := ansi.Strip(tbl.View())
+			for _, want := range tt.whole {
+				if !strings.Contains(v, want) {
+					t.Errorf("%q is cut:\n%s", want, v)
+				}
+			}
+			if tt.shows != nil && strings.Join(shown(tbl), ",") != strings.Join(tt.shows, ",") {
+				t.Errorf("shows %q, want %q", shown(tbl), tt.shows)
+			}
+			if tbl.width() != tt.width {
+				t.Errorf("table is %d wide, want %d", tbl.width(), tt.width)
+			}
+		})
+	}
+}
+
 // TestSelectedRowSpansTable checks the ground of the selected row reaches the end of the table,
 // also when no column grows to fill it.
 func TestSelectedRowSpansTable(t *testing.T) {

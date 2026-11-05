@@ -63,6 +63,9 @@ type dataTable struct {
 	// spare is the width no column takes, painted at the end of a row so a selected row spans the
 	// table.
 	spare int
+	// fitWidth is the width setSize was last given, which the columns are fitted to again when
+	// the rows change.
+	fitWidth int
 }
 
 func newTable(columns []column, empty string) dataTable {
@@ -88,13 +91,30 @@ func columnsWidth(columns []column, width func(column) int) int {
 	return w
 }
 
-// setSize fits the columns to width and shows height body rows. While the columns do not fit at
-// their minimum, the ones with the highest drop are hidden; if they still do not fit, the widest
-// give way. What is left over is shared by the growing columns, or kept as spare when none shows.
+// setSize fits the columns to width and shows height body rows.
 func (t *dataTable) setSize(width, height int) {
 	t.height = max(height, minTableHeight)
+	t.fitWidth = width
+	t.fit()
+}
+
+// fit fits the columns to the width setSize was given. A growing column whose rows are all
+// narrower than its width needs no more than they do. While the columns do not fit at their
+// minimum, the ones with the highest drop are hidden; if they still do not fit, the widest give
+// way. What is left over goes first to the growing columns whose rows are cut, up to what they
+// hold, taking from a fixed column what its rows leave empty when that is not enough; the rest is
+// shared by the growing columns, or kept as spare when none shows.
+func (t *dataTable) fit() {
+	width := t.fitWidth
 	t.columns = slices.Clone(t.base)
 	t.spare = 0
+	if len(t.rows) > 0 {
+		for i, need := range t.needs() {
+			if c := t.columns[i]; c.grow > 0 {
+				t.columns[i].width = min(c.width, need)
+			}
+		}
+	}
 	for columnsWidth(t.columns, column.minimum) > width {
 		worst := -1
 		for i, c := range t.columns {
@@ -115,7 +135,7 @@ func (t *dataTable) setSize(width, height int) {
 		}
 	}
 	t.shrink(width)
-	extra := width - t.width()
+	extra := t.fill(width - t.width())
 	switch {
 	case extra <= 0:
 	case shares == 0:
@@ -133,6 +153,60 @@ func (t *dataTable) setSize(width, height int) {
 		t.columns[last].width += extra - given
 	}
 	t.setCursor(t.cursor)
+}
+
+// fill widens the growing columns whose rows are cut, by up to extra, the one least short first,
+// so a column a little short shows whole beside one that cannot. When extra is not enough, fixed
+// columns give up what their rows leave empty. It returns what is left of extra.
+func (t *dataTable) fill(extra int) int {
+	need := t.needs()
+	short, total := make([]int, len(t.columns)), 0
+	for i, c := range t.columns {
+		if !c.hide && c.grow > 0 && need[i] > c.width {
+			short[i] = need[i] - c.width
+			total += short[i]
+		}
+	}
+	if extra < 0 || total == 0 {
+		return max(extra, 0)
+	}
+	for i, c := range t.columns {
+		if extra >= total {
+			break
+		}
+		if !c.hide && c.grow == 0 && len(t.rows) > 0 && need[i] < c.width {
+			give := min(c.width-need[i], total-extra)
+			t.columns[i].width -= give
+			extra += give
+		}
+	}
+	order := make([]int, 0, len(t.columns))
+	for i := range t.columns {
+		if short[i] > 0 {
+			order = append(order, i)
+		}
+	}
+	slices.SortStableFunc(order, func(a, b int) int { return short[a] - short[b] })
+	for _, i := range order {
+		n := min(short[i], extra)
+		t.columns[i].width += n
+		extra -= n
+	}
+	return extra
+}
+
+// needs is how wide each column's title and rows are.
+func (t dataTable) needs() []int {
+	need := make([]int, len(t.columns))
+	for i, c := range t.columns {
+		need[i] = ansi.StringWidth(c.title)
+		for _, r := range t.rows {
+			if i < len(r) {
+				need[i] = max(need[i], cellWidth(r[i]))
+			}
+		}
+	}
+	return need
 }
 
 // shrink narrows the widest shown column, the rightmost of equals, a column at a time until the
@@ -154,7 +228,7 @@ func (t *dataTable) shrink(width int) {
 
 func (t *dataTable) setRows(rows []tableRow) {
 	t.rows = rows
-	t.setCursor(t.cursor)
+	t.fit()
 }
 
 func (t *dataTable) setCursor(i int) {
