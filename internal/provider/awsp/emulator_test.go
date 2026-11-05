@@ -133,6 +133,12 @@ func TestProvidersEmulator(t *testing.T) {
 		t.Errorf("invoke after the code change = %s", got)
 	}
 
+	e.Refresh = true
+	refreshed(t, lambdaClient, name, func() *engine.Plan {
+		return deploy("export const handler = async () => `${process.env.GREETING} two`\n")
+	})
+	e.Refresh = false
+
 	plan = apply(t, e, backend, app, nil)
 	if plan.Counts()[engine.Delete] != 4 {
 		t.Errorf("remove: %v", plan.Counts())
@@ -253,6 +259,42 @@ func TestEventsEmulator(t *testing.T) {
 	apply(t, e, backend, app, nil)
 	if n := notifications(); len(n.QueueConfigurations) != 1 || len(n.LambdaFunctionConfigurations) != 0 {
 		t.Errorf("after remove the bucket notifies %d queues and %d functions, want 1 and 0", len(n.QueueConfigurations), len(n.LambdaFunctionConfigurations))
+	}
+}
+
+// refreshed changes the memory and the environment of a deployed function outside koldstart,
+// and deletes its url, then checks a deploy with refresh finds that, and only that, and sets
+// it all back.
+func refreshed(t *testing.T, client *lambda.Client, name string, deploy func() *engine.Plan) {
+	t.Helper()
+	ctx := context.Background()
+	if plan := deploy(); plan.HasChanges() {
+		t.Fatalf("a refresh of what was just deployed has changes: %+v", plan.Changes)
+	}
+	_, err := client.UpdateFunctionConfiguration(ctx, &lambda.UpdateFunctionConfigurationInput{
+		FunctionName: &name, MemorySize: aws.Int32(512), Environment: &types.Environment{Variables: map[string]string{"GREETING": "changed"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.DeleteFunctionUrlConfig(ctx, &lambda.DeleteFunctionUrlConfigInput{FunctionName: &name}); err != nil {
+		t.Fatal(err)
+	}
+	plan := deploy()
+	fn, _ := plan.Change("function/api")
+	url, _ := plan.Change("url/api")
+	if fn.Action != engine.Update || strings.Join(fn.Drift, ",") != "environment,memory" || url.Action != engine.Create || !url.Gone {
+		t.Errorf("the refreshed plan: function %s %v, url %s gone %v", fn.Action, fn.Drift, url.Action, url.Gone)
+	}
+	conf, err := client.GetFunctionConfiguration(ctx, &lambda.GetFunctionConfigurationInput{FunctionName: &name})
+	if err != nil || aws.ToInt32(conf.MemorySize) != 256 || conf.Environment.Variables["GREETING"] != "hello" {
+		t.Errorf("the function after the refreshed deploy: %+v, %v", conf, err)
+	}
+	if _, err := client.GetFunctionUrlConfig(ctx, &lambda.GetFunctionUrlConfigInput{FunctionName: &name}); err != nil {
+		t.Errorf("the url was not created again: %v", err)
+	}
+	if plan := deploy(); plan.HasChanges() {
+		t.Errorf("a refresh after setting it back has changes: %+v", plan.Changes)
 	}
 }
 

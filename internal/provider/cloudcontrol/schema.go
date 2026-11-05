@@ -19,6 +19,8 @@ type Schema struct {
 	CreateOnly []string
 	// ReadOnly are the top-level properties aws sets, never patched.
 	ReadOnly []string
+	// WriteOnly are the top-level properties aws takes and never returns.
+	WriteOnly []string
 	// Provisionable is false for a type cloud control cannot create.
 	Provisionable bool
 
@@ -73,6 +75,7 @@ func ParseSchema(doc string) (*Schema, error) {
 	var raw struct {
 		CreateOnly  []string       `json:"createOnlyProperties"`
 		ReadOnly    []string       `json:"readOnlyProperties"`
+		WriteOnly   []string       `json:"writeOnlyProperties"`
 		Definitions map[string]any `json:"definitions"`
 	}
 	if err := json.Unmarshal([]byte(doc), &raw); err != nil {
@@ -83,7 +86,7 @@ func ParseSchema(doc string) (*Schema, error) {
 		return nil, err
 	}
 	return &Schema{
-		CreateOnly: topLevel(raw.CreateOnly), ReadOnly: topLevel(raw.ReadOnly), Provisionable: true,
+		CreateOnly: topLevel(raw.CreateOnly), ReadOnly: topLevel(raw.ReadOnly), WriteOnly: topLevel(raw.WriteOnly), Provisionable: true,
 		doc: whole, definitions: raw.Definitions,
 	}, nil
 }
