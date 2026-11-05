@@ -108,13 +108,53 @@ func TestOutputs(t *testing.T) {
 	}
 	o := &Outputs{Backend: backend}
 	ctx := context.Background()
-	if got, err := o.Output(ctx, "payments", "prod", "apiUrl"); err != nil || got != "https://pay.example.com" {
+	if got, err := o.Output(ctx, config.OutputRef{App: "payments", Stage: "prod", Output: "apiUrl"}); err != nil || got != "https://pay.example.com" {
 		t.Errorf("Output = %q, %v", got, err)
 	}
-	if _, err := o.Output(ctx, "payments", "prod", "nope"); err == nil || !strings.Contains(err.Error(), "it has apiUrl") {
+	if _, err := o.Output(ctx, config.OutputRef{App: "payments", Stage: "prod", Output: "nope"}); err == nil || !strings.Contains(err.Error(), "it has apiUrl") {
 		t.Errorf("a missing output = %v", err)
 	}
-	if _, err := o.Output(ctx, "payments", "dev", "apiUrl"); err == nil || !strings.Contains(err.Error(), "not deployed") {
+	if _, err := o.Output(ctx, config.OutputRef{App: "payments", Stage: "dev", Output: "apiUrl"}); err == nil || !strings.Contains(err.Error(), "not deployed") {
 		t.Errorf("a stage not deployed = %v", err)
+	}
+}
+
+// TestOutputsElsewhere checks an output of a stage in another region or account is read from
+// the state Elsewhere opens, once for each place, and that an output of the same app and stage
+// here is not mistaken for it.
+func TestOutputsElsewhere(t *testing.T) {
+	ctx := context.Background()
+	here, there := state.NewMemory(), state.NewMemory()
+	for _, b := range []struct {
+		backend *state.Memory
+		url     string
+	}{{here, "https://eu.example.com"}, {there, "https://us.example.com"}} {
+		st := state.New("payments", "prod", "", "")
+		st.Outputs = map[string]string{"apiUrl": b.url}
+		if _, err := b.backend.Write(ctx, st, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var opened []string
+	o := &Outputs{Backend: here, Elsewhere: func(_ context.Context, region, account, role string) (state.Backend, error) {
+		opened = append(opened, region+"|"+account+"|"+role)
+		return there, nil
+	}}
+	us := config.OutputRef{App: "payments", Stage: "prod", Output: "apiUrl", Region: "us-east-1", Role: "arn:aws:iam::210987654321:role/read"}
+	for range 2 {
+		if got, err := o.Output(ctx, us); err != nil || got != "https://us.example.com" {
+			t.Errorf("the output in us-east-1 = %q, %v", got, err)
+		}
+	}
+	if got, err := o.Output(ctx, config.OutputRef{App: "payments", Stage: "prod", Output: "apiUrl"}); err != nil || got != "https://eu.example.com" {
+		t.Errorf("the output here = %q, %v", got, err)
+	}
+	if len(opened) != 1 || opened[0] != "us-east-1||arn:aws:iam::210987654321:role/read" {
+		t.Errorf("opened %v, want the state in us-east-1 once", opened)
+	}
+	o.Elsewhere = nil
+	o.states = nil
+	if _, err := o.Output(ctx, us); err == nil {
+		t.Error("an output elsewhere was read without a way to open its state")
 	}
 }

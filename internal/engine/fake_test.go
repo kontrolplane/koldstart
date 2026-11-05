@@ -29,6 +29,8 @@ type Fake struct {
 	mutated int
 	// LastPrior are the prior inputs of the last update, as the provider was given them.
 	LastPrior map[string]any
+	// Priors are the prior inputs of each node's last update, nil when it was sent none.
+	Priors map[string]map[string]any
 }
 
 // FakeResource is one resource Fake holds.
@@ -130,6 +132,10 @@ func (f *Fake) Update(_ context.Context, req Request) (Result, error) {
 		return Result{}, fmt.Errorf("update of %s, which does not exist", req.PhysicalID)
 	}
 	f.LastPrior = decodeInputs(req.Prior)
+	if f.Priors == nil {
+		f.Priors = map[string]map[string]any{}
+	}
+	f.Priors[req.ID] = f.LastPrior
 	err := f.mutate("update", req.ID, func() {
 		r.Inputs = decodeInputs(req.Inputs)
 		r.Tags = req.Tags
@@ -156,4 +162,28 @@ func (f *Fake) Replaces(prior, desired json.RawMessage) bool {
 		}
 	}
 	return false
+}
+
+// Drift implements Differ: the inputs whose value in Fake is not the one applied.
+func (f *Fake) Drift(_ context.Context, req Request) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, "drift:"+req.ID)
+	r := f.resources[req.PhysicalID]
+	return ChangedKeys(decodeInputs(req.Inputs), r.Inputs), nil
+}
+
+// Tamper changes an input of a resource as someone outside koldstart would, or deletes the
+// resource when value is nil.
+func (f *Fake) Tamper(physicalID, input string, value any) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if value == nil && input == "" {
+		delete(f.resources, physicalID)
+		return
+	}
+	r := f.resources[physicalID]
+	r.Inputs = maps.Clone(r.Inputs)
+	r.Inputs[input] = value
+	f.resources[physicalID] = r
 }

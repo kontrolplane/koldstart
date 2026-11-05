@@ -1,3 +1,3 @@
+functions.onOrder.events[1]: an eventBridge event without a pattern, such as a schedule: use kdst.Schedule
+functions.legacy.events[0].conditions.header: a condition on the header has no equivalent yet
 functions.api.events[2]: a route of the rest api, now one of the http api: request validation, api keys and usage plans have no equivalent
-functions.listener.events[5]: events: websocket has no equivalent in koldstart yet
-functions.listener.events[6]: events: eventBridge has no equivalent in koldstart yet

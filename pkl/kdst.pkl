@@ -7,6 +7,19 @@ import "Project.pkl"
 /// The stage from `--stage`, `dev` without it.
 stage: String = read?("prop:stage") ?? "dev"
 
+/// Strings, refs and the account's values joined into one string once the refs are known:
+/// `kdst.join(List("arn:", kdst.partition, ":s3:::", kdst.ref("uploads", "BucketName"), "/*"))`.
+function join(values: List<String|Project.Ref|Project.Pseudo>): Project.Join = new { parts = values }
+
+/// The id of the account the stage deploys to.
+accountId: Project.Pseudo = new { name = "accountId" }
+
+/// The partition of the region the stage deploys to: `aws`, `aws-cn` or `aws-us-gov`.
+partition: Project.Pseudo = new { name = "partition" }
+
+/// The domain of aws's endpoints in the region: `amazonaws.com`, or `amazonaws.com.cn` in china.
+urlSuffix: Project.Pseudo = new { name = "urlSuffix" }
+
 /// An attribute of a function or resource of this project, such as its arn, once it exists.
 /// The attributes are the ones CloudFormation's `Fn::GetAtt` returns for the type.
 function ref(resourceName: String, attributeName: String): Project.Ref =
@@ -19,7 +32,12 @@ function ssm(parameterName: String): Project.Secret = new { source = "ssm"; name
 /// secret.
 function secretsmanager(secretName: String): Project.Secret = new { source = "secretsmanager"; name = secretName }
 
-/// An output of another app's stage, read from its state while deploying.
+/// An output of another app's stage, read from its state while deploying. One in another region
+/// or account amends it:
+///
+/// ```
+/// (kdst.stageOutput("payments", "prod", "apiUrl")) { region = "us-east-1" }
+/// ```
 function stageOutput(appName: String, stageName: String, outputName: String): Project.StageOutput =
   new { app = appName; stage = stageName; output = outputName }
 
@@ -33,6 +51,43 @@ class HttpRoute extends Project.Event {
   authorizer: String?
   /// For a jwt authorizer: the scopes the token must have.
   scopes: Listing<String>
+  /// This route's own request limit, in place of the stage-wide one.
+  throttling: Project.Throttling?
+}
+
+/// An eventbridge rule that sends the events matching its pattern to the function.
+class EventRule extends Project.Event {
+  fixed type: "eventRule" = "eventRule"
+  /// The event pattern, as an object or as json: `new { source { "orders" } }`.
+  pattern: Dynamic|Mapping<String, Any>|String
+  /// The event bus, by its name or arn.
+  bus: Project.Value = "default"
+  /// What the function gets in place of the event, as json.
+  input: String?
+  enabled: Boolean = true
+}
+
+/// A route of the stage's websocket api: `$connect`, `$disconnect`, `$default`, or a value of
+/// the route selection, such as `sendMessage`.
+class WebSocketRoute extends Project.Event {
+  fixed type: "webSocketRoute" = "webSocketRoute"
+  route: String(!isEmpty)
+}
+
+/// A rule of a load balancer's listener that forwards the requests it matches to the function.
+class LoadBalancer extends Project.Event {
+  fixed type: "loadBalancer" = "loadBalancer"
+  /// The listener's arn.
+  listener: Project.Value
+  /// Unique on the listener: lower numbers are matched first.
+  priority: Int(isBetween(1, 50000))
+  /// The paths, hosts and methods the rule matches; a request matches when it matches each
+  /// one given.
+  paths: Listing<String>
+  hosts: Listing<String>
+  methods: Listing<String>
+  /// Hand the function headers and query parameters as lists, for those that repeat.
+  multiValueHeaders: Boolean = false
 }
 
 /// An eventbridge scheduler schedule.

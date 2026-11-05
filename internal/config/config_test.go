@@ -119,6 +119,42 @@ func TestValidate(t *testing.T) {
 			want: `kdst.ref("missing", "Arn") refers to no function or resource`,
 		},
 		{
+			name: "an image with a runtime",
+			change: func(p *Project) {
+				fn := p.Functions["api"]
+				fn.Image = &Image{Dockerfile: "Dockerfile", Context: "."}
+				p.Functions["api"] = fn
+			},
+			want: "a function with an image has no runtime or handler",
+		},
+		{
+			name: "neither runtime nor image",
+			change: func(p *Project) {
+				fn := p.Functions["api"]
+				fn.Runtime, fn.Handler = "", ""
+				p.Functions["api"] = fn
+			},
+			want: "a function needs a runtime and a handler, or an image",
+		},
+		{
+			name: "layers on go",
+			change: func(p *Project) {
+				fn := p.Functions["worker"]
+				fn.Layers = []Value{{Literal: "arn:aws:lambda:eu-west-1:1:layer:x:1"}}
+				p.Functions["worker"] = fn
+			},
+			want: "a go function has no layers",
+		},
+		{
+			name: "include on node",
+			change: func(p *Project) {
+				fn := p.Functions["api"]
+				fn.Bundle.Include = []string{"src"}
+				p.Functions["api"] = fn
+			},
+			want: "only python functions take it",
+		},
+		{
 			name: "link to a function",
 			change: func(p *Project) {
 				p.Functions["api"].Link["worker"] = "read"

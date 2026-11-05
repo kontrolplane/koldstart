@@ -26,6 +26,8 @@ type planState struct {
 	progress map[string]nodeProgress
 	scroll   int
 	cursor   int
+	// refresh plans with every resource read as it is in aws.
+	refresh bool
 }
 
 // nodeProgress is how far applying a node got.
@@ -149,6 +151,13 @@ func (m model) planUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 			return m.startApply()
 		}
 		return m, nil
+	case key.Matches(msg, m.keys.Refresh):
+		if p.plan == nil || p.applying || p.done || p.remove || p.function != "" {
+			return m, nil
+		}
+		p.refresh, p.plan, p.cursor, p.scroll = true, nil, 0, 0
+		m.loading, m.loadingMsg = true, "reading every resource of "+p.ref.String()+" as it is in aws…"
+		return m.loadPlan()
 	case key.Matches(msg, m.keys.View):
 		if changes := m.planChanges(); p.cursor < len(changes) {
 			c := changes[p.cursor]
@@ -248,6 +257,9 @@ func (m model) planLines() ([]string, []int) {
 	if p.plan.OnlyCode() {
 		summary += ": only code, replaced in place"
 	}
+	if p.plan.Refreshed {
+		summary += ", with every resource read as it is in aws"
+	}
 	lines := []string{
 		styles.SectionHeader(title+" in "+p.ref.Region, width),
 		" " + styles.Render(styles.S(summary, styles.ToneBody)),
@@ -260,11 +272,17 @@ func (m model) planLines() ([]string, []int) {
 			styles.S(fmt.Sprintf(" %-4s", cli.Symbol(c.Action)), actionTones[c.Action]),
 			styles.S(c.ID, styles.ToneText),
 		}
-		if c.Resume {
+		switch {
+		case c.Resume:
 			head = append(head, styles.S("  finishing what a deploy started", styles.ToneFaint))
+		case c.Gone:
+			head = append(head, styles.S("  deleted outside koldstart", styles.ToneWarning))
 		}
 		status := m.progressCell(c)
 		lines = append(lines, spread(renderCell(head, column{width: width - 16}, nil), styles.Render(status...), width))
+		if len(c.Drift) > 0 {
+			lines = append(lines, renderCell(text("        changed outside koldstart: "+strings.Join(c.Drift, ", "), styles.ToneWarning), column{width: width}, nil))
+		}
 		if c.Action == engine.Update || c.Action == engine.Replace || c.Action == engine.Adopt {
 			for _, change := range cli.FieldChanges(c) {
 				lines = append(lines, renderCell(text("        "+change, styles.ToneMuted), column{width: width}, nil))

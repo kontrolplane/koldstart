@@ -31,6 +31,8 @@ type stage struct {
 	exists bool
 	state  *state.State
 	etag   string
+	// registry is the ecr registry container images go in, read when a function has one.
+	registry registry
 }
 
 // openStage loads the configuration, connects to aws, and reads the state. With create, the
@@ -56,7 +58,7 @@ func openStage(ctx context.Context, opts *Options, create bool) (*stage, error) 
 // engine returns the engine for the stage, reading the outputs of other stages from its bucket.
 func (s *stage) engine() *engine.Engine {
 	e := s.sess.engine(s.Tags)
-	e.Outputs = &resolve.Outputs{Backend: s.backend}
+	e.Outputs = &resolve.Outputs{Backend: s.backend, Elsewhere: s.sess.stateIn}
 	return e
 }
 
@@ -110,11 +112,23 @@ func (s *stage) buildAll(ctx context.Context, names []string, upload bool) (map[
 	b := build.Builder{Root: s.Root, Stage: s.Stage}
 	archives := map[string]build.Archive{}
 	for _, name := range names {
-		arc, err := b.Build(ctx, name, s.Functions[name])
+		fn := s.Functions[name]
+		arc, err := b.Build(ctx, name, fn)
 		if err != nil {
 			return nil, err
 		}
 		archives[name] = arc
+		if arc.Image {
+			if _, err := s.imageRegistry(ctx); err != nil {
+				return nil, err
+			}
+			if upload {
+				if err := s.pushImage(ctx, name, fn, arc); err != nil {
+					return nil, err
+				}
+			}
+			continue
+		}
 		if !upload {
 			continue
 		}
@@ -133,11 +147,21 @@ func (s *stage) buildAll(ctx context.Context, names []string, upload bool) (map[
 func (s *stage) nodes(archives map[string]build.Archive) ([]engine.Node, error) {
 	return desired.Build(s.Project, desired.Target{
 		Account: s.sess.Account, Region: s.Region, Bucket: state.BucketName(s.sess.Account, s.Region), Archives: archives,
+		ImageRegistry: s.registry.host,
 	})
 }
 
+// planOptions change how a stage is planned.
+type planOptions struct {
+	// AllowReplace plans replacing retained resources, which leaves the old ones in place.
+	AllowReplace bool
+	// Refresh reads every resource as it is, to create again what was deleted outside koldstart
+	// and set back what was changed.
+	Refresh bool
+}
+
 // plan builds every function, uploading the zips when upload is set, and plans the stage.
-func (s *stage) plan(ctx context.Context, upload, allowReplace bool) (*engine.Engine, *engine.Plan, []engine.Node, error) {
+func (s *stage) plan(ctx context.Context, upload bool, opts planOptions) (*engine.Engine, *engine.Plan, []engine.Node, error) {
 	if err := s.checkResources(ctx); err != nil {
 		return nil, nil, nil, err
 	}
@@ -150,7 +174,7 @@ func (s *stage) plan(ctx context.Context, upload, allowReplace bool) (*engine.En
 		return nil, nil, nil, err
 	}
 	e := s.engine()
-	e.AllowReplace = allowReplace
+	e.AllowReplace, e.Refresh = opts.AllowReplace, opts.Refresh
 	plan, err := e.Plan(ctx, nodes, s.state)
 	if err != nil {
 		return nil, nil, nil, err

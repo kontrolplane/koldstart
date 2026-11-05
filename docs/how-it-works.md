@@ -34,6 +34,8 @@ The state keeps the inputs every node was last applied with, so a plan shows wha
 
 `kdst plan` prints this list and changes nothing. It does not read the live resources, so a change made by hand in the console is not part of the plan.
 
+`kdst plan --refresh` does read them. It reads every resource of the state as it is in aws. One that is gone, because something outside koldstart deleted it, is created again, and what refers to it is updated. Some types say which inputs were changed outside koldstart: functions, through lambda, and resources, through cloud control, where what aws adds and the order of lists don't count. Such a resource is updated from how it is now, so the change is set back. For the other types, the plan only says whether they are still there. `kdst deploy --refresh` applies such a plan, and the ui's `r` on a plan makes one.
+
 ## applying
 
 `kdst deploy` applies the plan in dependency order, eight nodes at a time where they do not depend on each other. Deletes come last and go the other way, so nothing is removed while something still points at it. A plan made against a state that has changed since is refused.

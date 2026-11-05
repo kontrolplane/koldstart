@@ -137,10 +137,13 @@ func (v *validator) exists(name string) bool {
 }
 
 func (v *validator) value(where string, val Value) {
+	for i, part := range val.Join {
+		v.value(fmt.Sprintf("%s.join[%d]", where, i), part)
+	}
 	if val.Ref != nil && !v.exists(val.Ref.Resource) {
 		v.errorf("%s: kdst.ref(%q, %q) refers to no function or resource", where, val.Ref.Resource, val.Ref.Attribute)
 	}
-	if val.Output != nil && val.Output.App == v.p.App && val.Output.Stage == v.p.Stage {
+	if val.Output != nil && val.Output.App == v.p.App && val.Output.Stage == v.p.Stage && !val.Output.Elsewhere(v.p.Region) {
 		v.errorf("%s: kdst.stageOutput() of this app and stage: use kdst.ref() instead", where)
 	}
 }
@@ -168,6 +171,22 @@ func (v *validator) function(name string, fn Function) {
 	for i, e := range fn.Events {
 		v.event(name, fmt.Sprintf("%s.events[%d]", where, i), e)
 	}
+	for i, l := range fn.Layers {
+		v.value(fmt.Sprintf("%s.layers[%d]", where, i), l)
+	}
+	switch {
+	case fn.IsImage() && (fn.Runtime != "" || fn.Handler != ""):
+		v.errorf("%s: a function with an image has no runtime or handler: the image says what it runs", where)
+	case fn.IsImage() && len(fn.Layers) > 0:
+		v.errorf("%s: a function with an image has no layers: put what they hold in the image", where)
+	case !fn.IsImage() && (fn.Runtime == "" || fn.Handler == ""):
+		v.errorf("%s: a function needs a runtime and a handler, or an image", where)
+	case fn.IsGo() && len(fn.Layers) > 0:
+		v.errorf("%s: a go function has no layers: build what they hold into the binary", where)
+	}
+	if len(fn.Bundle.Include) > 0 && !fn.IsPython() {
+		v.errorf("%s.bundle.include: only python functions take it", where)
+	}
 }
 
 func (v *validator) event(fn, where string, e Event) {
@@ -191,6 +210,29 @@ func (v *validator) event(fn, where string, e Event) {
 		v.value(where+".topic", e.Topic)
 	case EventStream:
 		v.value(where+".stream", e.Stream)
+	case EventRule:
+		v.value(where+".bus", e.Bus)
+		if pattern, err := e.PatternJSON(); err != nil || pattern == "" || pattern == "{}" {
+			v.errorf("%s: the pattern is not an event pattern: give an object, or json", where)
+		}
+	case EventWebSocket:
+		key := "websocket " + e.Route
+		if other, ok := v.routes[key]; ok {
+			v.errorf("%s: the websocket route %s is also a route of %s", where, e.Route, other)
+		}
+		v.routes[key] = fn
+	case EventALB:
+		v.value(where+".listener", e.Listener)
+		if len(e.Paths)+len(e.Hosts)+len(e.Methods) == 0 {
+			v.errorf("%s: a load balancer rule needs paths, hosts or methods to match", where)
+		}
+		if e.Listener.Literal != "" {
+			key := fmt.Sprintf("listener %s %d", e.Listener.Literal, e.Priority)
+			if other, ok := v.routes[key]; ok {
+				v.errorf("%s: priority %d is also a rule of %s on that listener", where, e.Priority, other)
+			}
+			v.routes[key] = fn
+		}
 	case EventBucket:
 		v.value(where+".bucket", e.Bucket)
 		if e.Bucket.Ref != nil {

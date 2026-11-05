@@ -1,5 +1,5 @@
 // Package scaffold writes a new project: a koldstart.pkl with one function behind an http route,
-// its handler in typescript or go, and the entries koldstart needs in .gitignore.
+// its handler in typescript, go or python, and the entries koldstart needs in .gitignore.
 package scaffold
 
 import (
@@ -20,12 +20,13 @@ import (
 
 // The templates init writes from.
 const (
-	Node = "node"
-	Go   = "go"
+	Node   = "node"
+	Go     = "go"
+	Python = "python"
 )
 
 // Templates are the names of the templates, in the order help lists them.
-var Templates = []string{Node, Go}
+var Templates = []string{Node, Go, Python}
 
 // files are the templates, a file ending in .tmpl filled in and written without the suffix.
 //

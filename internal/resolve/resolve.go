@@ -5,6 +5,7 @@ package resolve
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/kontrolplane/koldstart/internal/awserr"
 	"github.com/kontrolplane/koldstart/internal/config"
+	"github.com/kontrolplane/koldstart/internal/engine"
 	"github.com/kontrolplane/koldstart/internal/state"
 )
 
@@ -133,23 +135,29 @@ func list(names []string) string {
 	return strings.Join(names, ", ")
 }
 
-// Outputs reads the outputs of other stages from the state bucket, each state once per run.
+// Outputs reads the outputs of other stages from their states, each state once per run: from
+// Backend, the bucket of this stage's account and region, or from the one Elsewhere opens for a
+// stage in another region or account.
 type Outputs struct {
-	Backend state.Backend
+	Backend   state.Backend
+	Elsewhere func(ctx context.Context, region, account, role string) (state.Backend, error)
 
 	mu     sync.Mutex
 	states map[string]*state.State
 }
 
 // Output implements engine.Outputs.
-func (o *Outputs) Output(ctx context.Context, app, stage, name string) (string, error) {
+func (o *Outputs) Output(ctx context.Context, ref config.OutputRef) (string, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	key := app + "/" + stage
+	key := engine.DescribeOutput(config.OutputRef{App: ref.App, Stage: ref.Stage, Region: ref.Region, Account: ref.Account, Role: ref.Role})
 	st, ok := o.states[key]
 	if !ok {
-		var err error
-		st, _, err = o.Backend.Read(ctx, app, stage)
+		backend, err := o.backend(ctx, ref)
+		if err != nil {
+			return "", fmt.Errorf("reading the outputs of %s: %w", key, err)
+		}
+		st, _, err = backend.Read(ctx, ref.App, ref.Stage)
 		if err != nil {
 			return "", fmt.Errorf("reading the outputs of %s: %w", key, err)
 		}
@@ -158,12 +166,28 @@ func (o *Outputs) Output(ctx context.Context, app, stage, name string) (string, 
 		}
 		o.states[key] = st
 	}
+	stage := ref.App + "/" + ref.Stage
 	if st == nil {
-		return "", fmt.Errorf("%s is not deployed in this account and region: deploy it first", key)
+		where := "this account and region"
+		if ref.Region != "" || ref.Account != "" || ref.Role != "" {
+			where = "the account and region it names"
+		}
+		return "", fmt.Errorf("%s is not deployed in %s: deploy it first", stage, where)
 	}
-	v, ok := st.Outputs[name]
+	v, ok := st.Outputs[ref.Output]
 	if !ok {
-		return "", fmt.Errorf("%s has no output %s; it has %s", key, name, list(slices.Sorted(maps.Keys(st.Outputs))))
+		return "", fmt.Errorf("%s has no output %s; it has %s", stage, ref.Output, list(slices.Sorted(maps.Keys(st.Outputs))))
 	}
 	return v, nil
+}
+
+// backend is the state bucket of the stage an output is of.
+func (o *Outputs) backend(ctx context.Context, ref config.OutputRef) (state.Backend, error) {
+	if ref.Region == "" && ref.Account == "" && ref.Role == "" {
+		return o.Backend, nil
+	}
+	if o.Elsewhere == nil {
+		return nil, errors.New("no way to read a state in another region or account")
+	}
+	return o.Elsewhere(ctx, ref.Region, ref.Account, ref.Role)
 }

@@ -461,3 +461,28 @@ func TestEscapesNeverReachTheTerminal(t *testing.T) {
 	o, _ = o.setStatus(evil, 0)
 	check("status", o)
 }
+
+// TestRefreshPlan checks r on a plan plans again with every resource read from aws, and shows
+// what was deleted and what was changed outside koldstart.
+func TestRefreshPlan(t *testing.T) {
+	f := newFake(t)
+	m := pressKeys(t, started(t, f), "d")
+	f.plan = &engine.Plan{App: "orders", Stage: "dev", Refreshed: true, Changes: []engine.Change{
+		{ID: "loggroup/api", Action: engine.Create, Gone: true},
+		{ID: "function/api", Action: engine.Update, Drift: []string{"memory", "timeout"}},
+	}}
+	m = pressKeys(t, m, "r")
+	if got := f.refreshes; len(got) != 2 || got[0] || !got[1] {
+		t.Fatalf("plans asked for with refresh %v, want a plan, then a refreshed one", got)
+	}
+	v := screen(m)
+	for _, want := range []string{"deleted outside koldstart", "changed outside koldstart: memory, timeout", "read as it is in aws"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("the refreshed plan lacks %q:\n%s", want, v)
+		}
+	}
+	_ = pressKeys(t, m, "ctrl+s")
+	if len(f.deploys) != 1 || !f.deploys[0].Refreshed {
+		t.Errorf("the deploy was of %+v, want the refreshed plan", f.deploys)
+	}
+}

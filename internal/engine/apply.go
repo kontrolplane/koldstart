@@ -164,6 +164,7 @@ func (e *Engine) applyNode(ctx context.Context, n Node, c Change, store *Store) 
 	if err != nil {
 		return fmt.Errorf("%s: %w", n.ID, err)
 	}
+	req = fromLive(req, c)
 	if err := e.recordPending(ctx, store, n, prior, action, startedAt, req.Token); err != nil {
 		return fmt.Errorf("%s: recording the %s: %w", n.ID, action, err)
 	}
@@ -281,6 +282,10 @@ func (e *Engine) decide(p Provider, c Change, prior *state.Resource, hash string
 		return Update, nil
 	case c.Action == Adopt:
 		return Adopt, nil
+	case c.Gone:
+		return Create, nil
+	case prior.Hash == hash && len(c.Drift) > 0:
+		return Update, nil
 	case prior.Hash == hash:
 		return NoOp, nil
 	case p.Replaces(prior.Inputs, recorded):
@@ -465,7 +470,7 @@ const changedMarker = "\x00koldstart: changed secret\x00"
 // a secret, or an output of another stage.
 func isExternal(v any) bool {
 	_, secret := asSecret(v)
-	_, _, _, output := asOutput(v)
+	_, output := asOutput(v)
 	return secret || output
 }
 

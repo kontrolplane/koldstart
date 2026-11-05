@@ -43,6 +43,10 @@ type Change struct {
 	Fields []string
 	// Resume is an operation a deploy started and may not have finished.
 	Resume bool
+	// Gone is a resource the state holds that is no longer in aws, deleted outside koldstart,
+	// and Drift are the inputs that were changed outside koldstart: what a refresh found.
+	Gone  bool
+	Drift []string
 }
 
 // Plan is what a deploy would do to a stage.
@@ -51,6 +55,8 @@ type Plan struct {
 	// Serial is the state's serial the plan was made from.
 	Serial  int64
 	Changes []Change
+	// Refreshed says each resource was read as it is in aws while planning.
+	Refreshed bool
 }
 
 // HasChanges reports whether applying the plan would do anything.
@@ -115,6 +121,9 @@ type Engine struct {
 	Concurrency int
 	// AllowReplace lets a plan replace a resource that is retained.
 	AllowReplace bool
+	// Refresh reads each resource as it is while planning, to create again what was deleted
+	// outside koldstart and to set back what was changed.
+	Refresh bool
 	// Tags go on every resource, next to koldstart's own.
 	Tags map[string]string
 	// OnEvent is called as nodes start and finish applying.
@@ -138,7 +147,7 @@ func (e *Engine) Plan(ctx context.Context, nodes []Node, st *state.State) (*Plan
 	if err != nil {
 		return nil, err
 	}
-	plan := &Plan{App: st.App, Stage: st.Stage, Serial: st.Serial}
+	plan := &Plan{App: st.App, Stage: st.Stage, Serial: st.Serial, Refreshed: e.Refresh}
 	unknownNodes := map[string]bool{}
 	desired := map[string]bool{}
 	var errs []error
@@ -225,13 +234,28 @@ func (e *Engine) planNode(ctx context.Context, n Node, st *state.State, unknownN
 		}
 		return c, nil
 	}
+	if e.Refresh {
+		r, err := e.refresh(ctx, p, n, st, prior)
+		if err != nil {
+			return Change{}, err
+		}
+		if r.gone {
+			c.Action, c.Gone = Create, true
+			return c, nil
+		}
+		c.Drift = r.drift
+	}
 
 	if !hasUnknown(after) {
 		hash, err := hashOf(n.Type, withSecrets)
 		if err != nil {
 			return Change{}, err
 		}
-		if hash == prior.Hash {
+		switch {
+		case hash == prior.Hash && len(c.Drift) > 0:
+			c.Action = Update
+			return c, nil
+		case hash == prior.Hash:
 			c.Action = NoOp
 			return c, nil
 		}
@@ -318,11 +342,11 @@ func resolveRefs(v any, st *state.State, unknownNodes map[string]bool) (any, err
 // with theirs.
 func (e *Engine) resolveExternal(ctx context.Context, v any) (any, error) {
 	return transform(v, func(x any) (any, bool, error) {
-		if app, stage, name, ok := asOutput(x); ok {
+		if o, ok := asOutput(x); ok {
 			if e.Outputs == nil {
-				return nil, true, fmt.Errorf("no way to read the output %s of %s/%s", name, app, stage)
+				return nil, true, fmt.Errorf("no way to read the output %s", DescribeOutput(o))
 			}
-			val, err := e.Outputs.Output(ctx, app, stage, name)
+			val, err := e.Outputs.Output(ctx, o)
 			return val, true, err
 		}
 		s, ok := asSecret(x)

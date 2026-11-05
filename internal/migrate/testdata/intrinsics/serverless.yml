@@ -1,0 +1,85 @@
+service: shop
+frameworkVersion: "3"
+
+params:
+  default:
+    domain: dev.shop.example.com
+    retention: "14"
+  prod:
+    domain: shop.example.com
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  region: eu-west-1
+  environment:
+    DOMAIN: ${param:domain}
+    LOG_LEVEL: ${file(./config.yml):logLevel}
+    ACCOUNT: ${aws:accountId}
+
+functions:
+  api:
+    handler: src/api.handler
+    environment:
+      TABLE_ARN: !GetAtt OrdersTable.Arn
+      INDEX_ARN:
+        Fn::Join:
+          - ""
+          - - !GetAtt OrdersTable.Arn
+            - /index/*
+      TOPIC_ARN: !Sub arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:shop-alerts
+      STACK: !Ref AWS::StackName
+      GREETING: !Sub
+        - "hello from ${Place} on ${sls:stage}"
+        - Place: !FindInMap [RegionNames, !Ref AWS::Region, Name]
+      IMAGE: !Select [1, [small, large]]
+      ZONE: !Select [0, !GetAZs ""]
+
+resources:
+  Conditions:
+    IsProd: !Equals ["${sls:stage}", prod]
+    IsNotProd: !Not [!Condition IsProd]
+    IsBig: !Or [!Condition IsProd, !Equals ["${sls:stage}", staging]]
+  Mappings:
+    RegionNames:
+      eu-west-1:
+        Name: Ireland
+      us-east-1:
+        Name: Virginia
+  Resources:
+    OrdersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: !Sub ${self:service}-${sls:stage}-orders
+        BillingMode: ${file(./config.yml):table.billing}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        PointInTimeRecoverySpecification: !If
+          - IsProd
+          - PointInTimeRecoveryEnabled: true
+          - !Ref AWS::NoValue
+        Tags: ${file(./config.yml):tags}
+    Alarms:
+      Type: AWS::SNS::Topic
+      Condition: IsBig
+      Properties:
+        TopicName: !Join ["-", [shop, !If [IsProd, alarms, test-alarms]]]
+        DisplayName: !Base64 shop alarms
+    Uploads:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: !Sub
+          - ${Prefix}-uploads-${AWS::AccountId}
+          - Prefix: !Ref AWS::StackName
+        VersioningConfiguration:
+          Status: !If [IsNotProd, Suspended, Enabled]
+  Outputs:
+    TableArn:
+      Value: !GetAtt OrdersTable.Arn
+    AlarmsArn:
+      Condition: IsBig
+      Value: !Ref Alarms

@@ -1,14 +1,18 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"maps"
 	"slices"
+	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/kontrolplane/koldstart/internal/config"
 	"github.com/kontrolplane/koldstart/internal/desired"
+	"github.com/kontrolplane/koldstart/internal/provider/awsp"
 	"github.com/kontrolplane/koldstart/internal/state"
 )
 
@@ -33,22 +37,49 @@ func outputsCommand(name string, opts *Options) *cobra.Command {
 func (s *stage) outputs(st *state.State) (map[string]string, error) {
 	out := map[string]string{}
 	for _, name := range slices.Sorted(maps.Keys(s.Outputs)) {
-		v := s.Outputs[name]
-		switch {
-		case v.Ref != nil:
-			r := st.Resources[desired.NodeID(s.Project, v.Ref.Resource)]
-			if r == nil {
-				return nil, fmt.Errorf("outputs[%s]: %s does not exist", name, v.Ref.Resource)
-			}
-			out[name] = r.Attributes[v.Ref.Attribute]
-		case v.Secret != nil || v.Output != nil:
-			return nil, fmt.Errorf("outputs[%s]: an output is a string or a ref()", name)
-		default:
-			out[name] = v.Literal
+		v, err := s.outputValue(st, s.Outputs[name])
+		if err != nil {
+			return nil, fmt.Errorf("outputs[%s]: %w", name, err)
 		}
+		out[name] = v
 	}
 	maps.Copy(out, s.urlOutputs(st))
 	return out, nil
+}
+
+// outputValue resolves an output against the state: a string, a ref(), a join of them, or a value
+// of the account.
+func (s *stage) outputValue(st *state.State, v config.Value) (string, error) {
+	switch {
+	case v.Ref != nil:
+		r := st.Resources[desired.NodeID(s.Project, v.Ref.Resource)]
+		if r == nil {
+			return "", fmt.Errorf("%s does not exist", v.Ref.Resource)
+		}
+		return r.Attributes[v.Ref.Attribute], nil
+	case v.Join != nil:
+		var b strings.Builder
+		for _, part := range v.Join {
+			p, err := s.outputValue(st, part)
+			if err != nil {
+				return "", err
+			}
+			b.WriteString(p)
+		}
+		return b.String(), nil
+	case v.Pseudo == config.PseudoAccountID:
+		return s.sess.Account, nil
+	case v.Pseudo == config.PseudoPartition:
+		return awsp.Partition(s.Region), nil
+	case v.Pseudo == config.PseudoURLSuffix:
+		if strings.HasPrefix(s.Region, "cn-") {
+			return "amazonaws.com.cn", nil
+		}
+		return "amazonaws.com", nil
+	case v.Secret != nil || v.Output != nil:
+		return "", errors.New("an output is a string, a ref() or a join() of them")
+	}
+	return v.Literal, nil
 }
 
 // urlOutputs are the urls of the functions that have one, as <function>Url, and of the http
@@ -62,6 +93,9 @@ func (s *stage) urlOutputs(st *state.State) map[string]string {
 	}
 	if r := st.Resources[desired.HTTPAPIID]; r != nil {
 		out["httpApiUrl"] = r.Attributes["ApiEndpoint"]
+	}
+	if r := st.Resources[desired.WebSocketID]; r != nil {
+		out["webSocketUrl"] = r.Attributes["ApiEndpoint"] + "/" + r.Attributes["Stage"]
 	}
 	if r := st.Resources[desired.DomainID]; r != nil {
 		out["httpApiUrl"] = "https://" + r.PhysicalID

@@ -43,12 +43,14 @@ type fakeBackend struct {
 	replan *engine.Plan
 	err    error
 
-	deploys  []*engine.Plan
-	removes  int
-	unlocks  []cli.StageRef
-	invokes  []string
-	payloads []string
-	local    int
+	deploys []*engine.Plan
+	// refreshes are the refresh of each plan asked for.
+	refreshes []bool
+	removes   int
+	unlocks   []cli.StageRef
+	invokes   []string
+	payloads  []string
+	local     int
 }
 
 var (
@@ -218,7 +220,10 @@ func (f *fakeBackend) InvokeLocal(_ context.Context, _ cli.StageRef, function st
 	return f.result, f.err
 }
 
-func (f *fakeBackend) Plan(context.Context, cli.StageRef, string) (*engine.Plan, error) {
+func (f *fakeBackend) Plan(_ context.Context, _ cli.StageRef, _ string, refresh bool) (*engine.Plan, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.refreshes = append(f.refreshes, refresh)
 	return f.plan, f.err
 }
 

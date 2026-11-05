@@ -46,8 +46,10 @@ functions {
 
 | property              | default   | description                                                                                       |
 | --------------------- | --------- | ------------------------------------------------------------------------------------------------- |
-| `runtime`             |           | `nodejs22.x` or `nodejs24.x` for javascript and typescript, `provided.al2023` for go               |
-| `handler`             |           | for node, the file and its export, `src/api.handler`; for go, the package to build, `./cmd/worker` |
+| `runtime`             |           | `nodejs22.x` or `nodejs24.x` for javascript and typescript, `provided.al2023` for go, `python3.12` or `python3.13` for python; none with an `image` |
+| `handler`             |           | for node and python, the file and its function, `src/api.handler`; for go, the package to build, `./cmd/worker`; none with an `image` |
+| `image`               |           | a container image to build and run instead, see [container images](#container-images)              |
+| `layers`              |           | lambda layers, by their version's arn, at most five; not for go or an image                         |
 | `memory`              | `1024`    | megabytes, from `128` to `10240`                                                                   |
 | `timeout`             | `6.s`     | a pkl duration, at most `15.min`                                                                   |
 | `architecture`        | `"arm64"` | `arm64` or `x86_64`                                                                                |
@@ -60,7 +62,7 @@ functions {
 | `link`                |           | resources the function uses, see [link](#link)                                                      |
 | `permissions`         |           | iam statements added to the function's role                                                         |
 | `vpc`                 |           | `subnetIds` and `securityGroupIds` to put the function in                                           |
-| `bundle`              |           | for node: `externals`, packages to leave out of the bundle, and `sourcemap`                         |
+| `bundle`              |           | for node: `externals`, packages to leave out of the bundle, and `sourcemap`; for python: `include`, what goes in the zip |
 | `typecheck`           | `false`   | for typescript: run `tsc --noEmit` before bundling, which needs node and typescript installed       |
 
 Each function gets a role and a log group of its own. The role may write to the log group, and has what `link`, `permissions`, its events and its runtime secrets add.
@@ -71,7 +73,22 @@ Typescript and javascript are bundled with the esbuild that is built into koldst
 
 Go is built with `CGO_ENABLED=0`, `-trimpath`, `-buildvcs=false` and no build id, for the architecture of the function, into a binary named `bootstrap`, which is what the `provided.al2023` runtime runs.
 
+Python goes in the zip as it is: the directory of the handler's module, `src` for `src/api.handler`, or the module alone when it is at the root, or what `bundle.include` names instead. Its dependencies come from `requirements.txt`, or from `pyproject.toml` through `uv export`, locked by `uv.lock` when there is one, and are installed with [uv](https://docs.astral.sh/uv/) for the platform lambda runs: manylinux wheels for the function's architecture, so a package with native code works however you build it. Pin the versions, so every build installs the same.
+
 Zips are deterministic: the same code gives the same bytes, on a laptop and in ci, so the hash of the zip tells koldstart whether a function's code changed. Go binaries also depend on the version of go that builds them, so pin it with a `toolchain` line in `go.mod`, such as `toolchain go1.27.3`; otherwise a laptop and ci with different versions upload different code.
+
+### container images
+
+```pkl
+["thumbnails"] {
+  image { dockerfile = "thumbnails/Dockerfile"; context = "thumbnails" }
+  memory = 2048
+}
+```
+
+A function with an `image` runs that instead of a runtime. koldstart builds it with docker for the function's architecture, from `context`, and pushes it to the ecr repository `koldstart/<app>` of the account and region, which it creates on the first deploy; `buildArgs` are passed as `--build-arg`, and `command`, `entryPoint` and `workingDirectory` set what lambda runs in place of the image's own. The image is tagged by a hash of what it is built from: every file of the context but what `.dockerignore` leaves out, the dockerfile, the build arguments and the platform. A deploy that changes none of them builds and pushes nothing, and leaves the function as it is.
+
+The repository keeps the images of every deploy, as lambda stops a function whose image is gone; images that lost their tag expire after a day. Build it from one of lambda's base images, such as `public.ecr.aws/lambda/python:3.12`, so it has the runtime client, which also lets `invoke --local` run it here with docker.
 
 ### link
 
@@ -122,6 +139,9 @@ events {
   new kdst.Topic { topic = kdst.ref("alerts", "TopicArn") }
   new kdst.Stream { stream = kdst.ref("orders", "StreamArn"); startingPosition = "LATEST" }
   new kdst.Bucket { bucket = kdst.ref("uploads", "BucketName"); events { "s3:ObjectCreated:*" }; prefix = "incoming/" }
+  new kdst.EventRule { bus = "orders"; pattern = new Dynamic { source { "orders.service" }; ["detail-type"] { "OrderPlaced" } } }
+  new kdst.WebSocketRoute { route = "$connect" }
+  new kdst.LoadBalancer { listener = "arn:aws:elasticloadbalancing:..."; priority = 10; paths { "/legacy/*" } }
 }
 ```
 
@@ -133,6 +153,9 @@ events {
 | `Topic`     | an sns subscription and the permission for sns to invoke the function, with `filterPolicy`          |
 | `Stream`    | an event source mapping from a kinesis stream or a dynamodb stream                                   |
 | `Bucket`    | the function in the bucket's notifications, and the permission for s3 to invoke it                   |
+| `EventRule` | an eventbridge rule on `bus`, `default` without one, that sends the events matching `pattern`, an object or json, to the function, with `input` in their place and `enabled`; and the permission for eventbridge to invoke it |
+| `WebSocketRoute` | a route of the stage's websocket api, `$connect`, `$disconnect`, `$default` or a value of the route selection, with its integration and permission |
+| `LoadBalancer` | a target group of the function, the permission for the load balancer to invoke it, and a rule of `priority` on `listener` that forwards the requests matching its `paths`, `hosts` and `methods` to it |
 
 A queue must hide a message for at least the function's timeout, its `VisibilityTimeout`, or lambda refuses the mapping; koldstart checks it for queues of the project. `reportBatchItemFailures` is on by default, so a function returns the messages that failed and only those are retried.
 
@@ -155,7 +178,17 @@ http {
 }
 ```
 
-With a domain, `httpApiUrl` is `https://<domain>`, and the output `httpDomainTarget` is where its dns record points. A route picks an authorizer with `authorizer = "users"`.
+With a domain, `httpApiUrl` is `https://<domain>`, and the output `httpDomainTarget` is where its dns record points. A route picks an authorizer with `authorizer = "users"`, and sets a request limit of its own, in place of the stage-wide one, with `throttling = new { rate = 5; burst = 10 }`.
+
+### the websocket api
+
+The `WebSocketRoute`s of a stage share one websocket api, with a stage of the stage's name. Its url is the output `webSocketUrl`. A message picks its route by its `action`, or what `websocket.routeSelection` says:
+
+```pkl
+websocket { routeSelection = "$request.body.type" }
+```
+
+A function with websocket routes may post to the connections of the api, and gets the url to post to as `WEBSOCKET_CALLBACK_URL`, for the api management client of the aws sdk.
 
 ## resources
 
@@ -219,6 +252,17 @@ environment {
 
 The attributes of a resource are its properties as cloud control returns them, such as `Arn` and `TableName`. A function has `Arn` and `FunctionName`.
 
+A ref is a value of its own, not a string, so it cannot sit inside a pkl string. `kdst.join()` joins strings, refs and the account's values into one, once the refs are known:
+
+```pkl
+environment {
+  ["INDEX_ARN"] = kdst.join(List(kdst.ref("orders", "Arn"), "/index/*"))
+  ["TOPIC_ARN"] = kdst.join(List("arn:", kdst.partition, ":sns:", module.region, ":", kdst.accountId, ":alerts"))
+}
+```
+
+`kdst.accountId`, `kdst.partition` and `kdst.urlSuffix` are the account the stage deploys to, the partition of its region, `aws` outside china and govcloud, and the domain of aws's endpoints there. They go wherever a value goes, and in `kdst.join()`.
+
 ## outputs
 
 ```pkl
@@ -246,6 +290,19 @@ region = "us-east-1"
 ```
 
 One app reads another's outputs with `kdst.stageOutput(app, stage, output)`, from the state of that stage in the same account and region. A plan fails when that stage is not deployed, or has no such output.
+
+An output of a stage in another region or account amends it with `region`, `account` and `role`:
+
+```pkl
+environment {
+  ["PAYMENTS_URL"] = (kdst.stageOutput("payments", "prod", "apiUrl")) { region = "us-east-1" }
+  ["LEDGER_URL"] = (kdst.stageOutput("ledger", "prod", "apiUrl")) {
+    role = "arn:aws:iam::210987654321:role/koldstart-outputs"
+  }
+}
+```
+
+The state is read from the stage's bucket, `koldstart-<account>-<region>`, at `<app>/<stage>/state.json`, and only from a bucket that account owns. With a `role`, koldstart assumes it to read it, and the stage is in the role's account unless `account` says another. The role needs `s3:GetObject` on that key, and the deploying credentials need `sts:AssumeRole` on the role. Without a role, the deploying credentials read it themselves, which the bucket's policy has to allow for another account.
 
 ## secrets
 

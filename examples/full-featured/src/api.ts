@@ -19,7 +19,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
   }
   if (event.requestContext.http.method === "POST") {
     const id = randomUUID();
-    const order = { id, ...JSON.parse(event.body ?? "{}") };
+    const body = event.isBase64Encoded ? Buffer.from(event.body ?? "", "base64").toString() : event.body;
+    const order = { id, ...JSON.parse(body || "{}") };
     await sqs.send(new SendMessageCommand({ QueueUrl: process.env.JOBS_URL, MessageBody: JSON.stringify(order) }));
     return json(202, { id });
   }

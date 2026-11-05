@@ -24,6 +24,8 @@ const (
 	inputName     = "name"
 	inputFunction = "function"
 	inputAPI      = "api"
+	inputCORS     = "cors"
+	authNone      = "NONE"
 )
 
 // Target is where the nodes are deployed.
@@ -34,6 +36,9 @@ type Target struct {
 	Bucket string
 	// Archives are the built functions, by name.
 	Archives map[string]build.Archive
+	// ImageRegistry is the ecr registry of the account and region, such as
+	// 123456789012.dkr.ecr.eu-west-1.amazonaws.com, which container images are pushed to.
+	ImageRegistry string
 }
 
 // The ids of a function's nodes, and of a resource's.
@@ -83,6 +88,7 @@ func Build(p *config.Project, t Target) ([]engine.Node, error) {
 		nodes = append(nodes, fnNodes...)
 	}
 	nodes = append(nodes, b.httpAPI()...)
+	nodes = append(nodes, b.webSocketAPI()...)
 	for _, name := range slices.Sorted(maps.Keys(p.Functions)) {
 		nodes = append(nodes, b.events(name, p.Functions[name])...)
 	}
@@ -116,10 +122,45 @@ func (b *builder) value(v config.Value) any {
 	case v.Secret != nil:
 		return engine.SecretValue(*v.Secret)
 	case v.Output != nil:
-		return engine.StageOutput(v.Output.App, v.Output.Stage, v.Output.Output)
+		return engine.StageOutput(*v.Output)
+	case v.Join != nil:
+		return b.join(v.Join)
+	case v.Pseudo != "":
+		return b.pseudo(v.Pseudo)
 	default:
 		return v.Literal
 	}
+}
+
+// join joins parts into one string once the refs among them are known, or at once when there are
+// none.
+func (b *builder) join(parts []config.Value) any {
+	values := b.values(parts)
+	var whole strings.Builder
+	for _, v := range values {
+		s, ok := v.(string)
+		if !ok {
+			return engine.Join(values...)
+		}
+		whole.WriteString(s)
+	}
+	return whole.String()
+}
+
+// pseudo is a value of the account and region the stage deploys to.
+func (b *builder) pseudo(name string) string {
+	switch name {
+	case config.PseudoAccountID:
+		return b.target.Account
+	case config.PseudoPartition:
+		return awsp.Partition(b.target.Region)
+	case config.PseudoURLSuffix:
+		if strings.HasPrefix(b.target.Region, "cn-") {
+			return "amazonaws.com.cn"
+		}
+		return "amazonaws.com"
+	}
+	return ""
 }
 
 func (b *builder) values(vs []config.Value) []any {
@@ -195,6 +236,7 @@ func (b *builder) environment(fn config.Function) (map[string]any, error) {
 	if fn.IsNode() && fn.Bundle.Sourcemap {
 		env["NODE_OPTIONS"] = "--enable-source-maps"
 	}
+	b.webSocketEnvironment(fn, env)
 	return env, nil
 }
 
@@ -208,38 +250,72 @@ func (b *builder) functionNode(name string, fn config.Function, env map[string]a
 		vpc = map[string]any{"subnetIds": b.values(fn.VPC.SubnetIDs), "securityGroupIds": b.values(fn.VPC.SecurityGroupIDs)}
 	}
 	lambdaName := FunctionName(b.project, name)
-	return engine.Node{
-		ID: FunctionID(name), Type: awsp.TypeFunction, Name: lambdaName, After: []string{LogGroupID(name)},
-		Inputs: map[string]any{
-			inputName:             lambdaName,
-			"runtime":             fn.Runtime,
-			"handler":             handler,
-			"memory":              fn.Memory,
-			"timeout":             fn.Timeout,
-			"architecture":        fn.Architecture,
-			"ephemeralStorage":    fn.EphemeralStorage,
-			"reservedConcurrency": fn.ReservedConcurrency,
-			"environment":         env,
-			"role":                engine.Ref(RoleID(name), attrArn),
-			"logGroup":            logGroupName(b.project, name),
-			"code": map[string]any{
-				"bucket": b.target.Bucket,
-				"key":    state.ZipKey(b.project.App, b.project.Stage, archive.SHA256),
-				"sha256": archive.SHA256,
-			},
-			"vpc": vpc,
+	inputs := map[string]any{
+		inputName:             lambdaName,
+		"runtime":             fn.Runtime,
+		"handler":             handler,
+		"memory":              fn.Memory,
+		"timeout":             fn.Timeout,
+		"architecture":        fn.Architecture,
+		"ephemeralStorage":    fn.EphemeralStorage,
+		"reservedConcurrency": fn.ReservedConcurrency,
+		"environment":         env,
+		"role":                engine.Ref(RoleID(name), attrArn),
+		"logGroup":            logGroupName(b.project, name),
+		"code": map[string]any{
+			"bucket": b.target.Bucket,
+			"key":    state.ZipKey(b.project.App, b.project.Stage, archive.SHA256),
+			"sha256": archive.SHA256,
 		},
+		"vpc": vpc,
 	}
+	if len(fn.Layers) > 0 {
+		inputs["layers"] = b.values(fn.Layers)
+	}
+	if fn.IsImage() {
+		delete(inputs, "runtime")
+		delete(inputs, "handler")
+		inputs["code"] = map[string]any{"imageUri": ImageURI(b.target, b.project, name, archive.SHA256), "sha256": archive.SHA256}
+		if c := imageConfig(fn.Image); c != nil {
+			inputs["imageConfig"] = c
+		}
+	}
+	return engine.Node{ID: FunctionID(name), Type: awsp.TypeFunction, Name: lambdaName, After: []string{LogGroupID(name)}, Inputs: inputs}
+}
+
+// ImageURI is where a function's container image is pushed: its app's repository in the
+// target's registry, tagged by what it is built from.
+func ImageURI(t Target, p *config.Project, function, sha string) string {
+	return t.ImageRegistry + "/" + build.ImageRepository(p.App) + ":" + build.ImageTag(p.Stage, function, sha)
+}
+
+// imageConfig is what an image runs in place of its CMD, ENTRYPOINT and WORKDIR, or nil when it
+// runs what it says.
+func imageConfig(img *config.Image) map[string]any {
+	c := map[string]any{}
+	if len(img.Command) > 0 {
+		c["command"] = img.Command
+	}
+	if len(img.EntryPoint) > 0 {
+		c["entryPoint"] = img.EntryPoint
+	}
+	if img.WorkingDirectory != "" {
+		c["workingDirectory"] = img.WorkingDirectory
+	}
+	if len(c) == 0 {
+		return nil
+	}
+	return c
 }
 
 func (b *builder) urlNode(name string, url *config.FunctionURL) engine.Node {
 	auth := "AWS_IAM"
 	if url.Auth == "none" {
-		auth = "NONE"
+		auth = authNone
 	}
 	return engine.Node{
 		ID: URLID(name), Type: awsp.TypeURL, Name: FunctionName(b.project, name),
-		Inputs: map[string]any{inputFunction: engine.Ref(FunctionID(name), "FunctionName"), "auth": auth, "cors": corsInputs(url.CORS)},
+		Inputs: map[string]any{inputFunction: engine.Ref(FunctionID(name), "FunctionName"), "auth": auth, inputCORS: corsInputs(url.CORS)},
 	}
 }
 
@@ -273,8 +349,8 @@ func (b *builder) resource(name string, r config.Resource) engine.Node {
 func (b *builder) properties(props map[string]any) any {
 	var conv func(v any) any
 	conv = func(v any) any {
-		if r, ok := config.AsRef(v); ok {
-			return engine.Ref(NodeID(b.project, r.Resource), r.Attribute)
+		if val, ok := config.AsValue(v); ok {
+			return b.value(val)
 		}
 		switch x := v.(type) {
 		case map[string]any:

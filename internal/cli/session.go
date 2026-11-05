@@ -5,13 +5,17 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/service/apigatewayv2"
 	awscloudcontrol "github.com/aws/aws-sdk-go-v2/service/cloudcontrol"
 	"github.com/aws/aws-sdk-go-v2/service/cloudformation"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
+	elb "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
+	"github.com/aws/aws-sdk-go-v2/service/eventbridge"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -130,12 +134,55 @@ func (s *session) engine(tags map[string]string) *engine.Engine {
 			awsp.TypeMapping:      awsp.Mapping{Client: s.Lambda},
 			awsp.TypeSubscription: awsp.Subscription{Client: sns.NewFromConfig(s.cfg)},
 			awsp.TypeNotification: awsp.Notification{Client: s.S3, Account: s.Account},
+			awsp.TypeRule:         awsp.Rule{Client: eventbridge.NewFromConfig(s.cfg)},
+			awsp.TypeTargetGroup:  awsp.TargetGroup{Client: elb.NewFromConfig(s.cfg)},
+			awsp.TypeTargets:      awsp.Targets{Client: elb.NewFromConfig(s.cfg)},
+			awsp.TypeListenerRule: awsp.ListenerRule{Client: elb.NewFromConfig(s.cfg)},
 		},
 		Fallback:    cloudcontrol.Provider{Client: s.CloudControl, Schemas: s.Schemas},
 		Secrets:     s.Secrets,
 		Concurrency: 8,
 		Tags:        tags,
 	}
+}
+
+// stateIn is the state bucket of another region or account, for the outputs of a stage there.
+// With a role it is read as the role, which koldstart assumes with this session's credentials,
+// and the stage is in the role's account unless account says another; without one, it is read
+// with this session's credentials, which the bucket's policy must let in. It is the bucket of
+// the account, so one of another owner with its name is refused.
+func (s *session) stateIn(_ context.Context, region, account, role string) (state.Backend, error) {
+	if region == "" {
+		region = s.Region
+	}
+	cfg := s.cfg.Copy()
+	cfg.Region = region
+	if role != "" {
+		roleAccount, err := accountOf(role)
+		if err != nil {
+			return nil, err
+		}
+		if account == "" {
+			account = roleAccount
+		}
+		cfg.Credentials = aws.NewCredentialsCache(stscreds.NewAssumeRoleProvider(sts.NewFromConfig(s.cfg), role, func(o *stscreds.AssumeRoleOptions) {
+			o.RoleSessionName = "koldstart-outputs"
+		}))
+	}
+	if account == "" {
+		account = s.Account
+	}
+	other := newSession(cfg, account)
+	return &state.S3{Client: other.S3, Bucket: state.BucketName(account, region), Account: account}, nil
+}
+
+// accountOf is the account of a role's arn, such as arn:aws:iam::123456789012:role/name.
+func accountOf(role string) (string, error) {
+	parts := strings.Split(role, ":")
+	if len(parts) < 6 || parts[2] != "iam" || len(parts[4]) != 12 {
+		return "", fmt.Errorf("%s is not the arn of a role", role)
+	}
+	return parts[4], nil
 }
 
 // backend returns the state bucket and whether it exists. With create, a bucket that does not

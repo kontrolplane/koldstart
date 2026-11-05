@@ -1,5 +1,6 @@
 // Package build turns a function's code into the zip lambda runs: node bundled with esbuild, go
-// cross-compiled to a bootstrap binary.
+// cross-compiled to a bootstrap binary, python with its dependencies installed by uv; and a
+// container image function into its image.
 package build
 
 import (
@@ -21,8 +22,11 @@ type Archive struct {
 	Function string
 	Path     string
 	Size     int64
-	// SHA256 is the hex sha256 of the zip, which names it in the state bucket.
+	// SHA256 is the hex sha256 of the zip, which names it in the state bucket, or of what a
+	// container image is built from, which tags it.
 	SHA256 string
+	// Image says the function is a container image, which Path and Size say nothing of.
+	Image bool
 }
 
 // Target is the platform a function is built for.
@@ -30,12 +34,15 @@ type Target struct {
 	GOOS, GOARCH string
 }
 
+// Linux is the os lambda runs functions on, and containers run.
+const Linux = "linux"
+
 // LambdaTarget returns the platform lambda runs a function of the architecture on.
 func LambdaTarget(architecture string) Target {
 	if architecture == config.ArchX8664 {
-		return Target{GOOS: "linux", GOARCH: "amd64"}
+		return Target{GOOS: Linux, GOARCH: "amd64"}
 	}
-	return Target{GOOS: "linux", GOARCH: "arm64"}
+	return Target{GOOS: Linux, GOARCH: "arm64"}
 }
 
 // Builder builds the functions of the project in Root.
@@ -45,8 +52,16 @@ type Builder struct {
 	Stage string
 }
 
-// Build builds the function name for lambda and writes its zip under Dir.
+// Build builds the function name for lambda and writes its zip under Dir. For a container image it
+// hashes what the image is built from; BuildImage builds it.
 func (b Builder) Build(ctx context.Context, name string, fn config.Function) (Archive, error) {
+	if fn.IsImage() {
+		sha, err := b.imageHash(fn, LambdaTarget(fn.Architecture))
+		if err != nil {
+			return Archive{}, fmt.Errorf("building %s: %w", name, err)
+		}
+		return Archive{Function: name, SHA256: sha, Image: true}, nil
+	}
 	files, err := b.Files(ctx, name, fn, LambdaTarget(fn.Architecture))
 	if err != nil {
 		return Archive{}, err
@@ -86,6 +101,12 @@ func (b Builder) Files(ctx context.Context, name string, fn config.Function, tar
 			return nil, fmt.Errorf("building %s: %w", name, err)
 		}
 		return []File{file}, nil
+	case fn.IsPython():
+		files, err := b.python(ctx, fn, target)
+		if err != nil {
+			return nil, fmt.Errorf("building %s: %w", name, err)
+		}
+		return files, nil
 	default:
 		return nil, fmt.Errorf("building %s: runtime %q is not supported", name, fn.Runtime)
 	}

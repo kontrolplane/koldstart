@@ -1,0 +1,6 @@
+table:
+  billing: PAY_PER_REQUEST
+logLevel: debug
+tags:
+  team: checkout
+  cost: shop

@@ -533,7 +533,10 @@ func (m model) shortHelp() [][2]string {
 		case p.done || p.plan == nil:
 			return [][2]string{hint(k.View, "diff"), chooseHint, hint(k.Help), hint(k.Quit)}
 		}
-		return [][2]string{hint(k.Apply, m.planWhat()), hint(k.View, "diff"), chooseHint, hint(k.Help), hint(k.Quit)}
+		if p.remove || p.function != "" || p.refresh {
+			return [][2]string{hint(k.Apply, m.planWhat()), hint(k.View, "diff"), chooseHint, hint(k.Help), hint(k.Quit)}
+		}
+		return [][2]string{hint(k.Apply, m.planWhat()), hint(k.View, "diff"), hint(k.Refresh, "read aws"), chooseHint, hint(k.Help), hint(k.Quit)}
 	case removePage:
 		return [][2]string{hint(k.View, "remove"), hint(k.Back, "cancel")}
 	case unlockPage, runLocalPage:
@@ -548,7 +551,7 @@ var helpSections = []struct {
 	rows  [][2]string
 }{
 	{"move", [][2]string{{"↑/k ↓/j", "up / down"}, {"g / G", "first / last"}, {"pgup/pgdn", "page"}, {keys.Keys.View.Help().Key, "open"}, {"tab/⇧tab", "next / previous tab"}, {"/", "filter"}, {"q", "back, quit on stages"}, {"esc", "back, clear, cancel"}, {"ctrl+c", "quit"}}},
-	{"stage", [][2]string{{"d", "plan a deploy"}, {"ctrl+s", "apply the plan"}, {keys.Keys.View.Help().Key, "a change's diff"}, {"ctrl+d", "remove the stage"}, {"ctrl+x", "release a lock"}, {"c", "copy"}, {"r / p", "refresh / pause"}}},
+	{"stage", [][2]string{{"d", "plan a deploy"}, {"ctrl+s", "apply the plan"}, {"r on a plan", "plan again from aws as it is"}, {keys.Keys.View.Help().Key, "a change's diff"}, {"ctrl+d", "remove the stage"}, {"ctrl+x", "release a lock"}, {"c", "copy"}, {"r / p", "refresh / pause"}}},
 	{"function", [][2]string{{"i", "invoke in aws"}, {"shift+i", "run on this machine"}, {"e", "edit the event"}, {"d", "plan its code"}, {"f", "follow the logs"}, {"/", "filter the logs"}, {"↑ at top", "older logs"}, {keys.Keys.View.Help().Key, "an invocation"}}},
 }
 

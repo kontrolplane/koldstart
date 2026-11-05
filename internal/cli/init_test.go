@@ -21,7 +21,7 @@ func TestInit(t *testing.T) {
 	}{
 		{name: "node", args: []string{"orders"}, files: []string{"koldstart.pkl", "src/api.ts", ".gitignore"}, app: `app = "orders"`, next: "kdst deploy"},
 		{name: "go", args: []string{"orders", "-t", "go", "--app", "shop"}, files: []string{"koldstart.pkl", "cmd/api/main.go", "go.mod"}, app: `app = "shop"`, next: "go mod tidy"},
-		{name: "unknown template", args: []string{"orders", "-t", "python"}, failWith: "no template"},
+		{name: "unknown template", args: []string{"orders", "-t", "ruby"}, failWith: "no template"},
 		{name: "no app name", args: []string{"日本"}, failWith: "pass --app"},
 	}
 	for _, tt := range tests {

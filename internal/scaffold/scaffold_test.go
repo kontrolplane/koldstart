@@ -42,6 +42,7 @@ func TestTemplatesEvaluate(t *testing.T) {
 	}{
 		{template: Node, files: []string{"koldstart.pkl", "src/api.ts"}, runtime: config.RuntimeNode22},
 		{template: Go, files: []string{"cmd/api/main.go", "go.mod", "koldstart.pkl"}, runtime: config.RuntimeGo},
+		{template: Python, files: []string{"koldstart.pkl", "requirements.txt", "src/api.py"}, runtime: config.RuntimePy313},
 	}
 	for _, tt := range tests {
 		t.Run(tt.template, func(t *testing.T) {
@@ -144,7 +145,7 @@ func TestAppName(t *testing.T) {
 // TestWriteRefuses checks an unknown template and an app name aws would refuse are refused.
 func TestWriteRefuses(t *testing.T) {
 	for _, o := range []Options{
-		{Dir: t.TempDir(), App: "orders", Template: "python"},
+		{Dir: t.TempDir(), App: "orders", Template: "ruby"},
 		{Dir: t.TempDir(), App: "Orders", Template: Node},
 	} {
 		if _, err := Write(o); err == nil {

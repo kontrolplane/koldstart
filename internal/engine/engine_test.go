@@ -462,3 +462,53 @@ func TestOnlyCode(t *testing.T) {
 		t.Error("OnlyCode = true with a role update")
 	}
 }
+
+// TestRefresh checks a plan without refresh misses what was changed and deleted outside
+// koldstart, and one with it creates the deleted resource again, with what refers to it updated,
+// and sets back what was changed from how it is.
+func TestRefresh(t *testing.T) {
+	h := newHarness(t)
+	nodes := uniqueNames(stack(256))
+	if _, err := h.deploy(nodes); err != nil {
+		t.Fatalf("deploy: %v", err)
+	}
+	h.fake.Tamper("function/api", "memory", 1024)
+	h.fake.Tamper("loggroup/api", "", nil)
+
+	st, _ := h.read()
+	plan, err := h.engine.Plan(context.Background(), nodes, st)
+	if err != nil || plan.HasChanges() {
+		t.Fatalf("a plan without refresh = %v, %v", actions(plan), err)
+	}
+
+	h.engine.Refresh = true
+	h.fake.ResetCalls()
+	plan, err = h.deploy(nodes)
+	if err != nil {
+		t.Fatalf("deploy with refresh: %v", err)
+	}
+	want := map[string]Action{"loggroup/api": Create, "role/api": Update, "function/api": Update, "resource/orders": NoOp}
+	if got := actions(plan); !maps.Equal(got, want) {
+		t.Errorf("plan = %v, want %v", got, want)
+	}
+	logs, _ := plan.Change("loggroup/api")
+	fn, _ := plan.Change("function/api")
+	if !logs.Gone || !slices.Equal(fn.Drift, []string{"memory"}) || len(fn.Fields) != 0 {
+		t.Errorf("the log group gone %v, the function's drift %v and fields %v", logs.Gone, fn.Drift, fn.Fields)
+	}
+	if got := h.fake.Resources()["function/api"].Inputs["memory"]; got != float64(256) {
+		t.Errorf("memory after the deploy = %v, want 256", got)
+	}
+	if _, ok := h.fake.Resources()["loggroup/api"]; !ok {
+		t.Error("the log group was not created again")
+	}
+	if prior, ok := h.fake.Priors["function/api"]; !ok || prior != nil {
+		t.Errorf("the function was updated from %v, want from how it is, with no prior", prior)
+	}
+
+	h.fake.ResetCalls()
+	plan, err = h.deploy(nodes)
+	if err != nil || plan.HasChanges() {
+		t.Errorf("a deploy after = %v, %v", actions(plan), err)
+	}
+}

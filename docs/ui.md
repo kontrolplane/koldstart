@@ -42,6 +42,7 @@ The page on screen is read again every five seconds; `p` pauses that. The live d
 - `/`: filter a table, or the lines of the logs
 - `d`: plan a deploy of the stage, or on a function of its code
 - `ctrl+s`: apply the plan on screen
+- `r` on a plan of a deploy: plan again with every resource read as it is in aws, to find what was deleted or changed outside koldstart
 - `ctrl+d`: remove the stage
 - `ctrl+x`: release a lock
 - `i`: invoke the function in aws, `shift+i` to run it on this machine

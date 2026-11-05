@@ -18,6 +18,12 @@ type Project struct {
 	Outputs   map[string]Value    `json:"outputs"`
 	Tags      map[string]string   `json:"tags"`
 	HTTP      *HTTP               `json:"http"`
+	WebSocket *WebSocket          `json:"websocket"`
+}
+
+// WebSocket is the stage's websocket api.
+type WebSocket struct {
+	RouteSelection string `json:"routeSelection"`
 }
 
 // The runtimes a function can have.
@@ -25,6 +31,8 @@ const (
 	RuntimeNode22 = "nodejs22.x"
 	RuntimeNode24 = "nodejs24.x"
 	RuntimeGo     = "provided.al2023"
+	RuntimePy312  = "python3.12"
+	RuntimePy313  = "python3.13"
 )
 
 // The architectures a function can have.
@@ -54,6 +62,28 @@ type Function struct {
 	VPC          *VPC              `json:"vpc"`
 	Bundle       Bundle            `json:"bundle"`
 	Typecheck    bool              `json:"typecheck"`
+	Image        *Image            `json:"image"`
+	Layers       []Value           `json:"layers"`
+}
+
+// Image is a container image a function runs instead of a runtime.
+type Image struct {
+	Dockerfile       string            `json:"dockerfile"`
+	Context          string            `json:"context"`
+	BuildArgs        map[string]string `json:"buildArgs"`
+	Command          []string          `json:"command"`
+	EntryPoint       []string          `json:"entryPoint"`
+	WorkingDirectory string            `json:"workingDirectory"`
+}
+
+// IsPython reports whether the function runs on a python runtime.
+func (f Function) IsPython() bool {
+	return f.Runtime == RuntimePy312 || f.Runtime == RuntimePy313
+}
+
+// IsImage reports whether the function is a container image.
+func (f Function) IsImage() bool {
+	return f.Image != nil
 }
 
 // IsNode reports whether the function runs on a node runtime.
@@ -101,6 +131,7 @@ type VPC struct {
 type Bundle struct {
 	External  []string `json:"externals"`
 	Sourcemap bool     `json:"sourcemap"`
+	Include   []string `json:"include"`
 }
 
 // HTTP is the stage's http api.
@@ -147,6 +178,8 @@ const (
 	kindRef    = "ref"
 	kindSecret = "secret"
 	kindOutput = "output"
+	kindJoin   = "join"
+	kindPseudo = "pseudo"
 )
 
 // Value is a string in the configuration: given as is, or known only while deploying.
@@ -155,7 +188,19 @@ type Value struct {
 	Ref     *Ref
 	Secret  *Secret
 	Output  *OutputRef
+	// Join are parts joined into one string once the refs among them are known.
+	Join []Value
+	// Pseudo is a value of the account and region the stage deploys to: accountId, partition or
+	// urlSuffix.
+	Pseudo string
 }
+
+// The values of the account and region a Pseudo stands for.
+const (
+	PseudoAccountID = "accountId"
+	PseudoPartition = "partition"
+	PseudoURLSuffix = "urlSuffix"
+)
 
 // Ref is an attribute of a resource or function of the project, once it exists.
 type Ref struct {
@@ -178,11 +223,20 @@ const (
 	SourceSecretsManager = "secretsmanager"
 )
 
-// OutputRef is an output of another app's stage, from its state.
+// OutputRef is an output of another app's stage, from its state: in the account and region of
+// the stage that reads it, or in Region and Account, read with the credentials of Role.
 type OutputRef struct {
-	App    string `json:"app"`
-	Stage  string `json:"stage"`
-	Output string `json:"output"`
+	App     string `json:"app"`
+	Stage   string `json:"stage"`
+	Output  string `json:"output"`
+	Region  string `json:"region,omitempty"`
+	Account string `json:"account,omitempty"`
+	Role    string `json:"role,omitempty"`
+}
+
+// Elsewhere reports whether the output is of a stage in another region or account.
+func (o OutputRef) Elsewhere(region string) bool {
+	return (o.Region != "" && o.Region != region) || o.Account != "" || o.Role != ""
 }
 
 // UnmarshalJSON reads a plain string, or one of koldstart's values.
@@ -210,6 +264,24 @@ func (v *Value) UnmarshalJSON(data []byte) error {
 	case kindOutput:
 		v.Output = &OutputRef{}
 		return json.Unmarshal(data, v.Output)
+	case kindJoin:
+		var j struct {
+			Parts []Value `json:"parts"`
+		}
+		if err := json.Unmarshal(data, &j); err != nil {
+			return err
+		}
+		v.Join = j.Parts
+		return nil
+	case kindPseudo:
+		var ps struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal(data, &ps); err != nil {
+			return err
+		}
+		v.Pseudo = ps.Name
+		return nil
 	default:
 		return fmt.Errorf("want a string, ref(), a secret or output(), not %s", data)
 	}
@@ -233,9 +305,42 @@ func (v Value) MarshalJSON() ([]byte, error) {
 			Kind string `json:"$koldstart"`
 			OutputRef
 		}{kindOutput, *v.Output})
+	case v.Join != nil:
+		return json.Marshal(struct {
+			Kind  string  `json:"$koldstart"`
+			Parts []Value `json:"parts"`
+		}{kindJoin, v.Join})
+	case v.Pseudo != "":
+		return json.Marshal(struct {
+			Kind string `json:"$koldstart"`
+			Name string `json:"name"`
+		}{kindPseudo, v.Pseudo})
 	default:
 		return json.Marshal(v.Literal)
 	}
+}
+
+// AsValue returns the value a json value inside resource properties stands for when it is one of
+// koldstart's own: a ref, a join or a pseudo value. It is false for anything else.
+func AsValue(value any) (Value, bool) {
+	m, ok := value.(map[string]any)
+	if !ok {
+		return Value{}, false
+	}
+	switch m[marker] {
+	case kindRef, kindJoin, kindPseudo:
+	default:
+		return Value{}, false
+	}
+	data, err := json.Marshal(m)
+	if err != nil {
+		return Value{}, false
+	}
+	var v Value
+	if err := json.Unmarshal(data, &v); err != nil {
+		return Value{}, false
+	}
+	return v, true
 }
 
 // AsRef returns the ref an arbitrary json value stands for, such as one inside resource
@@ -258,6 +363,9 @@ const (
 	EventTopic     = "topic"
 	EventStream    = "stream"
 	EventBucket    = "bucket"
+	EventRule      = "eventRule"
+	EventWebSocket = "webSocketRoute"
+	EventALB       = "loadBalancer"
 )
 
 // Event invokes a function. Type says which of the fields apply.
@@ -299,4 +407,37 @@ type Event struct {
 	Events []string `json:"events"`
 	Prefix string   `json:"prefix"`
 	Suffix string   `json:"suffix"`
+
+	// httpRoute
+	Throttling *Throttling `json:"throttling"`
+
+	// eventRule: the pattern, an object or a json string, and the bus
+	Pattern json.RawMessage `json:"pattern"`
+	Bus     Value           `json:"bus"`
+
+	// webSocketRoute
+	Route string `json:"route"`
+
+	// loadBalancer
+	Listener          Value    `json:"listener"`
+	Priority          int      `json:"priority"`
+	Paths             []string `json:"paths"`
+	Hosts             []string `json:"hosts"`
+	Methods           []string `json:"methods"`
+	MultiValueHeaders bool     `json:"multiValueHeaders"`
+}
+
+// PatternJSON is an event rule's pattern as the json string eventbridge takes, from an object or
+// a string of json.
+func (e Event) PatternJSON() (string, error) {
+	var s string
+	if err := json.Unmarshal(e.Pattern, &s); err == nil {
+		return s, nil
+	}
+	var v any
+	if err := json.Unmarshal(e.Pattern, &v); err != nil {
+		return "", err
+	}
+	data, err := json.Marshal(v)
+	return string(data), err
 }

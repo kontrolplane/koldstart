@@ -49,6 +49,10 @@ func printArchives(w io.Writer, root string, archives []build.Archive) error {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "FUNCTION\tSIZE\tSHA256\tZIP")
 	for _, a := range archives {
+		if a.Image {
+			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", a.Function, "-", a.SHA256[:12], "container image, built on deploy")
+			continue
+		}
 		rel, err := filepath.Rel(root, a.Path)
 		if err != nil {
 			rel = a.Path

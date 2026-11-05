@@ -18,7 +18,58 @@ http {
   }
 }
 
+websocket { routeSelection = "$request.body.type" }
+
 functions {
+  ["realtime"] {
+    runtime = "nodejs22.x"
+    handler = "src/realtime.handler"
+    events {
+      new kdst.WebSocketRoute { route = "$default" }
+      new kdst.WebSocketRoute { route = "$disconnect" }
+      new kdst.WebSocketRoute { route = "chat" }
+    }
+  }
+  ["onOrder"] {
+    runtime = "nodejs22.x"
+    handler = "src/orders.handler"
+    events {
+      new kdst.EventRule {
+        pattern = new Dynamic {
+          source {
+            "orders.service"
+          }
+          ["detail-type"] {
+            "OrderPlaced"
+          }
+        }
+        bus = "orders"
+        input = "{\"kind\":\"order\"}"
+      }
+      // TODO: an eventBridge event without a pattern, such as a schedule: use kdst.Schedule
+      // was: {schedule: rate(1 hour)}
+    }
+  }
+  ["legacy"] {
+    runtime = "nodejs22.x"
+    handler = "src/legacy.handler"
+    events {
+      new kdst.LoadBalancer {
+        listener = "arn:aws:elasticloadbalancing:us-east-1:123456789012:listener/app/legacy/50dc6c495c0c9188/f2f7dc8efc522ab2"
+        priority = 10
+        paths {
+          "/legacy/*"
+        }
+        methods {
+          "GET"
+          "POST"
+        }
+        // TODO: a condition on the header has no equivalent yet
+        // was: {name: x-version, values: ["2"]}
+        multiValueHeaders = true
+      }
+    }
+  }
   ["api"] {
     runtime = "nodejs22.x"
     handler = "src/api.handler"
@@ -91,10 +142,14 @@ functions {
         maximumBatchingWindow = 5.s
         reportBatchItemFailures = false
       }
-      // TODO: events: websocket has no equivalent in koldstart yet
-      // was: {websocket: $connect}
-      // TODO: events: eventBridge has no equivalent in koldstart yet
-      // was: {eventBridge: {pattern: {source: [aws.ec2]}}}
+      new kdst.WebSocketRoute { route = "$connect" }
+      new kdst.EventRule {
+        pattern = new Dynamic {
+          source {
+            "aws.ec2"
+          }
+        }
+      }
     }
   }
 }

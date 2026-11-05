@@ -4,17 +4,35 @@ provider:
   name: aws
   runtime: nodejs18.x
   region: eu-central-1
+  ecr:
+    images:
+      thumbnailer:
+        path: ./thumbnailer
+        file: Dockerfile.lambda
+        buildArgs:
+          SIZE: "256"
   environment:
     REGION: ${aws:region}
     BUCKET: ${self:service}-${sls:stage}-files
     FROM_FILE: ${file(./config.json):key}
     SHARED: ${cf:shared-prod.QueueUrl}
+    PAYMENTS: ${cf(us-east-1):payments-prod.ApiUrl}
     LOG_LEVEL: ${env:LOG_LEVEL, 'info'}
 
 functions:
   scraper:
     handler: handler.main
     runtime: python3.12
+  reports:
+    handler: src.reports.build
+    runtime: python3.9
+    layers:
+      - arn:aws:lambda:eu-central-1:123456789012:layer:pandas:4
+  thumbs:
+    image:
+      name: thumbnailer
+      command:
+        - app.handler
   image:
     image: 123456789012.dkr.ecr.eu-central-1.amazonaws.com/legacy:latest
   worker:

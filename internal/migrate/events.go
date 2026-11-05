@@ -36,6 +36,12 @@ func (c *converter) events(w *writer, where string, events *yaml.Node) {
 			c.topicEvent(w, at, spec)
 		case "s3":
 			c.bucketEvent(w, at, spec)
+		case "eventBridge":
+			c.ruleEvent(w, at, spec)
+		case "websocket":
+			c.webSocketEvent(w, at, spec)
+		case "alb":
+			c.albEvent(w, at, spec)
 		default:
 			c.leaveOut(w, at, fmt.Sprintf("events: %s has no equivalent in koldstart yet", kind), e)
 		}
@@ -276,4 +282,88 @@ func (c *converter) add(physical, typ, property string) string {
 	c.resourceNames[name] = name
 	c.added = append(c.added, addedResource{name: name, typ: typ, property: property, value: physical})
 	return name
+}
+
+// ruleEvent converts an eventBridge event: its pattern, bus, input and whether it is enabled. A
+// schedule given as an eventBridge event becomes a rule of its own pattern, which eventbridge
+// rules without a pattern do not take, so it is left for you.
+func (c *converter) ruleEvent(w *writer, where string, spec *yaml.Node) {
+	pattern := get(spec, "pattern")
+	if pattern == nil {
+		c.leaveOut(w, where, "an eventBridge event without a pattern, such as a schedule: use kdst.Schedule", spec)
+		return
+	}
+	w.open("new kdst.EventRule")
+	c.member(w, where+".pattern", "pattern = new Dynamic", pattern)
+	if bus := get(spec, "eventBus"); bus != nil {
+		c.assign(w, where+".eventBus", "bus", c.nodeValue(bus), bus)
+	}
+	if input := get(spec, "input"); input != nil {
+		if s, err := jsonString(input); err == nil {
+			w.line("input = %s", s)
+		} else {
+			c.leaveOut(w, where+".input", err.Error(), input)
+		}
+	}
+	for _, key := range []string{"inputPath", "inputTransformer", "retryPolicy", "deadLetterQueueArn"} {
+		if v := get(spec, key); v != nil {
+			c.leaveOut(w, where+"."+key, key+" has no equivalent: the function gets the event, or input", v)
+		}
+	}
+	if isFalse(get(spec, "enabled")) {
+		w.line("enabled = false")
+	}
+	w.close()
+}
+
+// webSocketEvent converts a websocket event, a route by its key: { route: $connect }, or the key
+// alone.
+func (c *converter) webSocketEvent(w *writer, where string, spec *yaml.Node) {
+	route := str(spec)
+	if spec.Kind == yaml.MappingNode {
+		route = str(get(spec, "route"))
+		for _, key := range []string{"authorizer", "routeResponseSelectionExpression"} {
+			if v := get(spec, key); v != nil {
+				c.leaveOut(w, where+"."+key, key+" has no equivalent on a websocket route yet", v)
+			}
+		}
+	}
+	if route == "" {
+		c.leaveOut(w, where, "a websocket event without its route", spec)
+		return
+	}
+	w.line("new kdst.WebSocketRoute { route = %s }", quote(route))
+}
+
+// albEvent converts an alb event: its listener, priority and conditions.
+func (c *converter) albEvent(w *writer, where string, spec *yaml.Node) {
+	listener := get(spec, "listenerArn")
+	priority, ok := integer(get(spec, "priority"))
+	if listener == nil || !ok {
+		c.leaveOut(w, where, "an alb event without its listenerArn and priority", spec)
+		return
+	}
+	conditions := get(spec, "conditions")
+	w.open("new kdst.LoadBalancer")
+	c.assign(w, where+".listenerArn", "listener", c.nodeValue(listener), listener)
+	w.line("priority = %d", priority)
+	for _, pair := range [][2]string{{"path", "paths"}, {"host", "hosts"}, {"method", "methods"}} {
+		v := get(conditions, pair[0])
+		if v == nil {
+			continue
+		}
+		if v.Kind == yaml.ScalarNode {
+			v = &yaml.Node{Kind: yaml.SequenceNode, Content: []*yaml.Node{v}}
+		}
+		c.member(w, where+".conditions."+pair[0], pair[1], v)
+	}
+	for _, key := range []string{"header", "query", "ip"} {
+		if v := get(conditions, key); v != nil {
+			c.leaveOut(w, where+".conditions."+key, "a condition on the "+key+" has no equivalent yet", v)
+		}
+	}
+	if isTrue(get(spec, "multiValueHeaders")) {
+		w.line("multiValueHeaders = true")
+	}
+	w.close()
 }

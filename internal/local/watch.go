@@ -12,8 +12,8 @@ import (
 // skipped are the directories a change in does not rebuild anything, and sources the files that
 // go into a build: a change to a log or an editor's backup is no reason to rebuild.
 var (
-	skipped = []string{"node_modules", ".koldstart", ".git", "dist", "bin"}
-	sources = []string{".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".cjs", ".jsx", ".json", ".go", ".mod", ".sum"}
+	skipped = []string{"node_modules", ".koldstart", ".git", "dist", "bin", "__pycache__", ".venv", "venv"}
+	sources = []string{".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".cjs", ".jsx", ".json", ".go", ".mod", ".sum", ".py", ".toml", ".lock", ".txt"}
 )
 
 // Watch calls changed when a file under root changes, looking every interval, until ctx ends.
@@ -49,7 +49,7 @@ func snapshot(root string) string {
 			}
 			return nil
 		}
-		if !slices.Contains(sources, filepath.Ext(p)) {
+		if !slices.Contains(sources, filepath.Ext(p)) && !strings.HasPrefix(filepath.Base(p), "Dockerfile") {
 			return nil
 		}
 		if info, err := d.Info(); err == nil && !d.IsDir() {
