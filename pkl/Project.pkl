@@ -41,7 +41,7 @@ http: Http
 typealias Name = String(matches(Regex(#"[A-Za-z][A-Za-z0-9-]{0,39}"#)))
 
 /// A string, or a value known only while deploying.
-typealias Value = String|Ref|Secret|StageOutput
+typealias Value = String|Ref|Secret|StageOutput|Join|Pseudo
 
 class Ref {
   fixed `$koldstart`: "ref" = "ref"
@@ -63,6 +63,19 @@ class Secret {
 
   /// This secret, read by the function when it starts rather than while deploying.
   function readAtRuntime(): Secret = (this) { atRuntime = true }
+}
+
+/// Strings and refs joined into one string once the refs are known, such as an arn with a path
+/// after it.
+class Join {
+  fixed `$koldstart`: "join" = "join"
+  parts: List<String|Ref|Pseudo>(!isEmpty)
+}
+
+/// A value of the account and region the stage deploys to.
+class Pseudo {
+  fixed `$koldstart`: "pseudo" = "pseudo"
+  name: "accountId"|"partition"|"urlSuffix"
 }
 
 class StageOutput {

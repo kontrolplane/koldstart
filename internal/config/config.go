@@ -147,6 +147,8 @@ const (
 	kindRef    = "ref"
 	kindSecret = "secret"
 	kindOutput = "output"
+	kindJoin   = "join"
+	kindPseudo = "pseudo"
 )
 
 // Value is a string in the configuration: given as is, or known only while deploying.
@@ -155,7 +157,19 @@ type Value struct {
 	Ref     *Ref
 	Secret  *Secret
 	Output  *OutputRef
+	// Join are parts joined into one string once the refs among them are known.
+	Join []Value
+	// Pseudo is a value of the account and region the stage deploys to: accountId, partition or
+	// urlSuffix.
+	Pseudo string
 }
+
+// The values of the account and region a Pseudo stands for.
+const (
+	PseudoAccountID = "accountId"
+	PseudoPartition = "partition"
+	PseudoURLSuffix = "urlSuffix"
+)
 
 // Ref is an attribute of a resource or function of the project, once it exists.
 type Ref struct {
@@ -210,6 +224,24 @@ func (v *Value) UnmarshalJSON(data []byte) error {
 	case kindOutput:
 		v.Output = &OutputRef{}
 		return json.Unmarshal(data, v.Output)
+	case kindJoin:
+		var j struct {
+			Parts []Value `json:"parts"`
+		}
+		if err := json.Unmarshal(data, &j); err != nil {
+			return err
+		}
+		v.Join = j.Parts
+		return nil
+	case kindPseudo:
+		var ps struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal(data, &ps); err != nil {
+			return err
+		}
+		v.Pseudo = ps.Name
+		return nil
 	default:
 		return fmt.Errorf("want a string, ref(), a secret or output(), not %s", data)
 	}
@@ -233,9 +265,42 @@ func (v Value) MarshalJSON() ([]byte, error) {
 			Kind string `json:"$koldstart"`
 			OutputRef
 		}{kindOutput, *v.Output})
+	case v.Join != nil:
+		return json.Marshal(struct {
+			Kind  string  `json:"$koldstart"`
+			Parts []Value `json:"parts"`
+		}{kindJoin, v.Join})
+	case v.Pseudo != "":
+		return json.Marshal(struct {
+			Kind string `json:"$koldstart"`
+			Name string `json:"name"`
+		}{kindPseudo, v.Pseudo})
 	default:
 		return json.Marshal(v.Literal)
 	}
+}
+
+// AsValue returns the value a json value inside resource properties stands for when it is one of
+// koldstart's own: a ref, a join or a pseudo value. It is false for anything else.
+func AsValue(value any) (Value, bool) {
+	m, ok := value.(map[string]any)
+	if !ok {
+		return Value{}, false
+	}
+	switch m[marker] {
+	case kindRef, kindJoin, kindPseudo:
+	default:
+		return Value{}, false
+	}
+	data, err := json.Marshal(m)
+	if err != nil {
+		return Value{}, false
+	}
+	var v Value
+	if err := json.Unmarshal(data, &v); err != nil {
+		return Value{}, false
+	}
+	return v, true
 }
 
 // AsRef returns the ref an arbitrary json value stands for, such as one inside resource

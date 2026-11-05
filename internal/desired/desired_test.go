@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"maps"
 	"os"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -334,5 +335,38 @@ func TestGroup(t *testing.T) {
 	}
 	if kind, name := Group("route/GET /orders/{id}", []string{"httpapi", "integration/api"}); kind != GroupFunction || name != "api" {
 		t.Errorf("a route belongs to %s %q, want the function api", kind, name)
+	}
+}
+
+// TestJoinAndPseudo checks a join becomes one the engine joins once its refs are known, and the
+// account's values are filled in for the stage's account and region, in an environment and
+// inside a resource's properties.
+func TestJoinAndPseudo(t *testing.T) {
+	p := project(t)
+	api := p.Functions["api"]
+	api.Environment = map[string]config.Value{
+		"BUCKET":  {Join: []config.Value{{Literal: "arn:"}, {Pseudo: config.PseudoPartition}, {Literal: ":s3:::"}, {Ref: &config.Ref{Resource: "orders", Attribute: "Arn"}}}},
+		"ACCOUNT": {Pseudo: config.PseudoAccountID},
+	}
+	p.Functions["api"] = api
+	p.Resources["topic"] = config.Resource{Type: "AWS::SNS::Topic", Properties: map[string]any{
+		"TopicName": map[string]any{"$koldstart": "join", "parts": []any{"orders-", map[string]any{"$koldstart": "pseudo", "name": "accountId"}}},
+	}}
+	nodes, err := Build(p, target())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := byID(nodes)
+	env := got[FunctionID("api")].Inputs["environment"].(map[string]any)
+	if env["ACCOUNT"] != "123456789012" {
+		t.Errorf("ACCOUNT = %v, want the account", env["ACCOUNT"])
+	}
+	want := engine.Join("arn:", "aws", ":s3:::", engine.Ref(ResourceID("orders"), "Arn"))
+	if !reflect.DeepEqual(env["BUCKET"], want) {
+		t.Errorf("BUCKET = %v, want %v", env["BUCKET"], want)
+	}
+	props := got[ResourceID("topic")].Inputs["properties"].(map[string]any)
+	if props["TopicName"] != "orders-123456789012" {
+		t.Errorf("TopicName = %v", props["TopicName"])
 	}
 }

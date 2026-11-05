@@ -7,6 +7,19 @@ import "Project.pkl"
 /// The stage from `--stage`, `dev` without it.
 stage: String = read?("prop:stage") ?? "dev"
 
+/// Strings, refs and the account's values joined into one string once the refs are known:
+/// `kdst.join(List("arn:", kdst.partition, ":s3:::", kdst.ref("uploads", "BucketName"), "/*"))`.
+function join(values: List<String|Project.Ref|Project.Pseudo>): Project.Join = new { parts = values }
+
+/// The id of the account the stage deploys to.
+accountId: Project.Pseudo = new { name = "accountId" }
+
+/// The partition of the region the stage deploys to: `aws`, `aws-cn` or `aws-us-gov`.
+partition: Project.Pseudo = new { name = "partition" }
+
+/// The domain of aws's endpoints in the region: `amazonaws.com`, or `amazonaws.com.cn` in china.
+urlSuffix: Project.Pseudo = new { name = "urlSuffix" }
+
 /// An attribute of a function or resource of this project, such as its arn, once it exists.
 /// The attributes are the ones CloudFormation's `Fn::GetAtt` returns for the type.
 function ref(resourceName: String, attributeName: String): Project.Ref =

@@ -137,6 +137,9 @@ func (v *validator) exists(name string) bool {
 }
 
 func (v *validator) value(where string, val Value) {
+	for i, part := range val.Join {
+		v.value(fmt.Sprintf("%s.join[%d]", where, i), part)
+	}
 	if val.Ref != nil && !v.exists(val.Ref.Resource) {
 		v.errorf("%s: kdst.ref(%q, %q) refers to no function or resource", where, val.Ref.Resource, val.Ref.Attribute)
 	}

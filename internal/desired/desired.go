@@ -117,9 +117,44 @@ func (b *builder) value(v config.Value) any {
 		return engine.SecretValue(*v.Secret)
 	case v.Output != nil:
 		return engine.StageOutput(v.Output.App, v.Output.Stage, v.Output.Output)
+	case v.Join != nil:
+		return b.join(v.Join)
+	case v.Pseudo != "":
+		return b.pseudo(v.Pseudo)
 	default:
 		return v.Literal
 	}
+}
+
+// join joins parts into one string once the refs among them are known, or at once when there are
+// none.
+func (b *builder) join(parts []config.Value) any {
+	values := b.values(parts)
+	var whole strings.Builder
+	for _, v := range values {
+		s, ok := v.(string)
+		if !ok {
+			return engine.Join(values...)
+		}
+		whole.WriteString(s)
+	}
+	return whole.String()
+}
+
+// pseudo is a value of the account and region the stage deploys to.
+func (b *builder) pseudo(name string) string {
+	switch name {
+	case config.PseudoAccountID:
+		return b.target.Account
+	case config.PseudoPartition:
+		return awsp.Partition(b.target.Region)
+	case config.PseudoURLSuffix:
+		if strings.HasPrefix(b.target.Region, "cn-") {
+			return "amazonaws.com.cn"
+		}
+		return "amazonaws.com"
+	}
+	return ""
 }
 
 func (b *builder) values(vs []config.Value) []any {
@@ -273,8 +308,8 @@ func (b *builder) resource(name string, r config.Resource) engine.Node {
 func (b *builder) properties(props map[string]any) any {
 	var conv func(v any) any
 	conv = func(v any) any {
-		if r, ok := config.AsRef(v); ok {
-			return engine.Ref(NodeID(b.project, r.Resource), r.Attribute)
+		if val, ok := config.AsValue(v); ok {
+			return b.value(val)
 		}
 		switch x := v.(type) {
 		case map[string]any:
