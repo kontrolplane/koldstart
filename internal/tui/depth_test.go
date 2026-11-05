@@ -106,7 +106,7 @@ func TestResourceTree(t *testing.T) {
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("tree:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
-	if v := screen(m); !strings.Contains(v, "└ route/GET /orders") || !strings.Contains(v, "12 queued · 3 in flight") {
+	if v := screen(m); !strings.Contains(v, "└─ route/GET /orders") || !strings.Contains(v, "12 queued · 3 in flight") {
 		t.Errorf("the tree or the queue's depth is not drawn:\n%s", v)
 	}
 }

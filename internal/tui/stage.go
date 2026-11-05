@@ -10,6 +10,8 @@ import (
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/kontrolplane/koldstart/internal/cli"
 	"github.com/kontrolplane/koldstart/internal/desired"
@@ -42,13 +44,18 @@ type stageState struct {
 	tab    stageTab
 	tables [4]dataTable
 	filter filterBox
+	// keys name the rows of each table, so the cursor stays on its row when the rows change.
+	keys [4][]string
 
 	functions []string
 	resources []stageResource
 	outputs   []string
+	// shownDeploys are the deploys the history tab lists, by their index in deploys(history).
+	shownDeploys []int
 
 	historyGen    int
 	historyLoaded bool
+	historyFailed bool
 	history       []state.ObjectVersion
 
 	metricsGen int
@@ -88,7 +95,8 @@ func (s stageState) queueURLs() map[string]string {
 }
 
 // stageResource is a resource of the state, or one a remove left in place, with how deep it
-// sits in the tree of the resources tab: 0 for what heads a group, 1 for what it brings.
+// sits in the tree of the resources tab: 0 for what heads a group, 1 for what it brings. What is
+// left of a group whose head is gone, as the log group a remove kept of a function, sits at 0.
 type stageResource struct {
 	id       string
 	res      *state.Resource
@@ -101,12 +109,12 @@ var (
 	functionColumns = []column{
 		{title: "function", width: 12, grow: 2},
 		{title: "runtime", width: 15, drop: 5},
-		{title: "memory", width: 7, right: true, drop: 4},
-		{title: "timeout", width: 7, right: true, drop: 6},
+		{title: "memory", width: 9, right: true, drop: 3},
+		{title: "timeout", width: 7, right: true, drop: 4},
 		{title: "calls 1h", width: 9, right: true},
 		{title: "errors", width: 7, right: true, drop: 1},
-		{title: "p99", width: 8, right: true, drop: 2},
-		{title: "code", width: 12, drop: 3},
+		{title: "p99", width: 7, right: true, drop: 2},
+		{title: "code", width: 12, drop: 6},
 		{title: "in lambda", width: 14, grow: 3, drop: 7},
 	}
 	resourceColumns = []column{
@@ -127,15 +135,46 @@ var (
 	}
 )
 
+// stageEmpty is what each tab says when it has no rows, and stageNoMatch when the filter hides
+// them all.
+var (
+	stageEmpty   = [4]string{"no functions", "no resources", "no outputs", "no deploys yet"}
+	stageNoMatch = [4]string{"no functions match the filter", "no resources match the filter", "no outputs match the filter", "no deploys match the filter"}
+)
+
 func newStageState() stageState {
 	return stageState{
 		tables: [4]dataTable{
-			newTable(functionColumns, "no functions"),
-			newTable(resourceColumns, "no resources"),
-			newTable(outputColumns, "no outputs"),
-			newTable(historyColumns, "no deploys yet"),
+			newTable(functionColumns, stageEmpty[functionsTab]),
+			newTable(resourceColumns, stageEmpty[resourcesTab]),
+			newTable(outputColumns, stageEmpty[outputsTab]),
+			newTable(historyColumns, stageEmpty[historyTab]),
 		},
 		filter: newFilterBox("filter by name…"),
+	}
+}
+
+// setRows fills a tab's table and keeps the cursor on the row it was on while that row is still
+// there, as a refresh, the filter or a new deploy can move it.
+func (s *stageState) setRows(tab stageTab, keys []string, rows []tableRow) {
+	t := &s.tables[tab]
+	var current string
+	if old := s.keys[tab]; t.cursor < len(old) {
+		current = old[t.cursor]
+	}
+	s.keys[tab] = keys
+	t.empty = stageEmpty[tab]
+	switch {
+	case tab == historyTab && s.historyFailed:
+		t.empty = "the history could not be listed · r lists it again"
+	case tab == historyTab && !s.historyLoaded:
+		t.empty = "reading the history…"
+	case s.filter.text != "":
+		t.empty = stageNoMatch[tab]
+	}
+	t.setRows(rows)
+	if i := slices.Index(keys, current); i >= 0 {
+		t.setCursor(i)
 	}
 }
 
@@ -245,9 +284,10 @@ func (m model) applyHistory(msg historyLoadedMsg) (model, tea.Cmd) {
 		return m, nil
 	}
 	if msg.err != nil {
-		return m.loadError("could not list the history of "+s.ref.String(), msg.err, s.historyLoaded)
+		s.historyFailed = !s.historyLoaded
+		return m.updateStageTables().loadError("could not list the history of "+s.ref.String(), msg.err, s.historyLoaded)
 	}
-	s.history, s.historyLoaded = msg.versions, true
+	s.history, s.historyLoaded, s.historyFailed = msg.versions, true, false
 	return m.updateStageTables(), nil
 }
 
@@ -268,39 +308,27 @@ func (m model) updateStageTables() model {
 		}
 		in := functionInputs(r)
 		s.functions = append(s.functions, name)
-		calls, errs, p99 := text("…", styles.ToneFaint), text("…", styles.ToneFaint), text("…", styles.ToneFaint)
-		if mt, ok := s.metrics[r.PhysicalID]; ok {
-			sum := mt.Summary()
-			calls = text(formatInt(int(sum.Invocations)), styles.ToneBody)
-			errs = text(formatInt(int(sum.Errors)), styles.ToneFaint)
-			if sum.Errors > 0 {
-				errs = text(formatInt(int(sum.Errors)), styles.ToneDanger)
-			}
-			p99 = text("-", styles.ToneFaint)
-			if sum.DurationP99 > 0 {
-				p99 = text(formatMillis(sum.DurationP99), styles.ToneBody)
-			}
-		} else if s.metricsErr != "" {
-			calls, errs, p99 = text("-", styles.ToneFaint), text("-", styles.ToneFaint), text("-", styles.ToneFaint)
-		}
+		calls, errs, p99 := s.metricCells(r.PhysicalID)
 		rows = append(rows, tableRow{
 			text(name, styles.ToneText),
-			text(in.Runtime, styles.ToneBody),
-			text(formatInt(int(in.Memory)), styles.ToneBody),
+			text(orDash(in.Runtime), styles.ToneBody),
+			text(formatInt(int(in.Memory))+" mb", styles.ToneBody),
 			text(formatInt(int(in.Timeout))+"s", styles.ToneBody),
 			calls, errs, p99,
 			text(shortSHA(in.Code.SHA256), styles.ToneFaint),
 			text(r.PhysicalID, styles.ToneMuted),
 		})
 	}
-	s.tables[functionsTab].setRows(rows)
+	s.setRows(functionsTab, s.functions, rows)
 
 	s.resources = groupResources(s.st, f)
 	rows = nil
+	keys := make([]string, 0, len(s.resources))
 	for _, r := range s.resources {
 		rows = append(rows, s.resourceRow(r))
+		keys = append(keys, r.id)
 	}
-	s.tables[resourcesTab].setRows(rows)
+	s.setRows(resourcesTab, keys, rows)
 
 	s.outputs, rows = nil, nil
 	for _, k := range slices.Sorted(maps.Keys(s.st.Outputs)) {
@@ -308,21 +336,69 @@ func (m model) updateStageTables() model {
 			continue
 		}
 		s.outputs = append(s.outputs, k)
-		rows = append(rows, tableRow{text(k, styles.ToneText), text(s.st.Outputs[k], styles.ToneBody)})
+		rows = append(rows, tableRow{text(k, styles.ToneText), outputValue(s.st.Outputs[k])})
 	}
-	s.tables[outputsTab].setRows(rows)
+	s.setRows(outputsTab, s.outputs, rows)
 
-	rows = nil
-	for _, d := range deploys(s.history) {
-		v := d[0]
+	s.shownDeploys, rows, keys = nil, nil, nil
+	for i, d := range deploys(s.history) {
+		v, at := d[0], formatTime(d[0].LastModified)
+		if !f.matches(at, v.ID) {
+			continue
+		}
 		note := text("", styles.ToneFaint)
 		if v.Latest {
 			note = text("current", styles.ToneAccent)
 		}
-		rows = append(rows, tableRow{text(formatTime(v.LastModified), styles.ToneBody), note, text(formatInt(len(d)), styles.ToneMuted), text(v.ID, styles.ToneFaint)})
+		s.shownDeploys = append(s.shownDeploys, i)
+		keys = append(keys, d[len(d)-1].ID)
+		rows = append(rows, tableRow{text(at, styles.ToneBody), note, text(formatInt(len(d)), styles.ToneMuted), text(v.ID, styles.ToneFaint)})
 	}
-	s.tables[historyTab].setRows(rows)
+	s.setRows(historyTab, keys, rows)
 	return m
+}
+
+// metricCells are a function's invocations, errors and p99 duration of the last hour: an
+// ellipsis while they are read, and a dash where they cannot be.
+func (s stageState) metricCells(name string) (calls, errs, p99 cell) {
+	mt, ok := s.metrics[name]
+	switch {
+	case !ok && s.metricsErr != "":
+		return text("-", styles.ToneFaint), text("-", styles.ToneFaint), text("-", styles.ToneFaint)
+	case !ok:
+		return text("…", styles.ToneFaint), text("…", styles.ToneFaint), text("…", styles.ToneFaint)
+	}
+	sum := mt.Summary()
+	calls = text(formatInt(int(sum.Invocations)), styles.ToneBody)
+	if sum.Invocations == 0 {
+		calls = text("0", styles.ToneFaint)
+	}
+	errs = text(formatInt(int(sum.Errors)), styles.ToneFaint)
+	if sum.Errors > 0 {
+		errs = text(formatInt(int(sum.Errors)), styles.ToneDanger)
+	}
+	switch {
+	case sum.DurationP99 <= 0:
+		p99 = text("-", styles.ToneFaint)
+	case sum.DurationP99 < 1:
+		p99 = text("<1ms", styles.ToneBody)
+	default:
+		p99 = text(formatMillis(sum.DurationP99), styles.ToneBody)
+	}
+	return calls, errs, p99
+}
+
+// outputValue draws an output on one line: the first line of a value that has more, with how
+// many more. c copies all of it.
+func outputValue(v string) cell {
+	lines := strings.Split(strings.TrimRight(strings.ReplaceAll(v, "\r\n", "\n"), "\n"), "\n")
+	switch {
+	case v == "":
+		return text("empty", styles.ToneFaint)
+	case len(lines) > 1:
+		return cell{styles.S(lines[0], styles.ToneBody), styles.S("  +"+plural(len(lines)-1, "line"), styles.ToneFaint)}
+	}
+	return text(lines[0], styles.ToneBody)
 }
 
 // groupKey orders the groups of the resources tab: functions, then resources, then the http api,
@@ -371,7 +447,7 @@ func groupResources(st *state.State, f filterBox) []stageResource {
 		}
 		hasHead := group[0].id == heads[k]
 		for i, r := range group {
-			if !hasHead || i > 0 {
+			if hasHead && i > 0 {
 				r.depth = 1
 			}
 			r.last = i == len(group)-1
@@ -393,22 +469,27 @@ func shortType(typ string) string {
 	return strings.TrimPrefix(typ, "koldstart::")
 }
 
-// resourceRow draws a resource in the tree, with the depth of a queue when it has one.
+// resourceRow draws a resource in the tree, with the depth of a queue when it has one. Beside a
+// note the depth leaves out what is in flight, to fit the column.
 func (s stageState) resourceRow(r stageResource) tableRow {
 	name := cell{styles.S(r.id, styles.ToneText)}
 	if r.depth > 0 {
-		branch := "├ "
+		branch := "├─ "
 		if r.last {
-			branch = "└ "
+			branch = "└─ "
 		}
 		name = cell{styles.S(branch, styles.ToneRule), styles.S(r.id, styles.ToneBody)}
 	}
 	note := resourceNote(r.res, r.retained)
-	if d, ok := s.queues[r.id]; ok && len(note) == 1 && note[0].Text == "" {
-		note = cell{styles.S(formatInt(d.Visible), styles.ToneBody), styles.S(" queued", styles.ToneFaint)}
-		if d.InFlight > 0 {
-			note = append(note, styles.S(" · "+formatInt(d.InFlight)+" in flight", styles.ToneFaint))
+	if d, ok := s.queues[r.id]; ok {
+		depth := cell{styles.S(formatInt(d.Visible), styles.ToneBody), styles.S(" queued", styles.ToneFaint)}
+		switch {
+		case note[0].Text != "":
+			depth = append(cell{note[0], styles.S(" · ", styles.ToneFaint)}, depth...)
+		case d.InFlight > 0:
+			depth = append(depth, styles.S(" · "+formatInt(d.InFlight)+" in flight", styles.ToneFaint))
 		}
+		note = depth
 	}
 	return tableRow{name, text(shortType(r.res.Type), styles.ToneMuted), text(orDash(r.res.PhysicalID), styles.ToneBody), note}
 }
@@ -492,6 +573,9 @@ func (m model) stageUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Filter):
 		return m, s.filter.open()
 	case key.Matches(msg, m.keys.Refresh):
+		if !s.loaded {
+			m.loading, m.loadingMsg = true, "reading the state of "+s.ref.String()+"…"
+		}
 		m, cmd := m.loadStage()
 		if s.tab == historyTab {
 			var history tea.Cmd
@@ -534,8 +618,8 @@ func (m model) openSelected() (model, tea.Cmd) {
 		}
 		return m.openResource(s.resources[i])
 	case historyTab:
-		if i < len(deploys(s.history)) {
-			return m.openVersion(i)
+		if i < len(s.shownDeploys) {
+			return m.openVersion(s.shownDeploys[i])
 		}
 	}
 	return m, nil
@@ -554,8 +638,8 @@ func (m model) stageCopyValue() string {
 		return s.resources[i].res.PhysicalID
 	case s.tab == outputsTab && i < len(s.outputs):
 		return s.st.Outputs[s.outputs[i]]
-	case s.tab == historyTab && i < len(deploys(s.history)):
-		return deploys(s.history)[i][0].ID
+	case s.tab == historyTab && i < len(s.shownDeploys):
+		return deploys(s.history)[s.shownDeploys[i]][0].ID
 	}
 	return ""
 }
@@ -624,16 +708,28 @@ func tabBar(names []string, counts []string, open int) string {
 	return " " + styles.Render(spans...)
 }
 
+// stageNoteWidth is the narrowest a note beside the tabs is shown at.
+const stageNoteWidth = 16
+
 func (m model) stageView() string {
 	s := m.state.stage
+	if s.st == nil {
+		return place(contentWidth, contentHeight, lipgloss.JoinVertical(lipgloss.Center,
+			styles.Muted(truncate("the state of "+styles.Clean(s.ref.String())+" could not be read", contentWidth-4)),
+			styles.Faint(m.keys.Refresh.Help().Key+" reads it again")))
+	}
 	counts := []string{formatInt(len(s.functions)), formatInt(len(s.resources)), formatInt(len(s.outputs)), ""}
 	if s.historyLoaded {
-		counts[historyTab] = formatInt(len(deploys(s.history)))
+		counts[historyTab] = formatInt(len(s.shownDeploys))
+	}
+	bar := tabBar(stageTabs, counts, int(s.tab))
+	if room := contentWidth - ansi.StringWidth(bar) - 4; s.tab == functionsTab && s.metricsErr != "" && room >= stageNoteWidth {
+		bar = spread(bar, styles.Faint(truncate(styles.Clean("no metrics: "+s.metricsErr), room)), contentWidth-1)
 	}
 	return strings.Join([]string{
 		m.stageFacts(),
 		"",
-		tabBar(stageTabs, counts, int(s.tab)),
+		bar,
 		"",
 		indent(s.tables[s.tab].View()),
 	}, "\n")

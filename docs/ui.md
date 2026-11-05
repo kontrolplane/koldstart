@@ -17,7 +17,7 @@ The header shows the aws profile, account, region and state bucket in use, the p
 - `stage`, in tabs:
   - functions, with their invocations, errors and p99 duration of the last hour
   - resources, as a tree: each function with its role, log group, url, permissions, routes and events, each resource with the notifications of a bucket and the depth of a queue, and the http api with its domain and authorizers
-  - outputs
+  - outputs; a value of more than one line shows its first, and `c` copies all of it
   - history: the deploys, each the versions of the state it wrote; one shows what it changed from the deploy before, and each change opens for its full diff
 - `function`, in tabs:
   - overview: its configuration; what lambda says of it now, its state, its last update, and code or configuration changed outside koldstart; sparklines of its invocations, errors, throttles, duration and concurrency in the last hour; its environment and what invokes it
