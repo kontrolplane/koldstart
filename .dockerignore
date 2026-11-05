@@ -2,5 +2,6 @@
 !go.mod
 !go.sum
 !cmd/
+!hack/
 !internal/
 !pkl/

@@ -109,6 +109,17 @@ func Find(ctx context.Context) (string, error) {
 	return download(ctx, http.DefaultClient, downloadURL, dir, name)
 }
 
+// Download fetches the pinned pkl built for glibc on goos and goarch into dir, checked against
+// its pinned checksum, and returns its path. The image build uses it for the platform it builds
+// for.
+func Download(ctx context.Context, dir, goos, goarch string) (string, error) {
+	name, err := asset(goos, goarch, false)
+	if err != nil {
+		return "", err
+	}
+	return download(ctx, http.DefaultClient, downloadURL, dir, name)
+}
+
 // download fetches the release binary name from base into dir, unless it is there already, and
 // checks it against its pinned checksum before it can be run.
 //
