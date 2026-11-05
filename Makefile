@@ -22,10 +22,13 @@ check: lint vuln test
 test:
 	go test -race -count=1 ./...
 
-# The code, the workflows, and whether go.mod is tidy.
+# The code, the e2e tests behind their build tag, the workflows, and whether the go.mod files
+# are tidy.
 lint:
 	go mod tidy -diff
+	cd examples/full-featured && go mod tidy -diff
 	$(golangci-lint) run
+	$(golangci-lint) run --build-tags e2e ./test/...
 	$(actionlint)
 
 # Known vulnerabilities in what koldstart calls.
