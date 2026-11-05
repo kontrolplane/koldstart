@@ -99,6 +99,85 @@ func TestScrollBy(t *testing.T) {
 	}
 }
 
+// TestScrollStopsAtTheEnd checks G on a page that scrolls goes to its last line and no further,
+// so k after it moves at once: a diff, a resource read from aws, an invocation, and a deploy that
+// changed no resource, which has no change to choose.
+func TestScrollStopsAtTheEnd(t *testing.T) {
+	tests := []struct {
+		name   string
+		open   func(t *testing.T) model
+		scroll func(m model) int
+		lines  func(m model) int
+	}{
+		{
+			name: "diff",
+			open: func(t *testing.T) model {
+				after := map[string]any{}
+				for i := range 100 {
+					after[strings.Repeat("k", i%7+1)+string(rune('a'+i%26))+string(rune('a'+i/26))] = i
+				}
+				m, _ := started(t, newFake(t)).openDiff("function/api", "update", map[string]any{}, after)
+				return m
+			},
+			scroll: func(m model) int { return m.state.diff.scroll },
+			lines:  func(m model) int { return len(m.diffLines()) },
+		},
+		{
+			name: "resource",
+			open: func(t *testing.T) model {
+				f := newFake(t)
+				f.live = map[string]any{}
+				for i := range 80 {
+					f.live[strings.Repeat("k", i+1)] = i
+				}
+				return pressKeys(t, openTable(t, f), "tab")
+			},
+			scroll: func(m model) int { return m.state.resource.scroll },
+			lines:  func(m model) int { return len(m.resourceLines()) },
+		},
+		{
+			name: "invocation",
+			open: func(t *testing.T) model {
+				at := time.Now().Add(-time.Minute)
+				id := "66666666-6666-6666-6666-666666666666"
+				lines := make([]cli.LogEvent, 0, 81)
+				lines = append(lines, cli.LogEvent{Time: at, Stream: "a", Message: "START RequestId: " + id + " Version: $LATEST"})
+				for i := range 80 {
+					lines = append(lines, cli.LogEvent{Time: at.Add(time.Duration(i+1) * time.Millisecond), Stream: "a", Message: "2026-11-05T10:00:00.001Z\t" + id + "\tINFO\tstep"})
+				}
+				m, _ := onLogs(t, lines)
+				return pressKeys(t, m, "tab", "enter")
+			},
+			scroll: func(m model) int { return m.state.invocation.scroll },
+			lines:  func(m model) int { return len(m.invocationLines()) },
+		},
+		{
+			name: "deploy without resource changes",
+			open: func(t *testing.T) model {
+				before, after := testState(ordersDev), testState(ordersDev)
+				for i := range 60 {
+					after.Outputs["output"+strings.Repeat("x", i)] = "v"
+				}
+				return openNewestDeploy(t, before, after)
+			},
+			scroll: func(m model) int { return m.state.version.scroll },
+			lines:  func(m model) int { return len(m.versionLines().lines) },
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := pressKeys(t, tt.open(t), "G", "j", "j")
+			end := tt.lines(m) - contentHeight
+			if end <= 0 || tt.scroll(m) != end {
+				t.Fatalf("G: scroll %d, want the end at %d", tt.scroll(m), end)
+			}
+			if m = pressKeys(t, m, "k"); tt.scroll(m) != end-1 {
+				t.Errorf("k at the end: scroll %d, want %d", tt.scroll(m), end-1)
+			}
+		})
+	}
+}
+
 // TestWrapped checks text wraps to the width, and is cut to an ellipsis on the last line a limit
 // allows, but not without one.
 func TestWrapped(t *testing.T) {

@@ -105,23 +105,6 @@ func TestVersionDiffSaysWhat(t *testing.T) {
 	}
 }
 
-// TestVersionWithoutChangesScrolls checks the keys scroll a deploy that changed no resource, as
-// there is no change to choose.
-func TestVersionWithoutChangesScrolls(t *testing.T) {
-	before, after := testState(ordersDev), testState(ordersDev)
-	for i := range 60 {
-		after.Outputs["output"+strings.Repeat("x", i)] = "v"
-	}
-	m := pressKeys(t, openNewestDeploy(t, before, after), "G")
-	lines := m.versionLines().lines
-	if want := len(lines) - contentHeight; m.state.version.scroll != want {
-		t.Errorf("G: scroll %d, want %d", m.state.version.scroll, want)
-	}
-	if m = pressKeys(t, m, "k"); m.state.version.scroll != len(lines)-contentHeight-1 {
-		t.Errorf("k after G: scroll %d", m.state.version.scroll)
-	}
-}
-
 // TestStateChangesWithoutAfter checks a version not read yet has no changes, rather than a
 // panic.
 func TestStateChangesWithoutAfter(t *testing.T) {

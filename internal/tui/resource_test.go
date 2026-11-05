@@ -116,24 +116,6 @@ func TestDriftedLines(t *testing.T) {
 	}
 }
 
-// TestResourceScroll checks the resource page stops scrolling at its last line, so ↑ moves at
-// once after G.
-func TestResourceScroll(t *testing.T) {
-	f := newFake(t)
-	f.live = map[string]any{}
-	for i := range 80 {
-		f.live[strings.Repeat("k", i+1)] = i
-	}
-	m := pressKeys(t, openTable(t, f), "tab", "G")
-	bottom := m.state.resource.scroll
-	if bottom == 0 || bottom > len(m.resourceLines()) {
-		t.Fatalf("G: scroll %d of %d lines", bottom, len(m.resourceLines()))
-	}
-	if m = pressKeys(t, m, "k"); m.state.resource.scroll != bottom-1 {
-		t.Errorf("k after G: scroll %d, want %d", m.state.resource.scroll, bottom-1)
-	}
-}
-
 // TestResourceCopy checks c copies the id in aws, or the arn of a resource that has no id.
 func TestResourceCopy(t *testing.T) {
 	tests := []struct {

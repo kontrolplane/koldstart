@@ -173,22 +173,3 @@ func TestWrapIndented(t *testing.T) {
 		})
 	}
 }
-
-// TestDiffScrollStops checks scrolling past the end of a diff stops there, so the first key back
-// up moves it.
-func TestDiffScrollStops(t *testing.T) {
-	before, after := map[string]any{}, map[string]any{}
-	for i := range 100 {
-		after[strings.Repeat("k", i%7+1)+string(rune('a'+i%26))+string(rune('a'+i/26))] = i
-	}
-	m := started(t, newFake(t))
-	m, _ = m.openDiff("function/api", "update", before, after)
-	m = pressKeys(t, m, "G", "j", "j", "j")
-	end := m.state.diff.scroll
-	if want := len(m.diffLines()) - contentHeight; end != want {
-		t.Fatalf("scrolled to %d, want the end at %d", end, want)
-	}
-	if m = pressKeys(t, m, "k"); m.state.diff.scroll != end-1 {
-		t.Errorf("k at the end: scroll %d, want %d", m.state.diff.scroll, end-1)
-	}
-}
