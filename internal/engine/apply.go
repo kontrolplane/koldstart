@@ -237,10 +237,21 @@ func (e *Engine) recordPending(ctx context.Context, store *Store, n Node, prior 
 	})
 }
 
-// recordApplied writes what exists after action on the node. A retained resource that was
-// replaced stays in the state, as retained, under its node and its old id. An imported resource
-// stays retained unless the configuration says delete.
+// recordTimeout bounds a write to the state of what a call to aws did.
+const recordTimeout = 15 * time.Second
+
+// recording returns the context to write what a call to aws did with: ctx without its cancel,
+// so ctrl+c during the call still leaves what it did in the state, bounded by recordTimeout.
+func recording(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), recordTimeout)
+}
+
+// recordApplied writes what exists after action on the node, also when ctx was cancelled during
+// the call. A retained resource that was replaced stays in the state, as retained, under its
+// node and its old id. An imported resource stays retained unless the configuration says delete.
 func (e *Engine) recordApplied(ctx context.Context, store *Store, n Node, prior *state.Resource, action Action, res Result, in prepared) error {
+	ctx, cancel := recording(ctx)
+	defer cancel()
 	policy := n.DeletionPolicy
 	imported := prior != nil && prior.Imported && action != Replace
 	if policy == "" && imported {
@@ -421,6 +432,8 @@ func dependedOn(snap *state.State, todo map[string]Change, id string) bool {
 	return false
 }
 
+// deleteNode deletes a node gone from the configuration, or keeps it as retained. A delete that
+// went through is recorded also when ctx was cancelled during it.
 func (e *Engine) deleteNode(ctx context.Context, c Change, store *Store) (err error) {
 	start := time.Now()
 	snap := store.Snapshot()
@@ -458,7 +471,12 @@ func (e *Engine) deleteNode(ctx context.Context, c Change, store *Store) (err er
 	if err := p.Delete(ctx, req); err != nil {
 		return fmt.Errorf("%s: %w", c.ID, err)
 	}
-	return store.Update(ctx, func(st *state.State) { delete(st.Resources, c.ID) })
+	recordCtx, cancel := recording(ctx)
+	defer cancel()
+	if err := store.Update(recordCtx, func(st *state.State) { delete(st.Resources, c.ID) }); err != nil {
+		return fmt.Errorf("%s: recording the delete: %w", c.ID, err)
+	}
+	return nil
 }
 
 // changedMarker stands, in the inputs a provider is given as the prior ones, for a secret or a

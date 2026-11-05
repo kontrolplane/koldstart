@@ -512,3 +512,80 @@ func TestRefresh(t *testing.T) {
 		t.Errorf("a deploy after = %v, %v", actions(plan), err)
 	}
 }
+
+// cancelProvider cancels the deploy's context once each call has gone through, as ctrl+c
+// pressed while aws did the work would.
+type cancelProvider struct {
+	*Fake
+	cancel context.CancelFunc
+}
+
+// Create implements Provider.
+func (p cancelProvider) Create(ctx context.Context, req Request) (Result, error) {
+	defer p.cancel()
+	return p.Fake.Create(ctx, req)
+}
+
+// Update implements Provider.
+func (p cancelProvider) Update(ctx context.Context, req Request) (Result, error) {
+	defer p.cancel()
+	return p.Fake.Update(ctx, req)
+}
+
+// Delete implements Provider.
+func (p cancelProvider) Delete(ctx context.Context, req Request) error {
+	defer p.cancel()
+	return p.Fake.Delete(ctx, req)
+}
+
+// TestCancelRecordsWhatWasDone checks a create, update or delete that went through before ctrl+c
+// is in the state afterwards, with nothing left pending, so the next deploy plans nothing for it.
+func TestCancelRecordsWhatWasDone(t *testing.T) {
+	logGroup := func(retention int) []Node {
+		return []Node{{ID: "loggroup/api", Type: fakeType, Name: "loggroup/api", Inputs: map[string]any{"retention": retention}}}
+	}
+	tests := []struct {
+		name   string
+		before []Node
+		after  []Node
+	}{
+		{name: "create", after: logGroup(30)},
+		{name: "update", before: logGroup(30), after: logGroup(60)},
+		{name: "delete", before: logGroup(30)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHarness(t)
+			if tt.before != nil {
+				if _, err := h.deploy(tt.before); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			e := &Engine{Providers: map[string]Provider{fakeType: cancelProvider{Fake: h.fake, cancel: cancel}}, Concurrency: 1}
+			st, etag := h.read()
+			plan, err := e.Plan(ctx, tt.after, st)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = e.Apply(ctx, plan, tt.after, NewStore(h.backend, st, etag, "test"))
+			if ctx.Err() == nil {
+				t.Fatal("the provider did not cancel the context")
+			}
+
+			got, _ := h.read()
+			r := got.Resources["loggroup/api"]
+			switch {
+			case tt.after == nil && r != nil:
+				t.Errorf("the deleted log group is still in the state: %+v", r)
+			case tt.after != nil && (r == nil || r.Pending != nil):
+				t.Errorf("the log group in the state = %+v, want it recorded with nothing pending", r)
+			}
+			plan, err = h.deploy(tt.after)
+			if err != nil || plan.HasChanges() {
+				t.Errorf("the deploy after = %v, %v, want no changes", actions(plan), err)
+			}
+		})
+	}
+}
