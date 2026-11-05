@@ -544,31 +544,64 @@ func (m model) frameMeta() (string, string) {
 			meta = styles.Render(styles.S("filter ", styles.ToneFaint), styles.S(f.text, styles.ToneText))
 		}
 	}
-	var foot []string
+	var foot []footPart
 	if f := m.state.function; m.page == functionPage && f.tab == logsTab {
 		switch {
 		case !f.logs.follow:
-			foot = append(foot, styles.Faint("follow off"))
+			foot = append(foot, footPart{full: styles.Faint("follow off")})
 		case f.logs.tailing:
-			foot = append(foot, styles.Render(styles.S("● ", styles.ToneSuccess), styles.S("live tail", styles.ToneMuted)))
+			foot = append(foot, footPart{full: styles.Render(styles.S("● ", styles.ToneSuccess), styles.S("live tail", styles.ToneMuted))})
 		default:
-			foot = append(foot, styles.Render(styles.S("● ", styles.ToneAccent), styles.S("following, read every "+refreshEvery.String(), styles.ToneMuted)))
+			foot = append(foot, footPart{
+				full:  styles.Render(styles.S("● ", styles.ToneAccent), styles.S("following, read every "+refreshEvery.String(), styles.ToneMuted)),
+				short: styles.Render(styles.S("● ", styles.ToneAccent), styles.S("following", styles.ToneMuted)),
+			})
 		}
 	}
 	if p := m.position(); p != "" {
-		foot = append(foot, styles.Faint(p))
+		foot = append(foot, footPart{full: styles.Faint(p), short: styles.Faint(strings.TrimPrefix(p, "lines "))})
 	}
 	switch at := m.refreshedAt.Local().Format(time.TimeOnly); {
 	case m.refreshedAt.IsZero() || !m.refreshes():
 	case m.stale:
-		foot = append(foot, styles.Render(styles.S("as of "+at+", could not read again", styles.ToneWarning)))
+		foot = append(foot, footPart{
+			full:  styles.Render(styles.S("as of "+at+", could not read again", styles.ToneWarning)),
+			short: styles.Render(styles.S("as of "+at, styles.ToneWarning)),
+		})
 	default:
-		foot = append(foot, styles.Faint("read at "+at))
+		foot = append(foot, footPart{full: styles.Faint("read at " + at)})
 	}
 	if m.paused {
-		foot = append(foot, styles.Render(styles.S("⏸ paused", styles.ToneWarning)))
+		foot = append(foot, footPart{full: styles.Render(styles.S("⏸ paused", styles.ToneWarning))})
 	}
-	return meta, strings.Join(foot, styles.Faint(" · "))
+	return meta, fitFoot(foot, frameWidth-6)
+}
+
+// footPart is a part of the frame's foot, with a shorter form for when the foot does not fit.
+type footPart struct {
+	full, short string
+}
+
+// fitFoot joins the parts of the foot in width: while they do not fit, they take their shorter
+// form from the left, so the follow state and the position give way before a stale read does, and
+// the pause is never cut short.
+func fitFoot(parts []footPart, width int) string {
+	join := func() string {
+		texts := make([]string, len(parts))
+		for i, p := range parts {
+			texts[i] = p.full
+		}
+		return strings.Join(texts, styles.Faint(" · "))
+	}
+	for i := range parts {
+		if ansi.StringWidth(join()) <= width {
+			break
+		}
+		if parts[i].short != "" {
+			parts[i].full = parts[i].short
+		}
+	}
+	return join()
 }
 
 func (m model) footer() string {

@@ -472,3 +472,33 @@ func TestNavBreadcrumbNarrow(t *testing.T) {
 		})
 	}
 }
+
+// TestNavFootRoom checks the frame's foot holds the follow state, the position, a stale read and
+// the pause together: in full where there is room, and shortened, the stale read and the pause
+// kept, on the narrowest terminal.
+func TestNavFootRoom(t *testing.T) {
+	tests := []struct {
+		name  string
+		width int
+		want  []string
+	}{
+		{name: "wide", width: 160, want: []string{"follow off", "lines ", " of 212", "as of ", ", could not read again", "⏸ paused"}},
+		{name: "narrowest", width: 78, want: []string{"follow off", " of 212", "as of ", "⏸ paused"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := pressKeys(t, started(t, navFake(t)), "enter", "tab", "pgup")
+			m, _ = update(t, m, tea.WindowSizeMsg{Width: tt.width, Height: 24})
+			m.stale, m.paused, m.refreshedAt = true, true, time.Now()
+			foot := navFoot(m)
+			for _, w := range tt.want {
+				if !strings.Contains(foot, w) {
+					t.Errorf("the foot %q has no %q", foot, w)
+				}
+			}
+			if strings.Contains(foot, "…") {
+				t.Errorf("the foot %q was cut", foot)
+			}
+		})
+	}
+}
