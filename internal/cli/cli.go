@@ -362,9 +362,16 @@ func arguments(n int) string {
 	}
 }
 
+// durationFlag is the type pflag names a flag of a time.Duration by.
+const durationFlag = "duration"
+
 // flagError refuses a flag cmd does not have, or one without its value, suggesting the flags an
-// unknown one may be a typo of.
+// unknown one may be a typo of. A duration it cannot read says what one looks like, as go's
+// parser knows no days.
 func flagError(cmd *cobra.Command, err error) error {
+	if invalid, ok := errors.AsType[*pflag.InvalidValueError](err); ok && invalid.GetFlag().Value.Type() == durationFlag {
+		return usage(cmd, fmt.Errorf("--%s %q: want a duration such as 90s, 30m or 72h", invalid.GetFlag().Name, invalid.GetValue()))
+	}
 	unknown, ok := errors.AsType[*pflag.NotExistError](err)
 	if !ok || unknown.GetSpecifiedName() == "" {
 		return usage(cmd, err)

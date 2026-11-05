@@ -180,6 +180,8 @@ func TestUsageErrors(t *testing.T) {
 		{name: "unknown output", args: []string{"version", "-o", "yaml"}, want: `-o "yaml": want text or json (see kdst version --help)`, code: exitUsage},
 		{name: "unknown output of outputs", args: []string{"outputs", "-o", "yaml"}, want: `-o "yaml": want text or json (see kdst outputs --help)`, code: exitUsage},
 		{name: "no time back", args: []string{"logs", "-f", "api", "--since", "0s"}, want: "--since 0s: want a duration back from now, such as 30m or 2h (see kdst logs --help)", code: exitUsage},
+		{name: "duration in days", args: []string{"logs", "-f", "api", "--since", "3d"}, want: `--since "3d": want a duration such as 90s, 30m or 72h (see kdst logs --help)`, code: exitUsage},
+		{name: "unknown template", args: []string{"init", "-t", "rust"}, want: `-t "rust": want node, go or python (see kdst init --help)`, code: exitUsage},
 		{name: "no configuration", args: []string{"plan"}, want: "no koldstart.pkl here: run kdst init to start a project, or pass --config", code: exitFailed},
 	}
 	for _, tt := range tests {

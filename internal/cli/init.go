@@ -36,6 +36,9 @@ profile, or %s.`, defaultRegion),
   %[1]s init --app orders --template python`, name),
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if !slices.Contains(scaffold.Templates, template) {
+				return usage(cmd, fmt.Errorf("-t %q: want %s", template, orList(scaffold.Templates)))
+			}
 			dir := "."
 			if len(args) == 1 {
 				dir = args[0]
@@ -100,15 +103,39 @@ func printInit(w io.Writer, name, dir, app, region, template string, res scaffol
 		_, _ = fmt.Fprintf(w, "  added %s to .gitignore\n", andList(res.Gitignore))
 	}
 	_, _ = fmt.Fprintln(w, "\nnext:")
+	for _, step := range nextSteps(name, dir, template, res) {
+		_, _ = fmt.Fprintln(w, "  "+step)
+	}
+}
+
+// nextSteps are the commands to run after init, each with what it does in a column of its own.
+func nextSteps(name, dir, template string, res scaffold.Result) []string {
+	type step struct{ run, does string }
+	var steps []step
 	if dir != "." {
-		_, _ = fmt.Fprintf(w, "  cd %s\n", dir)
+		steps = append(steps, step{"cd " + dir, ""})
 	}
 	if template == scaffold.Go {
 		if slices.Contains(res.Written, "go.mod") {
-			_, _ = fmt.Fprintln(w, "  go mod tidy")
+			steps = append(steps, step{"go mod tidy", "fetch aws-lambda-go, which the handler imports"})
 		} else {
-			_, _ = fmt.Fprintln(w, "  go get github.com/aws/aws-lambda-go")
+			steps = append(steps, step{"go get github.com/aws/aws-lambda-go", "add it to go.mod, as the handler imports it"})
 		}
 	}
-	_, _ = fmt.Fprintf(w, "  %[1]s plan      see what a deploy creates\n  %[1]s deploy    deploy it, and print the url of GET /hello\n", name)
+	steps = append(steps, step{name + " plan", "see what a deploy creates"}, step{name + " deploy", "deploy it, and print the url of GET /hello"})
+	width := 0
+	for _, s := range steps {
+		if s.does != "" {
+			width = max(width, len(s.run))
+		}
+	}
+	lines := make([]string, 0, len(steps))
+	for _, s := range steps {
+		if s.does == "" {
+			lines = append(lines, s.run)
+			continue
+		}
+		lines = append(lines, padRight(s.run, width)+"    "+s.does)
+	}
+	return lines
 }
