@@ -81,14 +81,15 @@ func openSession(ctx context.Context, opts *Options, region string) (*session, e
 }
 
 // newSession makes the clients for an account, in the config's region. With an endpoint of an
-// emulator, which answers on one host, buckets go in the path rather than the host name.
+// emulator, which answers on one host, buckets go in the path rather than the host name. The
+// endpoint is set by AWS_ENDPOINT_URL, or by endpoint_url in the profile.
 func newSession(cfg aws.Config, account string) *session {
 	return &session{
 		cfg:     cfg,
 		Account: account,
 		Region:  cfg.Region,
 		S3: s3.NewFromConfig(cfg, func(o *s3.Options) {
-			o.UsePathStyle = os.Getenv("AWS_ENDPOINT_URL") != "" || os.Getenv("AWS_ENDPOINT_URL_S3") != ""
+			o.UsePathStyle = cfg.BaseEndpoint != nil || os.Getenv("AWS_ENDPOINT_URL_S3") != ""
 		}),
 		Lambda:       lambda.NewFromConfig(cfg),
 		Logs:         cloudwatchlogs.NewFromConfig(cfg),

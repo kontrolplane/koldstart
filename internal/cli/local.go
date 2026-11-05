@@ -143,10 +143,11 @@ func (s *stage) awsVariables(ctx context.Context) (map[string]string, error) {
 	if creds.SessionToken != "" {
 		vars["AWS_SESSION_TOKEN"] = creds.SessionToken
 	}
-	for _, k := range []string{"AWS_ENDPOINT_URL", "AWS_ENDPOINT_URL_S3"} {
-		if v := os.Getenv(k); v != "" {
-			vars[k] = v
-		}
+	if s.sess.cfg.BaseEndpoint != nil {
+		vars["AWS_ENDPOINT_URL"] = *s.sess.cfg.BaseEndpoint
+	}
+	if v := os.Getenv("AWS_ENDPOINT_URL_S3"); v != "" {
+		vars["AWS_ENDPOINT_URL_S3"] = v
 	}
 	return vars, nil
 }
