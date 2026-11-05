@@ -3,9 +3,6 @@ package migrate
 import (
 	"context"
 	"fmt"
-	"io/fs"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/kontrolplane/koldstart/internal/config"
@@ -16,25 +13,11 @@ import (
 // so it needs no released package. It returns pkl's report when the file does not evaluate; what
 // a deploy would refuse in a file that does comes back as todos.
 func Check(ctx context.Context, ev config.Evaluator, source, version, stage string) ([]Todo, error) {
-	dir, err := os.MkdirTemp("", "koldstart-migrate-")
+	path, cleanup, err := schema.Local([]byte(source), version)
 	if err != nil {
-		return nil, fmt.Errorf("making a directory to check in: %w", err)
-	}
-	defer func() { _ = os.RemoveAll(dir) }()
-	for _, module := range []string{schema.Project, schema.Kdst} {
-		data, err := fs.ReadFile(schema.Files, module)
-		if err != nil {
-			return nil, err
-		}
-		if err := os.WriteFile(filepath.Join(dir, module), data, 0o600); err != nil {
-			return nil, err
-		}
-		source = strings.ReplaceAll(source, quote(schema.PackageURI(version, module)), quote(module))
-	}
-	path := filepath.Join(dir, "koldstart.pkl")
-	if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
 		return nil, err
 	}
+	defer cleanup()
 	if stage == "" || strings.Contains(stage, "${") {
 		stage = "dev"
 	}
