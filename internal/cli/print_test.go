@@ -80,3 +80,45 @@ func TestPrintRefreshedPlan(t *testing.T) {
 		}
 	}
 }
+
+// TestPrintPlanColumns checks the ids line up in one column, a resource shows its type after
+// it, and nothing is coloured when the output is not a terminal.
+func TestPrintPlanColumns(t *testing.T) {
+	plan := &engine.Plan{Changes: []engine.Change{
+		{ID: "function/api", Type: "koldstart::Function", Action: engine.Create},
+		{ID: "resource/orders", Type: "AWS::DynamoDB::Table", Action: engine.Replace, Resume: true},
+		{ID: "url/api", Type: "koldstart::Url", Action: engine.Delete},
+	}}
+	var out bytes.Buffer
+	printPlanTo(&out, "orders", "dev", "eu-west-1", "123456789012", plan)
+	want := "plan for orders/dev in eu-west-1, account 123456789012\n\n" +
+		"  +   function/api\n" +
+		"  -/+ resource/orders  AWS::DynamoDB::Table  (finishing what a deploy started)\n" +
+		"  -   url/api\n" +
+		"\n1 to create, 1 to replace, 1 to delete\n"
+	if got := out.String(); got != want {
+		t.Errorf("the plan is\n%s\nwant\n%s", got, want)
+	}
+}
+
+// TestPrintPlanNoChanges checks a plan without changes says what it compared, with refresh and
+// without.
+func TestPrintPlanNoChanges(t *testing.T) {
+	tests := []struct {
+		name string
+		plan *engine.Plan
+		want string
+	}{
+		{name: "from the state", plan: &engine.Plan{Changes: []engine.Change{{ID: "role/api", Action: engine.NoOp}}},
+			want: "  no changes: what the state says is deployed matches the configuration\n"},
+		{name: "refreshed", plan: &engine.Plan{Refreshed: true},
+			want: "  no changes: what is in aws matches the configuration\n"},
+	}
+	for _, tt := range tests {
+		var out bytes.Buffer
+		printPlanTo(&out, "orders", "dev", "eu-west-1", "123456789012", tt.plan)
+		if got := out.String(); !strings.HasSuffix(got, "\n\n"+tt.want) {
+			t.Errorf("%s: the plan is\n%s\nwant it to end with\n%s", tt.name, got, tt.want)
+		}
+	}
+}

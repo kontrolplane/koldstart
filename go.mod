@@ -31,6 +31,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.51.6
 	github.com/aws/smithy-go v1.28.8
 	github.com/charmbracelet/x/ansi v0.11.9
+	github.com/charmbracelet/x/term v0.2.2
 	github.com/evanw/esbuild v0.28.2
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.9
@@ -53,7 +54,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.44.1 // indirect
 	github.com/charmbracelet/colorprofile v0.4.3 // indirect
 	github.com/charmbracelet/ultraviolet v0.0.0-20261008173134-6b8d4baf91b4 // indirect
-	github.com/charmbracelet/x/term v0.2.2 // indirect
 	github.com/charmbracelet/x/termios v0.1.1 // indirect
 	github.com/charmbracelet/x/windows v0.2.2 // indirect
 	github.com/clipperhouse/displaywidth v0.11.0 // indirect

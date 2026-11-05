@@ -137,7 +137,7 @@ After changing only a function's code, deploy just that function. It replaces th
 kdst deploy function -f api
 ```
 
-`remove` deletes everything the stage deployed, after asking you to type the stage name. Tables, buckets and other resources that hold data are left in place, and the next deploy of the stage takes them over again:
+`remove` deletes everything the stage deployed, after listing it and asking you to type the stage name. Tables, buckets and other resources that hold data are left in place, and the next deploy of the stage takes them over again:
 
 ```bash
 kdst remove

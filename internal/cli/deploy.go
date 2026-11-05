@@ -3,9 +3,11 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -64,7 +66,7 @@ is written to the state as it is made: a deploy that fails or is stopped is fini
 			if err != nil {
 				return err
 			}
-			unlock, err := s.lock(ctx, "deploy")
+			unlock, err := s.lockFor(cmd, "deploy")
 			if err != nil {
 				return err
 			}
@@ -75,7 +77,7 @@ is written to the state as it is made: a deploy that fails or is stopped is fini
 			}
 			printPlan(cmd.OutOrStdout(), s, p)
 			if p.HasChanges() {
-				if err := confirm(cmd, yes, "apply this plan?"); err != nil {
+				if err := confirm(cmd, yes, "\napply this plan?"); err != nil {
 					return err
 				}
 			}
@@ -109,7 +111,7 @@ the function's configuration changed too: run deploy for that.`,
 			if err := s.function(function); err != nil {
 				return err
 			}
-			unlock, err := s.lock(ctx, "deploy function "+function)
+			unlock, err := s.lockFor(cmd, "deploy function "+function)
 			if err != nil {
 				return err
 			}
@@ -118,12 +120,19 @@ the function's configuration changed too: run deploy for that.`,
 			if err != nil {
 				return err
 			}
+			out := cmd.OutOrStdout()
 			if !plan.HasChanges() {
-				_, err := fmt.Fprintf(cmd.OutOrStdout(), "%s is up to date\n", function)
+				_, err := fmt.Fprintf(out, "%s is up to date: its code is the code deployed to %s/%s\n", function, s.App, s.Stage)
 				return err
 			}
-			e.OnEvent = progress(cmd.ErrOrStderr())
-			return e.Apply(ctx, plan, nodes, engine.NewStore(s.backend, s.state, s.etag, whoIsDeploying()))
+			_, _ = fmt.Fprintf(out, "deploying the code of %s to %s/%s in %s, account %s\n", function, s.App, s.Stage, s.Region, s.sess.Account)
+			p := s.beginProgress(cmd, plan)
+			e.OnEvent = p.event
+			err = e.Apply(ctx, plan, nodes, engine.NewStore(s.backend, s.state, s.etag, whoIsDeploying()))
+			if err != nil {
+				err = applyFailed(ctx, err, "deploy function -f "+function)
+			}
+			return s.endProgress(cmd, p, plan, "deployed", err)
 		},
 	}
 	cmd.Flags().StringVarP(&function, "function", "f", "", "the function to deploy")
@@ -188,4 +197,56 @@ func deployedSHA(st *state.State, function string) string {
 	}
 	_ = json.Unmarshal(r.Inputs, &in)
 	return in.Code.SHA256
+}
+
+// lockFor takes the stage's lock for operation, as lock does. When someone else holds it, the
+// error says who, since when, and the command that releases a lock left behind.
+func (s *stage) lockFor(cmd *cobra.Command, operation string) (func(), error) {
+	unlock, err := s.lock(cmd.Context(), operation)
+	if locked, ok := errors.AsType[*state.LockedError](err); ok {
+		return nil, lockedError(s.App, s.Stage, locked.Info, unlockHint(cmd, s.Stage), time.Now())
+	}
+	return unlock, err
+}
+
+// lockedError says who holds a stage's lock, doing what and since when, and how to release it
+// once they are gone.
+func lockedError(app, stage string, held state.LockInfo, unlock string, now time.Time) error {
+	return fmt.Errorf("%s\nwait for it to finish, or, when it is gone, release the lock with %s", lockHolder(app, stage, held, now), unlock)
+}
+
+// lockHolder says who holds a stage's lock, doing what and since when: the time alone when it
+// was taken today.
+func lockHolder(app, stage string, held state.LockInfo, now time.Time) string {
+	since, today := held.Since.In(now.Location()), now
+	at := since.Format(time.DateTime)
+	if since.YearDay() == today.YearDay() && since.Year() == today.Year() {
+		at = since.Format(time.TimeOnly)
+	}
+	who := held.Who
+	if held.Where != "" {
+		who += " on " + held.Where
+	}
+	return fmt.Sprintf("%s/%s is locked: %s has been running %s since %s, %s ago", app, stage, who, held.Operation, at, ago(now.Sub(held.Since)))
+}
+
+// ago writes how long ago something happened, to the second under an hour and to the minute
+// after.
+func ago(d time.Duration) string {
+	if d < time.Hour {
+		return max(d, 0).Round(time.Second).String()
+	}
+	return strings.TrimSuffix(d.Round(time.Minute).String(), "0s")
+}
+
+// unlockHint is the command that releases the stage's lock, with the flags cmd was given that
+// pick where its state is: the configuration, profile and region.
+func unlockHint(cmd *cobra.Command, stage string) string {
+	parts := []string{cmd.Root().Name(), "unlock", "--stage", stage}
+	for _, name := range []string{"config", "profile", "region"} {
+		if f := cmd.Flag(name); f != nil && f.Changed {
+			parts = append(parts, "--"+name, f.Value.String())
+		}
+	}
+	return strings.Join(parts, " ")
 }

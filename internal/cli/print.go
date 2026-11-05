@@ -4,9 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strings"
-	"sync"
-	"time"
 
 	"github.com/kontrolplane/koldstart/internal/engine"
 )
@@ -40,50 +39,91 @@ func Verb(a engine.Action) string { return verbs[a] }
 // PastTense says what an action did, as created or left in place.
 func PastTense(a engine.Action) string { return pastTenses[a] }
 
+// actionOrder is the order the summaries of a plan and of applying it count actions in.
+var actionOrder = []engine.Action{engine.Create, engine.Update, engine.Replace, engine.Delete, engine.Keep, engine.Adopt}
+
+// tones colour the symbol of each action in a plan.
+var tones = map[engine.Action]string{
+	engine.Create:  sgrGreen,
+	engine.Update:  sgrYellow,
+	engine.Replace: sgrRed,
+	engine.Delete:  sgrRed,
+	engine.Keep:    sgrFaint,
+	engine.Adopt:   sgrCyan,
+}
+
+// maxIDWidth is the widest the column of ids is padded to; a longer id pushes the rest of its
+// own line along.
+const maxIDWidth = 40
+
 // printPlan writes what a plan does, one node a line, with the inputs that change under each
 // update.
 func printPlan(w io.Writer, s *stage, plan *engine.Plan) {
 	printPlanTo(w, s.App, s.Stage, s.Region, s.sess.Account, plan)
 }
 
+// printPlanTo writes a plan as printPlan does: the symbol of each action, the node, the type of a
+// resource, and a summary that counts them.
 func printPlanTo(w io.Writer, app, stage, region, account string, plan *engine.Plan) {
-	_, _ = fmt.Fprintf(w, "plan for %s/%s in %s, account %s:\n\n", app, stage, region, account)
+	colour := paletteFor(w)
+	_, _ = fmt.Fprintf(w, "plan for %s/%s in %s, account %s\n\n", app, stage, region, account)
 	if !plan.HasChanges() {
-		_, _ = fmt.Fprintln(w, "  no changes")
+		if plan.Refreshed {
+			_, _ = fmt.Fprintln(w, "  no changes: what is in aws matches the configuration")
+			return
+		}
+		_, _ = fmt.Fprintln(w, "  no changes: what the state says is deployed matches the configuration")
 		return
+	}
+	width := 0
+	for _, c := range plan.Changes {
+		if c.Action != engine.NoOp {
+			width = max(width, min(len(c.ID), maxIDWidth))
+		}
 	}
 	for _, c := range plan.Changes {
 		if c.Action == engine.NoOp {
 			continue
 		}
-		line := fmt.Sprintf("  %-3s %s", symbols[c.Action], c.ID)
+		line := "  " + colour.paint(tones[c.Action], padRight(symbols[c.Action], 3)) + " " + padRight(c.ID, width)
+		if strings.HasPrefix(c.Type, "AWS::") {
+			line += "  " + colour.paint(sgrFaint, c.Type)
+		}
 		switch {
 		case c.Resume:
-			line += "  (finishing what a deploy started)"
+			line += "  " + colour.paint(sgrFaint, "(finishing what a deploy started)")
 		case c.Gone:
-			line += "  (deleted outside koldstart)"
+			line += "  " + colour.paint(sgrFaint, "(deleted outside koldstart)")
 		}
-		_, _ = fmt.Fprintln(w, line)
+		_, _ = fmt.Fprintln(w, strings.TrimRight(line, " "))
 		if len(c.Drift) > 0 {
 			_, _ = fmt.Fprintf(w, "        changed outside koldstart: %s\n", strings.Join(c.Drift, ", "))
 		}
 		if c.Action == engine.Update || c.Action == engine.Replace || c.Action == engine.Adopt {
-			for _, line := range FieldChanges(c) {
-				_, _ = fmt.Fprintf(w, "        %s\n", line)
+			for _, change := range FieldChanges(c) {
+				_, _ = fmt.Fprintf(w, "        %s\n", change)
 			}
 		}
 	}
+	_, _ = fmt.Fprintf(w, "\n%s\n", planCounts(plan))
+	if plan.OnlyCode() {
+		_, _ = fmt.Fprintln(w, "only code changes: the functions' code is replaced in place")
+	}
+}
+
+// planCounts counts the changes of a plan, as 2 to create, 1 to update.
+func planCounts(plan *engine.Plan) string {
 	counts := plan.Counts()
 	var parts []string
-	for _, a := range []engine.Action{engine.Create, engine.Update, engine.Replace, engine.Delete, engine.Keep, engine.Adopt} {
+	for _, a := range actionOrder {
 		if counts[a] > 0 {
 			parts = append(parts, fmt.Sprintf("%d to %s", counts[a], verbs[a]))
 		}
 	}
-	_, _ = fmt.Fprintf(w, "\n%s\n", strings.Join(parts, ", "))
-	if plan.OnlyCode() {
-		_, _ = fmt.Fprintln(w, "only code changes: the functions' code is replaced in place")
+	if len(parts) == 0 {
+		return "no changes"
 	}
+	return strings.Join(parts, ", ")
 }
 
 // FieldChanges says how each changed input changes. The properties of a resource are listed one
@@ -181,19 +221,38 @@ var pastTenses = map[engine.Action]string{
 	engine.Adopt:   "taken over",
 }
 
-// progress returns an event handler that writes a line as each node finishes.
-func progress(w io.Writer) func(engine.Event) {
-	var mu sync.Mutex
-	return func(ev engine.Event) {
-		if !ev.Done {
-			return
-		}
-		mu.Lock()
-		defer mu.Unlock()
-		if ev.Err != nil {
-			_, _ = fmt.Fprintf(w, "  ✗ %s: %s failed after %s\n", ev.ID, verbs[ev.Action], ev.Duration.Round(100*time.Millisecond))
-			return
-		}
-		_, _ = fmt.Fprintf(w, "  ✓ %s: %s in %s\n", ev.ID, pastTenses[ev.Action], ev.Duration.Round(100*time.Millisecond))
+// The sgr codes of the colours the cli writes in: the terminal's own sixteen, so they suit its
+// theme.
+const (
+	sgrFaint  = "2"
+	sgrRed    = "31"
+	sgrGreen  = "32"
+	sgrYellow = "33"
+	sgrCyan   = "36"
+)
+
+// palette colours text when on, and leaves it as it is otherwise.
+type palette struct {
+	on bool
+}
+
+// paletteFor colours what goes to w when w is a terminal, unless NO_COLOR is set or TERM is
+// dumb.
+func paletteFor(w io.Writer) palette {
+	f, ok := w.(*os.File)
+	return palette{on: ok && colourWanted(isTerminal(f), os.Getenv)}
+}
+
+// colourWanted reports whether output to a terminal, or not, is coloured with the environment
+// getenv reads.
+func colourWanted(terminal bool, getenv func(string) string) bool {
+	return terminal && getenv("NO_COLOR") == "" && getenv("TERM") != "dumb"
+}
+
+// paint colours s with the sgr code.
+func (p palette) paint(code, s string) string {
+	if !p.on || s == "" {
+		return s
 	}
+	return "\x1b[" + code + "m" + s + "\x1b[0m"
 }

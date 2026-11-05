@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"os"
 	"os/user"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 
 	"github.com/kontrolplane/koldstart/internal/build"
@@ -182,19 +184,59 @@ func (s *stage) plan(ctx context.Context, upload bool, opts planOptions) (*engin
 	return e, plan, nodes, nil
 }
 
-// apply applies the plan with progress on stderr, then prints the outputs. A resource that
-// exists already, outside koldstart, says how to take it over.
+// apply applies the plan with progress on stderr, then says what it did and prints the
+// outputs. A resource that exists already, outside koldstart, says how to take it over.
 func (s *stage) apply(ctx context.Context, cmd *cobra.Command, e *engine.Engine, plan *engine.Plan, nodes []engine.Node) error {
-	outputs, err := s.applyPlan(ctx, e, plan, nodes, progress(cmd.ErrOrStderr()))
-	if exists, ok := errors.AsType[*cloudcontrol.ExistsError](err); ok {
-		resource := strings.TrimPrefix(exists.Node, "resource/")
-		return fmt.Errorf("%w\ntake it over with %s import %s <identifier>, or give it another name", err, cmd.Root().Name(), resource)
-	}
-	if err != nil {
+	p := s.beginProgress(cmd, plan)
+	outputs, err := s.applyPlan(ctx, e, plan, nodes, p.event)
+	if err := s.endProgress(cmd, p, plan, "deployed", err); err != nil {
+		if exists, ok := errors.AsType[*cloudcontrol.ExistsError](err); ok {
+			resource := strings.TrimPrefix(exists.Node, "resource/")
+			return fmt.Errorf("%w\ntake it over with %s import %s <identifier>, or give it another name", err, cmd.Root().Name(), resource)
+		}
 		return err
 	}
 	printOutputs(cmd.OutOrStdout(), outputs)
 	return nil
+}
+
+// beginProgress starts showing the plan being applied on stderr, after a blank line.
+func (s *stage) beginProgress(cmd *cobra.Command, plan *engine.Plan) *progress {
+	p := newProgress(cmd.ErrOrStderr(), plan)
+	if plan.HasChanges() {
+		_, _ = fmt.Fprintln(cmd.ErrOrStderr())
+	}
+	p.begin()
+	return p
+}
+
+// endProgress stops showing progress and says what applying the plan did, and how long it took:
+// on stdout as done, such as deployed, or on stderr when err says it failed or was stopped. It
+// returns err.
+func (s *stage) endProgress(cmd *cobra.Command, p *progress, plan *engine.Plan, done string, err error) error {
+	took := elapsed(p.end())
+	switch {
+	case !plan.HasChanges() && err == nil:
+	case errors.Is(err, errStopped):
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "\nstopped after %s: %s\n", took, p.summary())
+	case err != nil:
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "\nfailed after %s: %s\n", took, p.summary())
+	default:
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\n%s %s/%s in %s: %s\n", done, s.App, s.Stage, took, p.summary())
+	}
+	return err
+}
+
+// errStopped is an apply stopped by ctrl+c.
+var errStopped = errors.New("stopped")
+
+// applyFailed wraps what applying a plan returned, saying what to run to finish it: deploy or
+// remove. An apply stopped by ctrl+c says so rather than listing each call it cut short.
+func applyFailed(ctx context.Context, err error, again string) error {
+	if ctx.Err() != nil {
+		return fmt.Errorf("%w: what was done is in the state, %s again to finish", errStopped, again)
+	}
+	return fmt.Errorf("%w\nwhat was done is in the state: %s again to finish", err, again)
 }
 
 // applyPlan applies the plan, telling onEvent as each node starts and finishes, then records
@@ -204,10 +246,10 @@ func (s *stage) applyPlan(ctx context.Context, e *engine.Engine, plan *engine.Pl
 	e.OnEvent = onEvent
 	if plan.HasChanges() {
 		if err := e.Apply(ctx, plan, nodes, store); err != nil {
-			if _, ok := errors.AsType[*cloudcontrol.ExistsError](err); ok {
+			if _, ok := errors.AsType[*cloudcontrol.ExistsError](err); ok && ctx.Err() == nil {
 				return nil, err
 			}
-			return nil, fmt.Errorf("%w\nwhat was done is in the state: deploy again to finish", err)
+			return nil, applyFailed(ctx, err, "deploy")
 		}
 	}
 	outputs, err := s.outputs(store.Snapshot())
@@ -229,21 +271,45 @@ func confirm(cmd *cobra.Command, yes bool, question string, accepted ...string) 
 	if !isTerminal(os.Stdin) {
 		return errors.New("no terminal to ask on: pass --yes")
 	}
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return ask(ctx, cmd.InOrStdin(), cmd.ErrOrStderr(), question, accepted...)
+}
+
+// ask writes the question to w and reads the answer from r, as confirm does. ctrl+c, which
+// cancels ctx, or the end of r cancels without waiting for a line.
+func ask(ctx context.Context, r io.Reader, w io.Writer, question string, accepted ...string) error {
 	if accepted == nil {
 		accepted = []string{"y", "yes"}
 		question += " [y/N]"
 	}
-	_, _ = fmt.Fprint(cmd.ErrOrStderr(), question+" ")
-	answer, _ := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
-	if !slices.Contains(accepted, strings.ToLower(strings.TrimSpace(answer))) {
-		return errors.New("cancelled")
+	_, _ = fmt.Fprint(w, question+" ")
+	answers := make(chan string, 1)
+	go func() {
+		line, err := bufio.NewReader(r).ReadString('\n')
+		if err != nil {
+			_, _ = fmt.Fprintln(w)
+		}
+		answers <- line
+	}()
+	cancelled := errors.New("cancelled: nothing was changed")
+	select {
+	case <-ctx.Done():
+		_, _ = fmt.Fprintln(w)
+		return cancelled
+	case answer := <-answers:
+		if !slices.Contains(accepted, strings.ToLower(strings.TrimSpace(answer))) {
+			return cancelled
+		}
+		return nil
 	}
-	return nil
 }
 
+// isTerminal reports whether f is a terminal, which /dev/null, a character device too, is not.
 func isTerminal(f *os.File) bool {
-	info, err := f.Stat()
-	return err == nil && info.Mode()&os.ModeCharDevice != 0
+	return f != nil && term.IsTerminal(f.Fd())
 }
 
 // whoIsDeploying names the person or ci job running koldstart, for the lock and the state.

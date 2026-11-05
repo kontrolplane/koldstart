@@ -42,6 +42,8 @@ The state keeps the inputs every node was last applied with, so a plan shows wha
 
 When the only difference is the code of one or more functions, the deploy uploads the new zips and makes one `UpdateFunctionCode` call each. `kdst deploy function -f <fn>` always takes this path, for one function, and refuses when that function's configuration changed too.
 
+Each node gets a line on stderr as it finishes, with how long it took, and the deploy ends with a count of what it did and the outputs. On a terminal, a line under them shows what is running. Without one, as in ci, the lines are plain and a node still running after 30 seconds says so every 30 seconds. Colour is off when the output is not a terminal, or `NO_COLOR` is set.
+
 ## state
 
 The state lives in a bucket in your account, `koldstart-state-<account>-<region>`, which the first deploy creates with versioning and encryption turned on and public access blocked. Every call to it names your account as the bucket's owner, so a bucket of the same name in another account is refused rather than written to.
@@ -74,4 +76,4 @@ There is no automatic rollback. A half applied change is finished by the next de
 
 ## removing
 
-`kdst remove` deletes everything the stage's state lists, in reverse dependency order, after asking you to type the stage's name. Resources that hold data, and imported ones, are left in place and stay in the state, so the next deploy of the stage takes them over again. When nothing is left, the state is deleted too. The state bucket and the zips are left in place, the bucket because other apps and stages use it.
+`kdst remove` deletes everything the stage's state lists, in reverse dependency order, after listing it and asking you to type the stage's name. Resources that hold data, and imported ones, are left in place and stay in the state, so the next deploy of the stage takes them over again. When nothing is left, the state is deleted too. The state bucket and the zips are left in place, the bucket because other apps and stages use it.
