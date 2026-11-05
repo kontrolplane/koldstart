@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -384,7 +385,7 @@ func layoutPages(t *testing.T, w, h int) map[string]model {
 // TestLayout draws every page at terminal sizes from below the minimum to large, and checks no
 // line is wider than the terminal and there are no more lines than it is high.
 func TestLayout(t *testing.T) {
-	sizes := [][2]int{{20, 5}, {60, 20}, {78, 22}, {80, 24}, {100, 30}, {120, 40}, {200, 60}}
+	sizes := [][2]int{{1, 1}, {20, 5}, {60, 20}, {77, 21}, {78, 22}, {79, 23}, {80, 24}, {100, 30}, {120, 40}, {200, 60}, {300, 80}}
 	for _, size := range sizes {
 		w, h := size[0], size[1]
 		for name, m := range layoutPages(t, w, h) {
@@ -405,7 +406,7 @@ func TestLayout(t *testing.T) {
 // TestEscapesNeverReachTheTerminal puts escape sequences in every string that comes from aws or
 // the state, and checks none reaches the view unescaped.
 func TestEscapesNeverReachTheTerminal(t *testing.T) {
-	evil := "x\x1b]8;;https://evil.example/\x07y\x1b[2J\x9b"
+	evil := "x\x1b]8;;https://evil.example/\x07y\x1b[2J\x9b\u202e\xff"
 	f := newFake(t)
 	f.states = map[cli.StageRef]*state.State{ordersDev: testState(ordersDev)}
 	st := f.states[ordersDev]
@@ -429,7 +430,7 @@ func TestEscapesNeverReachTheTerminal(t *testing.T) {
 	check := func(name string, m model) {
 		t.Helper()
 		v := m.render()
-		if strings.Contains(v, "\x1b]") || strings.Contains(v, "\x07") || strings.Contains(v, "\x1b[2J") || strings.ContainsRune(v, '\u009b') {
+		if strings.Contains(v, "\x1b]") || strings.Contains(v, "\x07") || strings.Contains(v, "\x1b[2J") || strings.ContainsRune(v, '\u009b') || strings.ContainsRune(v, '\u202e') || !utf8.ValidString(v) {
 			t.Errorf("%s: an escape sequence reached the view", name)
 		}
 	}
