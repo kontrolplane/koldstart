@@ -48,6 +48,14 @@ func Entry(root, handler string) (string, error) {
 	return "", fmt.Errorf("handler %q: no %s with any of %s", handler, module, strings.Join(entryExtensions, ", "))
 }
 
+// npmCPU is the architecture lambda runs a function on, as npm's --cpu names it.
+func npmCPU(architecture string) string {
+	if architecture == config.ArchX8664 {
+		return "x64"
+	}
+	return "arm64"
+}
+
 // nodeVersion is the node a runtime runs, for esbuild's target.
 func nodeVersion(runtime string) string {
 	if runtime == config.RuntimeNode24 {
@@ -90,7 +98,11 @@ func (b Builder) node(ctx context.Context, fn config.Function) ([]File, error) {
 		Write:         false,
 	})
 	if len(result.Errors) > 0 {
-		return nil, buildErrors(result.Errors)
+		err := buildErrors(result.Errors)
+		if hint := installHint(b.Root, unresolvedPackages(result.Errors)); hint != "" {
+			return nil, fmt.Errorf("%w\n%s", err, hint)
+		}
+		return nil, err
 	}
 
 	var files []File
@@ -101,7 +113,7 @@ func (b Builder) node(ctx context.Context, fn config.Function) ([]File, error) {
 		}
 		files = append(files, File{Name: filepath.ToSlash(rel), Data: out.Contents})
 	}
-	modules, err := nodeModules(b.Root, fn.Bundle.External)
+	modules, err := nodeModules(b.Root, fn.Bundle.External, npmCPU(fn.Architecture))
 	if err != nil {
 		return nil, err
 	}
@@ -119,6 +131,116 @@ func buildErrors(messages []api.Message) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// unresolvedPackages are the packages esbuild could not resolve, by name, such as lodash or
+// @aws-sdk/client-s3: the bare imports of its errors, not the relative ones.
+func unresolvedPackages(messages []api.Message) []string {
+	var names []string
+	for _, m := range messages {
+		imported, ok := strings.CutPrefix(m.Text, `Could not resolve "`)
+		if !ok {
+			continue
+		}
+		imported = strings.TrimSuffix(imported, `"`)
+		if imported == "" || strings.HasPrefix(imported, ".") || strings.HasPrefix(imported, "/") || strings.Contains(imported, ":") {
+			continue
+		}
+		parts := strings.SplitN(imported, "/", 3)
+		name := parts[0]
+		if strings.HasPrefix(name, "@") && len(parts) > 1 {
+			name += "/" + parts[1]
+		}
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return slices.Compact(names)
+}
+
+// installHint says how to install the packages esbuild could not resolve: npm install when
+// node_modules is missing or they are in package.json, npm install <package> when they are
+// not. It is "" without packages.
+func installHint(root string, packages []string) string {
+	if len(packages) == 0 {
+		return ""
+	}
+	dir := shownDir(root)
+	if _, err := os.Stat(filepath.Join(root, "node_modules")); err != nil {
+		return fmt.Sprintf("there is no node_modules in %s: run npm install, or npm ci, there", dir)
+	}
+	declared := declaredPackages(root)
+	var missing, undeclared []string
+	for _, name := range packages {
+		if declared[name] {
+			missing = append(missing, name)
+		} else {
+			undeclared = append(undeclared, name)
+		}
+	}
+	var hints []string
+	if len(missing) > 0 {
+		hints = append(hints, fmt.Sprintf("%s in package.json but not installed: run npm install, or npm ci, in %s", isAre(missing), dir))
+	}
+	if len(undeclared) > 0 {
+		hints = append(hints, fmt.Sprintf("%s not in package.json: add %s with npm install %s in %s", isAre(undeclared), itThem(undeclared), strings.Join(undeclared, " "), dir))
+	}
+	return strings.Join(hints, "\n")
+}
+
+// declaredPackages are the dependencies and dev dependencies in the package.json in root.
+func declaredPackages(root string) map[string]bool {
+	var pkg struct {
+		Dependencies    map[string]string `json:"dependencies"`
+		DevDependencies map[string]string `json:"devDependencies"`
+	}
+	data, err := os.ReadFile(filepath.Join(root, "package.json"))
+	if err != nil {
+		return nil
+	}
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		return nil
+	}
+	declared := map[string]bool{}
+	for name := range pkg.Dependencies {
+		declared[name] = true
+	}
+	for name := range pkg.DevDependencies {
+		declared[name] = true
+	}
+	return declared
+}
+
+// isAre names packages with is or are: "lodash is", "lodash and zod are".
+func isAre(names []string) string {
+	if len(names) == 1 {
+		return names[0] + " is"
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1] + " are"
+}
+
+// itThem is it for one package and them for more.
+func itThem(names []string) string {
+	if len(names) == 1 {
+		return "it"
+	}
+	return "them"
+}
+
+// shownDir is a directory as an error shows it: relative to the working directory when it is
+// inside it, this directory when it is the working directory, absolute otherwise.
+func shownDir(dir string) string {
+	wd, err := os.Getwd()
+	if err != nil {
+		return dir
+	}
+	rel, err := filepath.Rel(wd, dir)
+	switch {
+	case err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)):
+		return dir
+	case rel == ".":
+		return "this directory"
+	}
+	return rel
 }
 
 // typecheck runs tsc over the project, as asked for with typecheck = true.
@@ -148,8 +270,9 @@ func typecheck(ctx context.Context, root string) error {
 }
 
 // nodeModules returns the files of the packages names and of everything they depend on, from
-// the node_modules of root, as npm and yarn lay it out.
-func nodeModules(root string, names []string) ([]File, error) {
+// the node_modules of root, as npm and yarn lay it out. cpu is the architecture they are for, as
+// npm names it: arm64 or x64.
+func nodeModules(root string, names []string, cpu string) ([]File, error) {
 	var files []File
 	seen := map[string]bool{}
 	queue := slices.Clone(names)
@@ -162,7 +285,7 @@ func nodeModules(root string, names []string) ([]File, error) {
 		seen[name] = true
 		pkgDir, err := filepath.EvalSymlinks(filepath.Join(root, "node_modules", filepath.FromSlash(name)))
 		if err != nil {
-			return nil, fmt.Errorf("external %s is not in node_modules: install it, for the architecture the function runs on", name)
+			return nil, fmt.Errorf("%s is not in node_modules: install it for lambda in %s, with npm install --os=linux --cpu=%s %s", name, shownDir(root), cpu, name)
 		}
 		deps, err := dependencies(root, name, pkgDir)
 		if err != nil {

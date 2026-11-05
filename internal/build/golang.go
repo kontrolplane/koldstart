@@ -43,7 +43,11 @@ func (b Builder) golang(ctx context.Context, fn config.Function, target Target) 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+		msg := strings.TrimSpace(stderr.String())
+		switch {
+		case strings.Contains(msg, "go.mod file not found"):
+			return File{}, fmt.Errorf("go build %s:\n%s\nthere is no go module: run go mod init <module path> in %s", fn.Handler, msg, shownDir(b.Root))
+		case msg != "":
 			return File{}, fmt.Errorf("go build %s:\n%s", fn.Handler, msg)
 		}
 		return File{}, fmt.Errorf("go build %s: %w", fn.Handler, err)
