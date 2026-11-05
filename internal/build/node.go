@@ -193,7 +193,7 @@ func declaredPackages(root string) map[string]bool {
 		Dependencies    map[string]string `json:"dependencies"`
 		DevDependencies map[string]string `json:"devDependencies"`
 	}
-	data, err := os.ReadFile(filepath.Join(root, "package.json"))
+	data, err := fs.ReadFile(os.DirFS(root), "package.json")
 	if err != nil {
 		return nil
 	}
