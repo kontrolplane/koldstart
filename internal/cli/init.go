@@ -49,13 +49,17 @@ or %s.`, defaultRegion),
 					return fmt.Errorf("%s does not make an app name: pass --app", filepath.Base(abs))
 				}
 			}
+			region := initRegion(cmd.Context(), opts)
 			res, err := scaffold.Write(scaffold.Options{
-				Dir: abs, App: app, Region: initRegion(cmd.Context(), opts), Template: template, Version: schemaVersion(), Force: force,
+				Dir: abs, App: app, Region: region, Template: template, Version: schemaVersion(), Force: force,
 			})
+			if err != nil && dir != "." {
+				return fmt.Errorf("starting a project in %s: %w", dir, err)
+			}
 			if err != nil {
 				return err
 			}
-			printInit(cmd.OutOrStdout(), name, dir, template, res)
+			printInit(cmd.OutOrStdout(), name, dir, app, region, template, res)
 			return nil
 		},
 	}
@@ -82,7 +86,9 @@ func initRegion(ctx context.Context, opts *Options) string {
 	return cmp.Or(cfg.Region, defaultRegion)
 }
 
-func printInit(w io.Writer, name, dir, template string, res scaffold.Result) {
+// printInit says what init wrote and kept, the app and its region, and what to run next.
+func printInit(w io.Writer, name, dir, app, region, template string, res scaffold.Result) {
+	_, _ = fmt.Fprintf(w, "started %s, which deploys to %s\n\n", app, region)
 	for _, f := range res.Written {
 		_, _ = fmt.Fprintf(w, "  wrote %s\n", f)
 	}
@@ -103,5 +109,5 @@ func printInit(w io.Writer, name, dir, template string, res scaffold.Result) {
 			_, _ = fmt.Fprintln(w, "  go get github.com/aws/aws-lambda-go")
 		}
 	}
-	_, _ = fmt.Fprintf(w, "  %[1]s plan\n  %[1]s deploy\n", name)
+	_, _ = fmt.Fprintf(w, "  %[1]s plan      see what a deploy creates\n  %[1]s deploy    deploy it, and print the url of GET /hello\n", name)
 }

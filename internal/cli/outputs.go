@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,20 +18,36 @@ import (
 )
 
 func outputsCommand(name string, opts *Options) *cobra.Command {
-	return &cobra.Command{
+	var output string
+	cmd := &cobra.Command{
 		Use:     "outputs",
 		Short:   "print the stage's outputs, such as the http api url",
 		Example: fmt.Sprintf("  %[1]s outputs --stage prod", name),
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if output != outputText && output != outputJSON {
+				return fmt.Errorf("-o %q: want text or json", output)
+			}
 			s, err := openStage(cmd.Context(), opts, false)
 			if err != nil {
 				return err
 			}
-			printOutputs(cmd.OutOrStdout(), s.state.Outputs)
+			if s.etag == "" {
+				return fmt.Errorf("%s/%s is not deployed: deploy it with %s deploy --stage %s", s.App, s.Stage, name, s.Stage)
+			}
+			if output == outputJSON {
+				return writeOutputsJSON(cmd.OutOrStdout(), s.state.Outputs)
+			}
+			if len(s.state.Outputs) == 0 {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "%s/%s has no outputs\n", s.App, s.Stage)
+				return nil
+			}
+			writeOutputs(cmd.OutOrStdout(), "", s.state.Outputs)
 			return nil
 		},
 	}
+	cmd.Flags().StringVarP(&output, "output", "o", outputText, "text or json")
+	return cmd
 }
 
 // outputs resolves the configuration's outputs against the state, and adds the urls.
@@ -104,12 +121,34 @@ func (s *stage) urlOutputs(st *state.State) map[string]string {
 	return out
 }
 
+// printOutputs writes the outputs under a heading, after a deploy.
 func printOutputs(w io.Writer, outputs map[string]string) {
 	if len(outputs) == 0 {
 		return
 	}
 	_, _ = fmt.Fprintln(w, "\noutputs:")
-	for _, k := range slices.Sorted(maps.Keys(outputs)) {
-		_, _ = fmt.Fprintf(w, "  %s = %s\n", k, outputs[k])
+	writeOutputs(w, "  ", outputs)
+}
+
+// writeOutputs writes the outputs one a line, sorted, with their values lined up.
+func writeOutputs(w io.Writer, indent string, outputs map[string]string) {
+	keys := slices.Sorted(maps.Keys(outputs))
+	width := 0
+	for _, k := range keys {
+		width = max(width, len(k))
 	}
+	for _, k := range keys {
+		_, _ = fmt.Fprintf(w, "%s%-*s = %s\n", indent, width, k, outputs[k])
+	}
+}
+
+// writeOutputsJSON writes the outputs as one json object, {} when there are none.
+func writeOutputsJSON(w io.Writer, outputs map[string]string) error {
+	if outputs == nil {
+		outputs = map[string]string{}
+	}
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	enc.SetEscapeHTML(false)
+	return enc.Encode(outputs)
 }

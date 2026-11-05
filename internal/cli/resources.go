@@ -83,7 +83,7 @@ deletionPolicy says delete.`,
 			}
 			r, ok := s.Resources[resource]
 			if !ok {
-				return fmt.Errorf("no resource %q in %s: add it to resources first", resource, s.Path)
+				return fmt.Errorf("no resource %q in %s; it has %s: add it to resources first", resource, s.Path, list(slices.Sorted(maps.Keys(s.Resources))))
 			}
 			unlock, err := s.lock(ctx, "import "+resource)
 			if err != nil {
@@ -92,7 +92,7 @@ deletionPolicy says delete.`,
 			defer unlock()
 			id := desired.ResourceID(resource)
 			if existing := s.state.Resources[id]; existing != nil {
-				return fmt.Errorf("%s is managed already, as %s", resource, existing.PhysicalID)
+				return fmt.Errorf("%s is managed already, as %s: there is nothing to import", resource, existing.PhysicalID)
 			}
 			out, err := s.sess.CloudControl.GetResource(ctx, &awscloudcontrol.GetResourceInput{TypeName: &r.Type, Identifier: &identifier})
 			if err != nil {
@@ -113,7 +113,7 @@ deletionPolicy says delete.`,
 			}); err != nil {
 				return err
 			}
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "imported %s as %s\nrun plan to see what the next deploy changes to match the configuration\n", identifier, resource)
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "imported %s as %s\nrun %s plan to see what the next deploy changes to match the configuration\n", identifier, resource, name)
 			return err
 		},
 	}

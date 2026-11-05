@@ -174,7 +174,8 @@ func (p *prefixed) Write(b []byte) (int, error) {
 	}
 }
 
-// eventFrom reads the event to invoke with: --data, --path, or {}.
+// eventFrom reads the event to invoke with: --data, --path, or {}. It refuses one that is not
+// json before anything is built or invoked.
 //
 //nolint:gosec // reads the event file the user names
 func eventFrom(data, path string) ([]byte, error) {
@@ -186,12 +187,24 @@ func eventFrom(data, path string) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("reading the event: %w", err)
 		}
+		if err := checkEvent(b); err != nil {
+			return nil, fmt.Errorf("the event in %s is not json: %w", path, err)
+		}
 		return b, nil
 	case data != "":
+		if err := checkEvent([]byte(data)); err != nil {
+			return nil, fmt.Errorf(`the event in --data is not json: %w: quote it in single quotes, as --data '{"id": 1}'`, err)
+		}
 		return []byte(data), nil
 	default:
 		return []byte("{}"), nil
 	}
+}
+
+// checkEvent says why an event is not json, when it is not.
+func checkEvent(b []byte) error {
+	var v any
+	return json.Unmarshal(b, &v)
 }
 
 // confirmProd asks before code on this machine works with what prod deployed.
@@ -229,6 +242,9 @@ writes what the stage deployed; .koldstart/local.<stage>.pkl overrides variables
 				return err
 			}
 			if !runLocal {
+				if s.state.Resources[desired.FunctionID(function)] == nil {
+					return fmt.Errorf("%s is not deployed to %s: deploy it with %s deploy --stage %s, or run it here with --local", function, s.Stage, name, s.Stage)
+				}
 				return s.invokeRemote(ctx, cmd, function, payload)
 			}
 			if err := confirmProd(cmd, s, yes); err != nil {

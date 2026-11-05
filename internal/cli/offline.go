@@ -4,12 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"net"
 	"net/http"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
+	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -40,7 +44,7 @@ rebuilds the functions, and the next request runs the new code.`,
 			}
 			routes := s.routes()
 			if len(routes) == 0 {
-				return errors.New("no function has an http route to serve")
+				return fmt.Errorf("no function in %s has an http route to serve: add a kdst.HttpRoute to its events, or run it with %s invoke --local", filepath.Base(s.Path), name)
 			}
 			return s.serve(ctx, cmd, routes, port)
 		},
@@ -118,35 +122,62 @@ func (s *stage) startRuntimes(ctx context.Context, cmd *cobra.Command, routes []
 	return rts, nil
 }
 
-// rebuild builds the functions again, and has each start a new process on its next request.
+// rebuild builds the functions again, and has each start a new process on its next request. It
+// says which were rebuilt, and why any were not.
 func (s *stage) rebuild(ctx context.Context, cmd *cobra.Command, rts *runtimes) {
+	start := time.Now()
+	var rebuilt []string
 	for _, f := range rts.functions {
 		if err := s.runner().Build(ctx, f); err != nil {
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "rebuilding %s: %v\n", f.Name, err)
 			continue
 		}
 		rts.get(f.Name).Restart()
+		rebuilt = append(rebuilt, f.Name)
 	}
-	_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "rebuilt")
+	if len(rebuilt) > 0 {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "rebuilt %s in %s\n", strings.Join(rebuilt, ", "), time.Since(start).Round(100*time.Millisecond))
+	}
 }
 
-// serve serves the routes on 127.0.0.1:port until ctx ends.
+// listen listens on 127.0.0.1:port, and says to pass another --port when it is taken.
+func listen(port int) (net.Listener, error) {
+	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if errors.Is(err, syscall.EADDRINUSE) {
+		return nil, fmt.Errorf("port %d is in use: stop what listens on it, or pass --port", port)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("listening on port %d: %w", port, err)
+	}
+	return listener, nil
+}
+
+// printServing says where the routes are served, which function each invokes, and how to stop.
+func printServing(w io.Writer, app, stage string, addr net.Addr, routes []local.Route) {
+	_, _ = fmt.Fprintf(w, "serving %s/%s on http://%s\n\n", app, stage, addr)
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	for _, r := range routes {
+		_, _ = fmt.Fprintf(tw, "  %s\t%s\n", r.Key(), r.Function)
+	}
+	_ = tw.Flush()
+	_, _ = fmt.Fprintln(w, "\na change to a source file rebuilds the functions; ctrl+c stops")
+}
+
+// serve serves the routes on 127.0.0.1:port until ctx ends. It listens before it builds, so a
+// port in use fails at once.
 func (s *stage) serve(ctx context.Context, cmd *cobra.Command, routes []local.Route, port int) error {
+	listener, err := listen(port)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = listener.Close() }()
 	rts, err := s.startRuntimes(ctx, cmd, routes)
 	if err != nil {
 		return err
 	}
 	defer rts.Close()
 
-	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
-	if err != nil {
-		return fmt.Errorf("listening on port %d: %w", port, err)
-	}
-	out := cmd.OutOrStdout()
-	_, _ = fmt.Fprintf(out, "serving %s/%s on http://%s\n", s.App, s.Stage, listener.Addr())
-	for _, r := range routes {
-		_, _ = fmt.Fprintf(out, "  %-28s %s\n", r.Key(), r.Function)
-	}
+	printServing(cmd.OutOrStdout(), s.App, s.Stage, listener.Addr(), routes)
 	srv := &http.Server{Handler: &local.Offline{Routes: routes, Invoker: rts, Log: cmd.ErrOrStderr()}, ReadHeaderTimeout: 10 * time.Second}
 	go local.Watch(ctx, s.Root, 500*time.Millisecond, func() { s.rebuild(ctx, cmd, rts) })
 	go func() {

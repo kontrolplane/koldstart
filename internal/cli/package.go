@@ -41,13 +41,19 @@ and prints the size and hash of each zip.`,
 	}
 }
 
+// printArchives writes a table of the zips: each function, its size lined up on the right, the
+// start of its hash and its path in the project.
 func printArchives(w io.Writer, root string, archives []build.Archive) error {
 	if len(archives) == 0 {
 		_, err := fmt.Fprintln(w, "no functions to build")
 		return err
 	}
+	width := len("SIZE")
+	for _, a := range archives {
+		width = max(width, len(humanSize(a.Size)))
+	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "FUNCTION\tSIZE\tSHA256\tZIP")
+	_, _ = fmt.Fprintf(tw, "FUNCTION\t%*s\tSHA256\tZIP\n", width, "SIZE")
 	for _, a := range archives {
 		if a.Image {
 			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", a.Function, "-", a.SHA256[:12], "container image, built on deploy")
@@ -57,7 +63,7 @@ func printArchives(w io.Writer, root string, archives []build.Archive) error {
 		if err != nil {
 			rel = a.Path
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", a.Function, humanSize(a.Size), a.SHA256[:12], rel)
+		_, _ = fmt.Fprintf(tw, "%s\t%*s\t%s\t%s\n", a.Function, width, humanSize(a.Size), a.SHA256[:12], rel)
 	}
 	return tw.Flush()
 }
