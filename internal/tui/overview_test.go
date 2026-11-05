@@ -202,21 +202,23 @@ func TestHelpFits(t *testing.T) {
 	}
 }
 
-// TestHelpNamesEveryKey checks every binding of the key map is in the help, but for the ones the
-// help names in a pair of its own and ? itself.
+// TestHelpNamesEveryKey checks every binding of the key map is in the help, named as its own
+// help names it, so a binding added to the key map is not left out of the help.
 func TestHelpNamesEveryKey(t *testing.T) {
 	k := newTestModel(t, newFake(t)).keys
-	var named []string
+	named := map[string]bool{}
 	for _, s := range helpSections(k) {
 		for _, r := range s.rows {
-			named = append(named, r[0])
+			for word := range strings.FieldsSeq(r[0]) {
+				named[word] = true
+			}
 		}
 	}
-	all := strings.Join(named, "\n")
-	for _, b := range []key.Binding{k.PageUp, k.PageDown, k.Top, k.Bottom, k.View, k.Filter, k.NextTab, k.PrevTab, k.Deploy, k.Apply,
-		k.Remove, k.Unlock, k.Invoke, k.RunLocal, k.EditEvent, k.Follow, k.Copy, k.Refresh, k.Pause, k.Yes, k.No, k.Back, k.Quit, k.ForceQuit} {
-		if !strings.Contains(all, b.Help().Key) {
-			t.Errorf("the help does not name %s, %s", b.Help().Key, b.Help().Desc)
+	v := reflect.ValueOf(k)
+	for i := range v.NumField() {
+		b, ok := reflect.TypeAssert[key.Binding](v.Field(i))
+		if ok && !named[b.Help().Key] {
+			t.Errorf("the help does not name %s, %s: %s", v.Type().Field(i).Name, b.Help().Key, b.Help().Desc)
 		}
 	}
 }

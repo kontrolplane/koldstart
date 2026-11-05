@@ -632,15 +632,17 @@ func helpSections(k keys.KeyMap) []helpSection {
 	name := func(b key.Binding) string { return b.Help().Key }
 	return []helpSection{
 		{"everywhere", [][2]string{
-			{"↑/k ↓/j", "up / down"}, {name(k.Top) + " / " + name(k.Bottom), "first / last"}, {name(k.PageUp) + "/" + name(k.PageDown), "page"},
-			{name(k.View), "open"}, {name(k.NextTab) + "/" + name(k.PrevTab), "next / previous tab"}, {name(k.Filter), "filter"},
-			{name(k.Yes) + " / " + name(k.No), "answer a dialog"}, {name(k.Quit), "back, quit on stages"}, {name(k.Back), "back, clear, cancel"},
-			{name(k.ForceQuit), "quit"},
+			{name(k.Up) + " " + name(k.Down), "up / down"}, {name(k.Top) + " " + name(k.Bottom), "first / last"},
+			{name(k.PageUp) + " " + name(k.PageDown), "page up / down"}, {name(k.View), "open"},
+			{name(k.NextTab) + " " + name(k.PrevTab), "next / previous tab"}, {name(k.Left) + " " + name(k.Right), "choose, switch tab"},
+			{name(k.Quit), "back, quit on stages"}, {name(k.Back), "back, clear, cancel"}, {name(k.ForceQuit), "quit"},
+			{name(k.Help), "this help"},
 		}},
 		{"stage", [][2]string{
 			{name(k.Deploy), "plan a deploy"}, {name(k.Apply), "apply the plan"}, {name(k.Refresh) + " on a plan", "plan again from aws"},
-			{name(k.View), "a change's diff"}, {name(k.Remove), "remove the stage"}, {name(k.Unlock), "release a lock"}, {name(k.Copy), "copy"},
-			{name(k.Refresh) + " / " + name(k.Pause), "refresh / pause"},
+			{name(k.View), "a change's diff"}, {name(k.Remove), "remove the stage"}, {name(k.Unlock), "release a lock"},
+			{name(k.Yes) + " " + name(k.No), "answer a dialog"}, {name(k.Filter), "filter a table"}, {name(k.Copy), "copy"},
+			{name(k.Refresh) + " " + name(k.Pause), "refresh / pause"},
 		}},
 		{"function", [][2]string{
 			{name(k.Invoke), "invoke in aws"}, {name(k.RunLocal), "run on this machine"}, {name(k.EditEvent), "edit the event"},
