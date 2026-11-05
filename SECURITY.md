@@ -14,7 +14,7 @@ we reply within a few business days. please wait for a fix before disclosing.
 
 koldstart runs with credentials that can create, change and delete what a configuration describes, so whoever controls what koldstart deploys controls that account.
 
-- koldstart talks only to the aws apis of the account it deploys to. it downloads the pinned pkl binary and the schema package from github releases, and sends no telemetry.
+- koldstart talks only to the aws apis of the account it deploys to. it downloads the pinned pkl binary and the schema package from github releases, and sends no telemetry. the container image holds the pinned pkl already, checked against the same checksum.
 - the state bucket, `koldstart-state-<account>-<region>`, holds the state, locks and zips of every app and stage in that account and region. whoever can write to it can change what the next deploy does: give write access only to the roles that deploy.
 - every call to the state bucket passes the expected bucket owner, so a bucket of the same name in another account is refused, not used.
 - the values of secrets never go into the state, only references to them and a hash of their values. `.readAtRuntime()` keeps a secret out of the function's configuration too.

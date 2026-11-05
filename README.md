@@ -9,9 +9,9 @@
 ---
 
 > [!NOTE]
-> koldstart is being built, and has no release yet. Deploying, events, resources, secrets, running functions locally, logs, `migrate` and the terminal interface work; `init` and the release come next. The plan is in [#1](https://github.com/kontrolplane/koldstart/issues/1).
+> koldstart has no release yet: 0.1.0 is next. Everything below is built; the plan is in [#1](https://github.com/kontrolplane/koldstart/issues/1).
 
-Here is an http api in typescript and a queue worker in go, sharing a table:
+Here is an http api in typescript and a queue worker in go, sharing a table. [examples/full-featured](./examples/full-featured) is a complete version of it, with the handlers:
 
 ```pkl
 amends "package://github.com/kontrolplane/koldstart/releases/download/v0.1.0/koldstart@0.1.0#/Project.pkl"
@@ -99,11 +99,18 @@ alias kdst=koldstart
 
 koldstart evaluates configuration with the `pkl` binary. It uses one on the `PATH`, or the one `KOLDSTART_PKL` points at; without either, it downloads the version it pins to `~/.cache/koldstart` on first use and checks it against the checksum built into koldstart.
 
-Once released, koldstart installs with `brew install kontrolplane/tap/koldstart`, which installs `kdst` and pkl with it, as binaries for linux and macos on the [GitHub releases](https://github.com/kontrolplane/koldstart/releases), and as a container image, `ghcr.io/kontrolplane/koldstart`, for linux/amd64 and linux/arm64.
+Once released, koldstart installs with `brew install kontrolplane/tap/koldstart`, which installs `kdst` and pkl with it, as binaries for linux and macos on the [GitHub releases](https://github.com/kontrolplane/koldstart/releases), and as a container image, `ghcr.io/kontrolplane/koldstart`, for linux/amd64 and linux/arm64. The image holds koldstart, pkl and go, so it builds typescript, javascript and go functions; node is not in it, so `typecheck`, `invoke --local` and `offline` run elsewhere.
 
 ## getting started
 
-Write a `koldstart.pkl` like the one above, and a handler for each function. Without `--stage`, every command works on `dev`. The first plan lists everything as a create: each function with its role and log group, the http api with its routes, the queue mapping, the table and the queue.
+`init` starts a project: a `koldstart.pkl` with one function behind `GET /hello`, its handler in typescript, or go with `--template go`, and the entries koldstart needs in `.gitignore`. It keeps any file that is there already.
+
+```bash
+kdst init orders
+cd orders
+```
+
+From there, or with a `koldstart.pkl` like the one above, a handler for each function. Without `--stage`, every command works on `dev`. The first plan lists everything as a create: each function with its role and log group, the http api with its routes, the queue mapping, the table and the queue.
 
 ```bash
 kdst plan
@@ -213,6 +220,24 @@ jobs:
       - run: go run github.com/kontrolplane/koldstart/cmd/koldstart@latest deploy --stage prod --yes
 ```
 
+The image runs the same in a container job, with no go, pkl or koldstart to install. Pin the version you tested with:
+
+```yaml
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    container: ghcr.io/kontrolplane/koldstart:0.1
+    steps:
+      - uses: actions/checkout@v7
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::123456789012:role/koldstart-deploy
+          aws-region: eu-west-1
+      - run: kdst deploy --stage prod --yes
+```
+
+The image runs as root, so the checkout it builds in is writable. To run it on your machine, pass your own user, so the files it writes stay yours: `docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" ghcr.io/kontrolplane/koldstart:0.1 plan`.
+
 `--yes` applies the plan without asking, which a deploy without a terminal needs. The role needs permission to manage what the configuration describes, and to read and write the state bucket. When a job is cancelled halfway, running it again finishes the deploy. When the runner itself was killed and the lock was left behind, `kdst unlock --stage prod` releases it.
 
 ## what ends up in your account
@@ -235,6 +260,7 @@ Everything koldstart creates is tagged with its app, stage and node, together wi
 
 | command                          | description                                                                     |
 | -------------------------------- | ------------------------------------------------------------------------------- |
+| `init [directory]`               | start a project: a `koldstart.pkl`, a handler and the `.gitignore` entries      |
 | `package`                        | build and zip every function, without deploying                                 |
 | `plan`                           | show what a deploy would create, change and delete                              |
 | `deploy`                         | build, upload, and apply the plan                                               |
@@ -284,7 +310,7 @@ make emulator test-emulator
 make check
 ```
 
-`make test` runs the unit tests, against fakes and an in-memory state, with no aws account. `make emulator test-emulator` runs the tests that talk to aws against floci, and `make emulator-down` stops it. `make check` runs what CI runs. [CONTRIBUTING.md](./CONTRIBUTING.md) and [AGENTS.md](./AGENTS.md) have the rest.
+`make test` runs the unit tests, against fakes and an in-memory state, with no aws account. `make emulator test-emulator` runs the tests that talk to aws against floci, and `make emulator-down` stops it. `make check` runs what CI runs. `go test -tags e2e ./test/e2e/...` deploys [examples/full-featured](./examples/full-featured) to a real account, with the credentials you have, and removes it again. [CONTRIBUTING.md](./CONTRIBUTING.md) and [AGENTS.md](./AGENTS.md) have the rest.
 
 ## license
 

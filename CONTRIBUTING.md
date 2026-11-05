@@ -16,6 +16,12 @@ make test
 - `make emulator test-emulator` runs the tests that talk to aws against floci; `make emulator-down` stops it.
 - `make check` runs what ci runs.
 
+## e2e tests
+
+`go test -tags e2e ./test/e2e/...` deploys [examples/full-featured](examples/full-featured) to a stage of its own, `e2e-<run>`, in the account of the credentials you have, works with it, and removes it, deleting the table and queue too. use a sandbox account: it creates real resources, for a few minutes. it needs node and the aws cli besides go.
+
+in ci, the `E2E` workflow runs on every push to main and every night, once the repository variable `KOLDSTART_E2E_ROLE_ARN` names a role in the sandbox account that github's oidc provider may assume for this repository, with permission to manage what the example deploys and the state bucket. `KOLDSTART_E2E_REGION` picks the region, `eu-west-1` without it. each run first removes the stages earlier runs left behind for more than six hours.
+
 [AGENTS.md](AGENTS.md) has the layout and the rules. [#1](https://github.com/kontrolplane/koldstart/issues/1) has the design and the milestones.
 
 ## pull requests

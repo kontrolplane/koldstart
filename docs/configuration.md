@@ -61,7 +61,7 @@ functions {
 | `permissions`         |           | iam statements added to the function's role                                                         |
 | `vpc`                 |           | `subnetIds` and `securityGroupIds` to put the function in                                           |
 | `bundle`              |           | for node: `externals`, packages to leave out of the bundle, and `sourcemap`                         |
-| `typecheck`           | `false`   | for typescript: run `tsc --noEmit` before bundling                                                  |
+| `typecheck`           | `false`   | for typescript: run `tsc --noEmit` before bundling, which needs node and typescript installed       |
 
 Each function gets a role and a log group of its own. The role may write to the log group, and has what `link`, `permissions`, its events and its runtime secrets add.
 
@@ -71,7 +71,7 @@ Typescript and javascript are bundled with the esbuild that is built into koldst
 
 Go is built with `CGO_ENABLED=0`, `-trimpath`, `-buildvcs=false` and no build id, for the architecture of the function, into a binary named `bootstrap`, which is what the `provided.al2023` runtime runs.
 
-Zips are deterministic: the same code gives the same bytes, on a laptop and in ci, so the hash of the zip tells koldstart whether a function's code changed.
+Zips are deterministic: the same code gives the same bytes, on a laptop and in ci, so the hash of the zip tells koldstart whether a function's code changed. Go binaries also depend on the version of go that builds them, so pin it with a `toolchain` line in `go.mod`, such as `toolchain go1.27.3`; otherwise a laptop and ci with different versions upload different code.
 
 ### link
 

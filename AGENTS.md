@@ -18,8 +18,12 @@ internal/provider/cloudcontrol/  everything in resources, through cloud control
 internal/resolve/           reads secrets from ssm and secrets manager, and outputs of other stages
 internal/local/             runs functions here against an emulator of the lambda runtime api; offline
 internal/migrate/           converts a serverless.yml into a koldstart.pkl
+internal/scaffold/          kdst init's templates: a koldstart.pkl, a handler in typescript or go, the .gitignore entries
 internal/awstest/           connects tests to the emulator
 hack/schema/                packages the schema in pkl/ with the pkl koldstart pins, for releases
+hack/pkl/                   downloads the pinned pkl for a platform, for the image
+examples/                   example projects, each a go module of its own; examples_test.go checks they evaluate
+test/e2e/                   deploys examples/full-featured to a real account, behind the e2e build tag
 internal/version/           the build's version, stamped by the linker, in route's shape
 docs/                       the user documentation; it describes the design in #1 until it is built
 ```
@@ -38,7 +42,8 @@ The packages still to come, and the milestones they land in, are in [#1](https:/
 - tests come in three tiers:
   - unit: `make test`. aws calls go behind small interfaces, so the engine, providers and tui are tested against fakes. no network, no docker.
   - emulator: `make emulator test-emulator`, then `make emulator-down`, against Floci (`docker-compose.yaml`), which runs lambda in the real runtime images and so mounts the docker socket. a test that talks to aws has `Emulator` in its name and gets its config from `awstest.Emulator(t)`, which skips without `KOLDSTART_TEST_ENDPOINT`. Floci ignores `ExpectedBucketOwner`, has no `DescribeType`, its cloud control has no `UpdateResource`, and an http api answers on 127.0.0.1:4566 with the api's host name in the `Host` header (`awstest.Get`). test what it does not do against fakes that behave as aws does.
-  - e2e: `go test -tags e2e ./test/e2e/...`, against a real sandbox account, for what no emulator gets right.
+  - e2e: `go test -tags e2e ./test/e2e/...`, against a real sandbox account, for what no emulator gets right. each run deploys its own stage, `e2e-<run>`, with an amending `e2e.pkl` that deletes what holds data, and removes it; the `E2E` workflow runs it once `KOLDSTART_E2E_ROLE_ARN` is set. `make lint` lints it with the tag.
+- an example amends the schema package of the first release, and is evaluated against `pkl/` in this tree with `schema.Local`, as `migrate` and `init` are. an example's go module pins its `toolchain`, so its zips are the same everywhere.
 - `internal/migrate` is tested with golden files: a `serverless.yml` under `testdata/<case>/`, and the `koldstart.pkl` and `todos.txt` it converts to. after changing the conversion, run `go test ./internal/migrate -update`, read the diff, and commit it. every golden file must evaluate with pkl and pass a deploy's checks.
 - logs: `log/slog`. `--debug` writes them to `debug.log`, otherwise nothing is logged.
 - errors wrap with what was being done (`fmt.Errorf("reading the state of %s: %w", stage, err)`). an error a person reads says what to do.
