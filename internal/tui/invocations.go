@@ -97,7 +97,7 @@ func (m model) invocationsView() string {
 	case !f.logs.loaded && f.logs.err != "":
 		return " " + m.logsError()
 	case !f.logs.loaded:
-		return " " + styles.Muted("reading the logs…")
+		return " " + styles.Muted(readingNote("the logs"))
 	}
 	return indent(f.invocations.View())
 }

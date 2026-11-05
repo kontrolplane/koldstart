@@ -111,7 +111,7 @@ func TestOverviewStates(t *testing.T) {
 			name:       "an emulator",
 			metricsErr: errAWS,
 			liveErr:    errAWS,
-			want:       []string{"no metrics: aws said no", "could not read it: aws said no"},
+			want:       []string{"could not read the metrics: aws said no", "could not read it from lambda: aws said no"},
 			notWant:    []string{"changed outside koldstart", "✓ what koldstart deployed", "p99"},
 		},
 		{

@@ -199,12 +199,12 @@ func TestLogsStates(t *testing.T) {
 		{name: "failed", set: func(m *model) {
 			m.state.function.logs = newLogState()
 			*m, _ = m.applyLogs(logsLoadedMsg{gen: m.state.function.logs.gen, err: errAWS})
-		}, logs: "could not read the logs: aws said no · r reads them again", invocations: "could not read the logs"},
+		}, logs: "could not read the logs: aws said no · r tries again", invocations: "could not read the logs"},
 		{name: "none", set: func(m *model) {}, logs: "nothing logged since", invocations: "no invocations in the logs read"},
 		{name: "none match", set: func(m *model) {
 			m.state.function.logs.lines = logSeries(time.Now(), 3, "line")
 			m.state.function.logs.filter.text = "refund"
-		}, logs: "no line has refund", invocations: ""},
+		}, logs: "no line matches refund", invocations: ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -37,6 +37,9 @@ type planState struct {
 	cursor     int
 	// refresh plans with every resource read as it is in aws.
 	refresh bool
+	// earlier is the plan on screen when r planned again, which esc goes back to while that runs
+	// and a failure shows again.
+	earlier *engine.Plan
 }
 
 // nodeProgress is how far applying a node got, from the first event about it. action is what the
@@ -77,11 +80,16 @@ func (m model) applyPlanLoaded(msg planLoadedMsg) (model, tea.Cmd) {
 		return m, nil
 	}
 	m.loading, p.cancel = false, nil
+	if msg.err != nil && p.earlier != nil {
+		m.error = "could not plan again with every resource read from aws: " + msg.err.Error()
+		p.plan, p.refresh, p.earlier = p.earlier, false, nil
+		return m, nil
+	}
 	if msg.err != nil {
 		m.error = "could not plan: " + msg.err.Error()
 		return m.switchPage(p.from), nil
 	}
-	p.plan = msg.plan
+	p.plan, p.earlier = msg.plan, nil
 	switch {
 	case !p.plan.HasChanges() && p.remove:
 		m = m.switchPage(p.from)
@@ -183,7 +191,7 @@ func (m model) planUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 		if p.plan == nil || p.applying || p.done || p.remove || p.function != "" {
 			return m, nil
 		}
-		p.refresh, p.plan, p.cursor, p.scroll = true, nil, 0, 0
+		p.refresh, p.earlier, p.plan, p.cursor, p.scroll = true, p.plan, nil, 0, 0
 		m.loading, m.loadingMsg = true, "reading every resource of "+p.ref.String()+" as it is in aws…"
 		return m.loadPlan()
 	case key.Matches(msg, m.keys.View):
@@ -233,6 +241,22 @@ func (m model) planWhat() string {
 		return planRemoveWord
 	}
 	return planDeployWord
+}
+
+// cancelPlan stops the plan being made: one r asked for goes back to the plan before it, and
+// the first one leaves the page.
+func (m model) cancelPlan() (model, tea.Cmd) {
+	p := &m.state.plan
+	if p.earlier == nil {
+		return m.leavePlan()
+	}
+	if p.cancel != nil {
+		p.cancel()
+	}
+	p.gen = m.next()
+	p.plan, p.earlier, p.refresh, p.cancel = p.earlier, nil, false, nil
+	m.loading = false
+	return m.setStatus("stopped reading every resource from aws: this is the plan before", styles.ToneWarning)
 }
 
 // leavePlan goes back to where the plan was asked from, reading the stage again. A plan still
@@ -304,7 +328,7 @@ const maxErrorLines = 3
 // with the index of the line of each change.
 func (m model) planLines() ([]string, []string, []int) {
 	p := m.state.plan
-	width := contentWidth - 6
+	width := contentWidth - 5
 	if p.plan == nil {
 		return nil, nil, nil
 	}

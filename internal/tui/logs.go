@@ -98,7 +98,7 @@ func (m model) applyLogs(msg logsLoadedMsg) (model, tea.Cmd) {
 	}
 	l.loaded, l.err = true, ""
 	if m.page == functionPage {
-		m.refreshedAt = time.Now()
+		m = m.markRead()
 	}
 	return m.updateRequests(), nil
 }
@@ -371,7 +371,11 @@ func (m model) logsHead() string {
 	default:
 		parts = append(parts, "from "+formatTime(l.from), "↑ at the top reads the hour before")
 	}
-	return styles.Faint(strings.Join(parts, " · "))
+	head := styles.Faint(strings.Join(parts, " · "))
+	if l.loadingOlder {
+		head = styles.Accent(m.spinner.View()) + " " + head
+	}
+	return head
 }
 
 // hoursBefore names n steps of older lines: the hour before, the 3 hours before.
@@ -384,7 +388,7 @@ func hoursBefore(n int) string {
 
 // logsError says why the logs could not be read, and how to try again.
 func (m model) logsError() string {
-	return renderCell(cell{styles.S("could not read the logs: "+m.state.function.logs.err, styles.ToneDanger), styles.S(" · r reads them again", styles.ToneFaint)}, column{width: logWidth()}, nil)
+	return strings.Join(cellLines(m.couldNotRead("the logs", m.state.function.logs.err, styles.ToneDanger), logWidth()), "\n ")
 }
 
 func (m model) logsView() string {
@@ -397,13 +401,13 @@ func (m model) logsView() string {
 	case !l.loaded && l.err != "":
 		return " " + m.logsError()
 	case !l.loaded:
-		return " " + styles.Muted("reading the logs…")
+		return " " + styles.Muted(readingNote("the logs"))
 	}
 	rows, all := m.lastRows(l.scroll + height)
 	if all && len(rows) == 0 {
 		empty := fmt.Sprintf("nothing logged since %s", formatTime(l.from))
 		if l.filter.text != "" {
-			empty = "no line has " + styles.Clean(l.filter.text)
+			empty = noMatch("line", styles.Clean(l.filter.text))
 		}
 		return lipgloss.NewStyle().PaddingLeft(1).Render(m.logsHead() + "\n\n" + styles.Muted(empty))
 	}

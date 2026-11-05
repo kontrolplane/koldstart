@@ -78,9 +78,11 @@ type metricsLoadedMsg struct {
 	err     error
 }
 
+// queuesLoadedMsg is the depth of each queue read, and why each of the others could not be.
 type queuesLoadedMsg struct {
 	gen    int
 	depths map[string]cli.QueueDepth
+	errs   map[string]error
 }
 
 type liveLoadedMsg struct {
@@ -289,13 +291,16 @@ func (m model) loadQueues() (model, tea.Cmd) {
 	ctx, cancel := m.withTimeout(loadTimeout)
 	return m, func() tea.Msg {
 		defer cancel()
-		depths := map[string]cli.QueueDepth{}
+		depths, errs := map[string]cli.QueueDepth{}, map[string]error{}
 		for id, url := range queues {
-			if d, err := m.b.Queue(ctx, ref, url); err == nil {
-				depths[id] = d
+			d, err := m.b.Queue(ctx, ref, url)
+			if err != nil {
+				errs[id] = err
+				continue
 			}
+			depths[id] = d
 		}
-		return queuesLoadedMsg{gen: gen, depths: depths}
+		return queuesLoadedMsg{gen: gen, depths: depths, errs: errs}
 	}
 }
 

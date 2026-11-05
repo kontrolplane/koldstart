@@ -147,10 +147,19 @@ func (m model) runLocalUpdate(msg tea.Msg) (model, tea.Cmd) {
 	return m, nil
 }
 
+// runLocalView asks before running the function here against prod, naming the event it sends:
+// the file of one kept for it, or {} without any.
 func (m model) runLocalView() string {
+	r := m.state.runLocal
+	event := []styles.Span{styles.S("with ", styles.ToneFaint), styles.B(cmpOr(r.event, defaultEvent), styles.ToneText)}
+	if r.event == "" {
+		event = append(event, styles.S(": no events are kept for it", styles.ToneFaint))
+	}
 	return dialog("run "+m.state.function.name+" against prod?", styles.ToneWarning,
+		styles.Render(event...),
+		"",
 		styles.Muted("it runs on this machine with what prod deployed, its data included."),
 		"",
-		confirmButtons(m.state.runLocal.selected, styles.ToneWarning),
+		confirmButtons(r.selected, styles.ToneWarning),
 	)
 }

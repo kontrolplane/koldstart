@@ -3,7 +3,6 @@ package tui
 import (
 	"cmp"
 	"slices"
-	"time"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
@@ -21,6 +20,8 @@ type overviewState struct {
 	// failed says a load of the stages failed, so the next failure goes to the footer rather
 	// than raising the error again every refresh.
 	failed bool
+	// err is why the stages could not be listed, before they ever were.
+	err    string
 	stages []cli.StageSummary
 	shown  []cli.StageSummary
 	table  dataTable
@@ -56,9 +57,9 @@ func noStagesYet() string {
 func (o overviewState) emptyText() string {
 	switch {
 	case !o.loaded && o.failed:
-		return "could not list the stages: r tries again"
+		return "could not list the stages: " + o.err + " · r tries again"
 	case o.filter.text != "":
-		return "no stage matches " + o.filter.text + ": esc clears the filter"
+		return noMatch("stage", o.filter.text)
 	}
 	return noStagesYet()
 }
@@ -114,6 +115,8 @@ func (m model) updateOverviewTable() model {
 	return m
 }
 
+// overviewRow draws a stage. One whose state or lock cannot be read says so in its lock column,
+// too narrow for the error, which enter shows in full as it reads the stage again.
 func overviewRow(s cli.StageSummary, local bool) tableRow {
 	app := text(s.App, styles.ToneText)
 	if local {
@@ -122,7 +125,7 @@ func overviewRow(s cli.StageSummary, local bool) tableRow {
 	row := tableRow{app, text(s.Stage, styles.ToneBody), text(s.Region, styles.ToneMuted)}
 	switch {
 	case s.Err != nil:
-		return append(row, text("unreadable", styles.ToneDanger), text("", styles.ToneFaint), text("", styles.ToneFaint), text(s.Err.Error(), styles.ToneDanger))
+		return append(row, text("-", styles.ToneFaint), text("", styles.ToneFaint), text("", styles.ToneFaint), cell{styles.S("✗ ", styles.ToneDanger), styles.S("unreadable", styles.ToneDanger)})
 	case notDeployed(s):
 		return append(row, text("not yet", styles.ToneFaint), text("", styles.ToneFaint), text("", styles.ToneFaint), text("", styles.ToneFaint))
 	}
@@ -157,12 +160,15 @@ func (m model) applyStages(msg stagesLoadedMsg) (model, tea.Cmd) {
 	if msg.err != nil {
 		onScreen := o.loaded || o.failed
 		o.failed = true
+		if !o.loaded {
+			o.err = msg.err.Error()
+		}
 		m = m.updateOverviewTable()
 		return m.loadError("could not list the stages", msg.err, onScreen)
 	}
 	o.stages, o.loaded = m.withProject(msg.stages), true
 	if m.page == overviewPage {
-		m.refreshedAt = time.Now()
+		m = m.markRead()
 	}
 	m = m.updateOverviewTable()
 	if !o.opened && m.page == overviewPage {

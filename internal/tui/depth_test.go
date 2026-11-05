@@ -135,7 +135,7 @@ func TestMetricsUnavailable(t *testing.T) {
 	f := newFake(t)
 	f.metricsErr = errAWS
 	m := pressKeys(t, started(t, f), "enter")
-	if m.error != "" || !strings.Contains(screen(m), "no metrics: aws said no") {
+	if m.error != "" || !strings.Contains(screen(m), "could not read the metrics: aws said no") {
 		t.Errorf("error %q; screen:\n%s", m.error, screen(m))
 	}
 }

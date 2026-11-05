@@ -181,7 +181,7 @@ func outputChanges(before, after *state.State) []cell {
 // versionLines are the lines of the version, with the index of the line of each change.
 func (m model) versionLines() ([]string, []int) {
 	v := m.state.version
-	width := contentWidth - 6
+	width := contentWidth - 5
 	if !v.loaded || v.current == nil {
 		return nil, nil
 	}

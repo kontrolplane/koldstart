@@ -31,14 +31,20 @@ const (
 
 var stageTabs = []string{"functions", resourcesWord, "outputs", "history"}
 
-// resourcesWord names the resources tab and the column of the overview that counts them.
-const resourcesWord = "resources"
+// resourcesWord names the resources tab and the column of the overview that counts them, and
+// functionWord the column of the functions tab and a function where the filter hides them all.
+const (
+	resourcesWord = "resources"
+	functionWord  = "function"
+)
 
 // stageState is one stage: its functions, resources, outputs and the history of its state.
 type stageState struct {
 	ref    cli.StageRef
 	gen    int
 	loaded bool
+	// err is why the state could not be read, before it ever was.
+	err    string
 	st     *state.State
 	lock   *state.LockInfo
 	tab    stageTab
@@ -55,14 +61,21 @@ type stageState struct {
 
 	historyGen    int
 	historyLoaded bool
-	historyFailed bool
-	history       []state.ObjectVersion
+	// historyErr is why the history could not be listed, before it ever was.
+	historyErr string
+	history    []state.ObjectVersion
 
 	metricsGen int
 	metrics    map[string]cli.Metrics
+	// metricsAt is when the metrics on screen were read; metricsErr is why the last read failed.
+	metricsAt  time.Time
 	metricsErr string
 	queuesGen  int
 	queues     map[string]cli.QueueDepth
+	// queueAt is when each depth was read; queueErrs is why the last read of one failed, whose
+	// depth from the read before stays.
+	queueAt   map[string]time.Time
+	queueErrs map[string]string
 }
 
 // lambdaNames are the names in lambda of the stage's functions, sorted.
@@ -107,7 +120,7 @@ type stageResource struct {
 
 var (
 	functionColumns = []column{
-		{title: "function", width: 12, grow: 2},
+		{title: functionWord, width: 12, grow: 2},
 		{title: "runtime", width: 15, drop: 5},
 		{title: "memory", width: 9, right: true, drop: 3},
 		{title: "timeout", width: 7, right: true, drop: 4},
@@ -135,11 +148,11 @@ var (
 	}
 )
 
-// stageEmpty is what each tab says when it has no rows, and stageNoMatch when the filter hides
-// them all.
+// stageEmpty is what each tab says when it has no rows, and stageRowNames name one of its rows
+// for when the filter hides them all.
 var (
-	stageEmpty   = [4]string{"no functions", "no resources", "no outputs", "no deploys yet"}
-	stageNoMatch = [4]string{"no functions match the filter", "no resources match the filter", "no outputs match the filter", "no deploys match the filter"}
+	stageEmpty    = [4]string{"no functions yet", "no resources yet", "no outputs yet", "no deploys yet"}
+	stageRowNames = [4]string{functionWord, "resource", "output", "deploy"}
 )
 
 func newStageState() stageState {
@@ -165,12 +178,12 @@ func (s *stageState) setRows(tab stageTab, keys []string, rows []tableRow) {
 	s.keys[tab] = keys
 	t.empty = stageEmpty[tab]
 	switch {
-	case tab == historyTab && s.historyFailed:
-		t.empty = "the history could not be listed · r lists it again"
+	case tab == historyTab && s.historyErr != "":
+		t.empty = "could not list the history: " + s.historyErr + " · r tries again"
 	case tab == historyTab && !s.historyLoaded:
-		t.empty = "reading the history…"
+		t.empty = readingNote("the history")
 	case s.filter.text != "":
-		t.empty = stageNoMatch[tab]
+		t.empty = noMatch(stageRowNames[tab], s.filter.text)
 	}
 	t.setRows(rows)
 	if i := slices.Index(keys, current); i >= 0 {
@@ -225,6 +238,9 @@ func (m model) applyStage(msg stageLoadedMsg) (model, tea.Cmd) {
 		m.loading = false
 	}
 	if msg.err != nil {
+		if !s.loaded {
+			s.err = msg.err.Error()
+		}
 		return m.loadError("could not read the state of "+s.ref.String(), msg.err, s.loaded)
 	}
 	if msg.state == nil && !m.b.Local(s.ref) && s.loaded {
@@ -233,9 +249,9 @@ func (m model) applyStage(msg stageLoadedMsg) (model, tea.Cmd) {
 	if msg.state == nil {
 		msg.state = state.New(s.ref.App, s.ref.Stage, s.ref.Region, m.ident.Account)
 	}
-	s.st, s.lock, s.loaded = msg.state, msg.lock, true
+	s.st, s.lock, s.loaded, s.err = msg.state, msg.lock, true, ""
 	if m.page == stagePage {
-		m.refreshedAt = time.Now()
+		m = m.markRead()
 	}
 	m = m.updateStageTables()
 	if m.page == functionPage {
@@ -254,7 +270,7 @@ func (m model) applyMetrics(msg metricsLoadedMsg) (model, tea.Cmd) {
 	if msg.err != nil {
 		s.metricsErr = msg.err.Error()
 	} else {
-		s.metrics, s.metricsErr = msg.metrics, ""
+		s.metrics, s.metricsAt, s.metricsErr = msg.metrics, time.Now(), ""
 	}
 	return m.updateStageTables(), nil
 }
@@ -264,7 +280,21 @@ func (m model) applyQueues(msg queuesLoadedMsg) (model, tea.Cmd) {
 	if msg.gen != s.queuesGen {
 		return m, nil
 	}
-	s.queues = msg.depths
+	if msg.depths == nil {
+		msg.depths = map[string]cli.QueueDepth{}
+	}
+	at := map[string]time.Time{}
+	for id := range msg.depths {
+		at[id] = time.Now()
+	}
+	errs := map[string]string{}
+	for id, err := range msg.errs {
+		errs[id] = err.Error()
+		if d, ok := s.queues[id]; ok {
+			msg.depths[id], at[id] = d, s.queueAt[id]
+		}
+	}
+	s.queues, s.queueAt, s.queueErrs = msg.depths, at, errs
 	return m.updateStageTables(), nil
 }
 
@@ -284,10 +314,12 @@ func (m model) applyHistory(msg historyLoadedMsg) (model, tea.Cmd) {
 		return m, nil
 	}
 	if msg.err != nil {
-		s.historyFailed = !s.historyLoaded
+		if !s.historyLoaded {
+			s.historyErr = msg.err.Error()
+		}
 		return m.updateStageTables().loadError("could not list the history of "+s.ref.String(), msg.err, s.historyLoaded)
 	}
-	s.history, s.historyLoaded, s.historyFailed = msg.versions, true, false
+	s.history, s.historyLoaded, s.historyErr = msg.versions, true, ""
 	return m.updateStageTables(), nil
 }
 
@@ -359,11 +391,12 @@ func (m model) updateStageTables() model {
 }
 
 // metricCells are a function's invocations, errors and p99 duration of the last hour: an
-// ellipsis while they are read, and a dash where they cannot be.
+// ellipsis while they are read, and a dash where they cannot be, as for a function not created
+// yet, which has no name in lambda.
 func (s stageState) metricCells(name string) (calls, errs, p99 cell) {
 	mt, ok := s.metrics[name]
 	switch {
-	case !ok && s.metricsErr != "":
+	case !ok && (s.metricsErr != "" || name == ""):
 		return text("-", styles.ToneFaint), text("-", styles.ToneFaint), text("-", styles.ToneFaint)
 	case !ok:
 		return text("…", styles.ToneFaint), text("…", styles.ToneFaint), text("…", styles.ToneFaint)
@@ -481,6 +514,13 @@ func (s stageState) resourceRow(r stageResource) tableRow {
 		name = cell{styles.S(branch, styles.ToneRule), styles.S(r.id, styles.ToneBody)}
 	}
 	note := resourceNote(r.res, r.retained)
+	_, read := s.queues[r.id]
+	if _, failed := s.queueErrs[r.id]; failed && !read {
+		if note[0].Text != "" {
+			note = append(note, styles.S(" · ", styles.ToneFaint))
+		}
+		note = append(note, styles.S("could not read the depth", styles.ToneFaint))
+	}
 	if d, ok := s.queues[r.id]; ok {
 		depth := cell{styles.S(formatInt(d.Visible), styles.ToneBody), styles.S(" queued", styles.ToneFaint)}
 		switch {
@@ -688,7 +728,8 @@ func (m model) stageFacts() string {
 	return clip(" "+styles.Render(deployed...)+"\n "+styles.Render(lock...), contentWidth-2, 2)
 }
 
-// tabBar names the tabs with how many rows each holds, the open one in the accent.
+// tabBar names the tabs with how many rows each holds, the open one in the accent. Each page
+// sets it one column in, where its section headings start.
 func tabBar(names []string, counts []string, open int) string {
 	var spans []styles.Span
 	for i, name := range names {
@@ -705,7 +746,17 @@ func tabBar(names []string, counts []string, open int) string {
 			spans = append(spans, styles.S(" "+counts[i], styles.ToneFaint))
 		}
 	}
-	return " " + styles.Render(spans...)
+	return styles.Render(spans...)
+}
+
+// metricsNote says the metrics could not be read, or that those on screen are from an earlier
+// read, faint as the table beside it says what it can.
+func (m model) metricsNote() cell {
+	s := m.state.stage
+	if s.metrics == nil {
+		return text("could not read the metrics: "+s.metricsErr, styles.ToneFaint)
+	}
+	return staleNote("metrics", s.metricsAt, s.metricsErr)
 }
 
 // stageNoteWidth is the narrowest a note beside the tabs is shown at.
@@ -714,17 +765,20 @@ const stageNoteWidth = 16
 func (m model) stageView() string {
 	s := m.state.stage
 	if s.st == nil {
+		what := "the state of " + s.ref.String()
+		if s.err == "" {
+			return place(contentWidth, contentHeight, styles.Muted(truncate(styles.Clean(readingNote(what)), contentWidth-4)))
+		}
 		return place(contentWidth, contentHeight, lipgloss.JoinVertical(lipgloss.Center,
-			styles.Muted(truncate("the state of "+styles.Clean(s.ref.String())+" could not be read", contentWidth-4)),
-			styles.Faint(m.keys.Refresh.Help().Key+" reads it again")))
+			cellLines(m.couldNotRead(what, s.err, styles.ToneDanger), min(contentWidth-4, dialogTextWidth()))...))
 	}
 	counts := []string{formatInt(len(s.functions)), formatInt(len(s.resources)), formatInt(len(s.outputs)), ""}
 	if s.historyLoaded {
 		counts[historyTab] = formatInt(len(s.shownDeploys))
 	}
-	bar := tabBar(stageTabs, counts, int(s.tab))
+	bar := indent(tabBar(stageTabs, counts, int(s.tab)))
 	if room := contentWidth - ansi.StringWidth(bar) - 4; s.tab == functionsTab && s.metricsErr != "" && room >= stageNoteWidth {
-		bar = spread(bar, styles.Faint(truncate(styles.Clean("no metrics: "+s.metricsErr), room)), contentWidth-1)
+		bar = spread(bar, ansi.Truncate(styles.Render(m.metricsNote()...), room, "…"), contentWidth-1)
 	}
 	return strings.Join([]string{
 		m.stageFacts(),

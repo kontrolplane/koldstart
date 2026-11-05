@@ -25,7 +25,8 @@ import (
 // suggests.
 var binary = cli.Name(os.Args[0])
 
-// backend is what the interface reads and changes, a *cli.Console outside tests.
+// backend is what the interface reads and changes, a *cli.Console outside tests. EventsDir is
+// "" without a project here to keep events in.
 type backend interface {
 	Identity() cli.Identity
 	Project() (app, stage string, err error)

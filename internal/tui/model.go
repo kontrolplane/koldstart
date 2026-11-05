@@ -87,6 +87,8 @@ type model struct {
 	paused        bool
 	refreshGen    int
 	refreshedAt   time.Time
+	// stale says the last read of the page on screen failed, so it shows the one at refreshedAt.
+	stale bool
 	// gen numbers the loads; a page keeps the one it waits for and drops the others.
 	gen int
 }
@@ -143,10 +145,16 @@ func (m model) withTimeout(d time.Duration) (context.Context, context.CancelFunc
 // spinner.
 func (m model) switchPage(p page) model {
 	if p != m.page {
-		m.refreshedAt = time.Time{}
+		m.refreshedAt, m.stale = time.Time{}, false
 	}
 	m.page = p
 	m.loading = false
+	return m
+}
+
+// markRead notes the page on screen was read now.
+func (m model) markRead() model {
+	m.refreshedAt, m.stale = time.Now(), false
 	return m
 }
 

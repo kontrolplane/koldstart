@@ -37,7 +37,7 @@ func TestResourceLiveStates(t *testing.T) {
 		{
 			name: "an emulator without cloud control",
 			msg:  &liveLoadedMsg{err: errAWS},
-			want: []string{"✗ could not read it from aws", "aws said no", "an emulator may not have"},
+			want: []string{"could not read it from aws: aws said no · r tries again", "an emulator may not have"},
 		},
 		{
 			name: "no properties",

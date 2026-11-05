@@ -35,14 +35,16 @@ func (f *filterBox) open() tea.Cmd {
 	return f.input.Focus()
 }
 
-// update takes a key while the filter is active. It reports whether the filter text changed.
-func (f *filterBox) update(msg tea.KeyPressMsg, k keys.KeyMap) (bool, tea.Cmd) {
+// update takes a key while the filter is active, or another message for its input, as the blink
+// of its cursor or a paste. It reports whether the filter text changed.
+func (f *filterBox) update(msg tea.Msg, k keys.KeyMap) (bool, tea.Cmd) {
+	press, _ := msg.(tea.KeyPressMsg)
 	switch {
-	case key.Matches(msg, k.View):
+	case key.Matches(press, k.View):
 		f.active = false
 		f.input.Blur()
 		return false, nil
-	case key.Matches(msg, k.Back):
+	case key.Matches(press, k.Back):
 		f.active = false
 		f.input.Blur()
 		f.input.SetValue("")

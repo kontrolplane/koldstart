@@ -6,6 +6,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
@@ -31,10 +32,13 @@ type resourceState struct {
 	tab    resourceTab
 	scroll int
 
-	liveGen    int
+	liveGen int
+	// liveLoaded is the last read done; live stays from the one before while r reads it again.
 	liveLoaded bool
 	live       map[string]any
-	liveErr    error
+	// liveAt is when live was read; liveErr is why the last read failed.
+	liveAt  time.Time
+	liveErr error
 }
 
 // openResource shows a resource, and reads it as aws has it now.
@@ -58,7 +62,15 @@ func (m model) applyLive(msg liveLoadedMsg) (model, tea.Cmd) {
 	if msg.gen != r.liveGen {
 		return m, nil
 	}
-	r.live, r.liveErr, r.liveLoaded = msg.props, msg.err, true
+	r.liveLoaded = true
+	switch {
+	case msg.err != nil && r.live != nil && !errors.Is(msg.err, cli.ErrNotLive):
+		r.liveErr = msg.err
+	case msg.err != nil:
+		r.live, r.liveErr = nil, msg.err
+	default:
+		r.live, r.liveAt, r.liveErr = msg.props, time.Now(), nil
+	}
 	return m, nil
 }
 
@@ -69,17 +81,20 @@ func (m model) resourceUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.Back, m.keys.Quit):
 		return m.switchPage(stagePage), nil
-	case key.Matches(msg, m.keys.NextTab, m.keys.PrevTab):
+	case key.Matches(msg, m.keys.NextTab, m.keys.PrevTab, m.keys.Left, m.keys.Right):
 		r.tab, r.scroll = 1-r.tab, 0
 		return m, nil
 	case key.Matches(msg, m.keys.Copy):
 		return m.copy(cmpOr(r.res.res.PhysicalID, r.res.res.Attributes["Arn"]))
 	case key.Matches(msg, m.keys.Refresh):
 		if !readable(r.res) {
-			return m, nil
+			return m.loadQueues()
 		}
 		r.liveLoaded = false
-		return m.loadLive()
+		var live, queues tea.Cmd
+		m, live = m.loadLive()
+		m, queues = m.loadQueues()
+		return m, tea.Batch(live, queues)
 	}
 	r.scroll = min(scrollBy(msg, m.keys, r.scroll, contentHeight), max(0, len(m.resourceLines())-contentHeight))
 	return m, nil
@@ -116,12 +131,21 @@ func (m model) headLines(width int) []string {
 		row("policy", value(policy), width),
 		row("depends on", value(strings.Join(res.Dependencies, ", ")), width),
 	}
-	if d, ok := m.state.stage.queues[r.id]; ok {
+	s := m.state.stage
+	d, read := s.queues[r.id]
+	err, failed := s.queueErrs[r.id]
+	switch {
+	case read:
 		lines = append(lines, row("messages", cell{
 			styles.S(formatInt(d.Visible), styles.ToneText), styles.S(" queued", styles.ToneFaint), sep(),
 			styles.S(formatInt(d.InFlight), styles.ToneBody), styles.S(" in flight", styles.ToneFaint), sep(),
 			styles.S(formatInt(d.Delayed), styles.ToneBody), styles.S(" delayed", styles.ToneFaint),
 		}, width))
+		if failed {
+			lines = append(lines, row("", staleNote("", s.queueAt[r.id], err), width))
+		}
+	case failed:
+		lines = append(lines, row("messages", m.couldNotRead("the depth", err, styles.ToneMuted), width))
 	}
 	if res.Pending != nil {
 		lines = append(lines, row("pending", text(res.Pending.Operation+" since "+formatAgo(res.Pending.StartedAt)+": deploy again to finish it", styles.ToneWarning), width))
@@ -154,31 +178,35 @@ func (m model) appliedLines(width int) []string {
 func (m model) liveLinesOf(width int) []string {
 	r := m.state.resource
 	lines := []string{""}
-	wrapped := func(s string, tone styles.Tone) {
-		for _, c := range wrapCell(text(s, tone), width) {
-			lines = append(lines, renderCell(c, column{width: width}, nil))
-		}
+	wrapped := func(s string) {
+		lines = append(lines, cellLines(text(s, styles.ToneFaint), width)...)
 	}
+	reading := styles.Accent(m.spinner.View()) + " " + styles.Muted(readingNote("it from aws"))
 	switch {
 	case r.res.retained:
-		wrapped("a remove left it in place: koldstart does not read it until the next deploy takes it over", styles.ToneFaint)
+		wrapped("a remove left it in place: koldstart does not read it until the next deploy takes it over")
 		return lines
 	case r.res.res.PhysicalID == "":
-		wrapped("it has no id in aws yet: the next deploy creates it", styles.ToneFaint)
+		wrapped("it has no id in aws yet: the next deploy creates it")
+		return lines
+	case !r.liveLoaded && r.live == nil:
+		return append(lines, reading)
+	case errors.Is(r.liveErr, cli.ErrNotLive):
+		wrapped("cloud control cannot read a " + shortType(r.res.res.Type) + ": what koldstart applied is on the applied tab")
+		return lines
+	case r.liveErr != nil && r.live == nil:
+		lines = append(lines, cellLines(m.couldNotRead("it from aws", r.liveErr.Error(), styles.ToneDanger), width)...)
+		lines = append(lines, "")
+		wrapped("reading it takes cloud control, which an emulator may not have, and cloudformation:GetResource with the read permissions of its type. what koldstart applied is on the applied tab")
 		return lines
 	case !r.liveLoaded:
-		return append(lines, styles.Accent(m.spinner.View())+" "+styles.Muted("reading it from aws…"))
-	case errors.Is(r.liveErr, cli.ErrNotLive):
-		wrapped("cloud control cannot read a "+shortType(r.res.res.Type)+": what koldstart applied is on the applied tab", styles.ToneFaint)
-		return lines
+		lines = append(lines, reading, "")
 	case r.liveErr != nil:
-		lines = append(lines, styles.Render(styles.S("✗ could not read it from aws", styles.ToneDanger)))
-		wrapped(r.liveErr.Error(), styles.ToneDanger)
+		lines = append(lines, cellLines(staleNote("", r.liveAt, r.liveErr.Error()), width)...)
 		lines = append(lines, "")
-		wrapped("reading it takes cloud control, which an emulator may not have, and cloudformation:GetResource with the read permissions of its type. what koldstart applied is on the applied tab", styles.ToneFaint)
-		return lines
-	case len(r.live) == 0:
-		wrapped("aws returned no properties for it", styles.ToneFaint)
+	}
+	if len(r.live) == 0 {
+		wrapped("aws returned no properties for it")
 		return lines
 	}
 	applied := appliedProperties(r.res)

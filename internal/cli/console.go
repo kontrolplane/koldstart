@@ -141,13 +141,12 @@ func (c *Console) Local(ref StageRef) bool {
 }
 
 // EventsDir is where the events to invoke a function with are kept: .koldstart/events/<function>
-// in the project, or in this directory without one.
+// in the project, or "" without a project here, as there is nowhere they belong.
 func (c *Console) EventsDir(function string) string {
-	root := "."
-	if c.project != nil {
-		root = c.project.Root
+	if c.project == nil {
+		return ""
 	}
-	return filepath.Join(root, ".koldstart", "events", function)
+	return filepath.Join(c.project.Root, ".koldstart", "events", function)
 }
 
 // backend returns the state bucket of a region, or nil when it has none. Only a bucket that

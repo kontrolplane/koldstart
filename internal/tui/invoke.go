@@ -53,7 +53,10 @@ func resultWidth() int { return contentWidth - 4 - eventsWidth() - 2 }
 func (m model) readEventFiles() model {
 	f := &m.state.function
 	dir := m.b.EventsDir(f.name)
-	entries, _ := os.ReadDir(dir)
+	var entries []os.DirEntry
+	if dir != "" {
+		entries, _ = os.ReadDir(dir)
+	}
 	var files []string
 	for _, e := range entries {
 		if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
@@ -70,7 +73,10 @@ func (m model) readEventFiles() model {
 		}
 		rows = append(rows, tableRow{c})
 	}
-	if len(files) == 0 {
+	switch {
+	case len(files) == 0 && dir == "":
+		rows = []tableRow{{text(defaultEvent, styles.ToneText)}}
+	case len(files) == 0:
 		rows = []tableRow{{cell{styles.S(defaultEvent, styles.ToneText), styles.S("  e creates "+defaultEventFile, styles.ToneFaint)}}}
 	}
 	f.events.setRows(rows)
@@ -121,16 +127,20 @@ func editor() []string {
 }
 
 // editEvent opens the selected event in $VISUAL or $EDITOR, creating event.json with {} when the
-// function has no events yet. An editor that cannot be found is said before anything is created.
+// function has no events yet. Without a project here there is nowhere to keep one, and an editor
+// that cannot be found is said before anything is created.
 //
 //nolint:gosec // runs the editor the user set, on an event of the project
 func (m model) editEvent() (model, tea.Cmd) {
+	dir := m.b.EventsDir(m.state.function.name)
+	if dir == "" {
+		return m.setStatus("events are kept in a project: run "+binary+" ui in one to edit them", styles.ToneWarning)
+	}
 	args := editor()
 	if _, err := exec.LookPath(args[0]); err != nil {
 		m.error = "could not find the editor " + args[0] + ": set $EDITOR, or $VISUAL, to the command of the one to use"
 		return m, nil
 	}
-	dir := m.b.EventsDir(m.state.function.name)
 	name := m.selectedEvent()
 	if name == "" {
 		name = defaultEventFile
@@ -270,6 +280,9 @@ func (m model) invokeHints(name string) []string {
 		lines = append(lines, styles.Muted(name+" is not deployed yet: shift+i runs it on this machine"))
 	default:
 		lines = append(lines, styles.Muted(name+" is not deployed yet"))
+	}
+	if m.b.EventsDir(f.name) == "" {
+		return lines
 	}
 	return append(lines, styles.Faint("e edits the event"))
 }

@@ -50,6 +50,8 @@ type functionState struct {
 
 	liveGen int
 	live    *cli.FunctionState
+	// liveAt is when live was read; liveErr is why the last read failed.
+	liveAt  time.Time
 	liveErr string
 
 	logs logState
@@ -141,7 +143,7 @@ func (m model) applyFunctionLive(msg functionLiveMsg) (model, tea.Cmd) {
 		return m, nil
 	}
 	live := msg.live
-	f.live, f.liveErr = &live, ""
+	f.live, f.liveAt, f.liveErr = &live, time.Now(), ""
 	return m, nil
 }
 
@@ -180,10 +182,10 @@ func (m model) functionUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 		return m.leaveFunction()
 	case key.Matches(msg, m.keys.Quit):
 		return m.leaveFunction()
-	case key.Matches(msg, m.keys.NextTab):
+	case key.Matches(msg, m.keys.NextTab, m.keys.Right):
 		f.tab, f.scroll = (f.tab+1)%functionTab(len(functionTabs)), 0
 		return m, nil
-	case key.Matches(msg, m.keys.PrevTab):
+	case key.Matches(msg, m.keys.PrevTab, m.keys.Left):
 		f.tab, f.scroll = (f.tab+functionTab(len(functionTabs))-1)%functionTab(len(functionTabs)), 0
 		return m, nil
 	case key.Matches(msg, m.keys.Invoke):
@@ -267,7 +269,7 @@ func (m model) functionView() string {
 	if !f.logs.loaded {
 		counts[logsTab], counts[invocationsTab] = "", ""
 	}
-	bar := tabBar(functionTabs, counts, int(f.tab))
+	bar := indent(tabBar(functionTabs, counts, int(f.tab)))
 	if hint != "" {
 		bar = spread(bar, styles.Faint(hint), contentWidth-1)
 	}
@@ -444,9 +446,11 @@ func (m model) liveLines(width int) []string {
 	case f.lambdaName == "":
 		return append(lines, styles.Faint("not deployed yet"))
 	case f.live == nil && f.liveErr != "":
-		return append(lines, wrapped("could not read it: "+f.liveErr, styles.ToneMuted, w, 3)...)
+		return append(lines, cellLines(m.couldNotRead("it from lambda", f.liveErr, styles.ToneMuted), w)...)
 	case f.live == nil:
-		return append(lines, styles.Faint("reading…"))
+		return append(lines, styles.Faint(readingNote("it from lambda")))
+	case f.liveErr != "":
+		lines = append(lines, cellLines(staleNote("", f.liveAt, f.liveErr), w)...)
 	}
 	live := f.live
 	state := cell{styles.S(strings.ToLower(orDash(live.State)), stateTone(live.State))}
@@ -531,11 +535,16 @@ func (m model) metricLines(width int) []string {
 	lines := []string{styles.SectionHeader("last hour", w)}
 	mt, ok := s.metrics[f.lambdaName]
 	switch {
+	case f.lambdaName == "":
+		return append(lines, styles.Faint("not deployed yet"))
 	case !ok && s.metricsErr != "":
-		return append(lines, wrapped("no metrics: "+s.metricsErr, styles.ToneFaint, w, 3)...)
+		return append(lines, cellLines(m.couldNotRead("the metrics", s.metricsErr, styles.ToneMuted), w)...)
 	case !ok:
-		return append(lines, styles.Faint("reading…"))
-	case peak(mt.Invocations) == 0 && peak(mt.Errors) == 0 && peak(mt.Throttles) == 0:
+		return append(lines, styles.Faint(readingNote("the metrics")))
+	case s.metricsErr != "":
+		lines = append(lines, cellLines(staleNote("", s.metricsAt, s.metricsErr), w)...)
+	}
+	if peak(mt.Invocations) == 0 && peak(mt.Errors) == 0 && peak(mt.Throttles) == 0 {
 		return append(lines, styles.Faint("not invoked in the last hour"))
 	}
 	sum := mt.Summary()

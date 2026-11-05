@@ -127,10 +127,10 @@ func TestStageMetricsUnavailable(t *testing.T) {
 	f := newFake(t)
 	f.metricsErr = errAWS
 	m := started(t, f)
-	if v := screen(m); m.error != "" || !strings.Contains(v, "no metrics: aws said no") || !strings.Contains(v, "orders-dev-api") {
+	if v := screen(m); m.error != "" || !strings.Contains(v, "could not read the metrics: aws said no") || !strings.Contains(v, "orders-dev-api") {
 		t.Errorf("error %q; screen:\n%s", m.error, v)
 	}
-	if v := screen(pressKeys(t, m, "tab")); strings.Contains(v, "no metrics") {
+	if v := screen(pressKeys(t, m, "tab")); strings.Contains(v, "metrics") {
 		t.Errorf("the resources tab says there are no metrics:\n%s", v)
 	}
 }
@@ -141,7 +141,7 @@ func TestStageEmpty(t *testing.T) {
 	m := pressKeys(t, started(t, newFake(t)), "/")
 	m = typeText(t, m, "nothing-like-this")
 	m = pressKeys(t, m, "enter")
-	for _, tab := range []string{"no functions match the filter", "no resources match the filter", "no outputs match the filter", "no deploys match the filter"} {
+	for _, tab := range []string{"no function matches nothing-like-this", "no resource matches nothing-like-this", "no output matches nothing-like-this", "no deploy matches nothing-like-this"} {
 		if v := screen(m); !strings.Contains(v, tab) {
 			t.Errorf("no %q:\n%s", tab, v)
 		}
@@ -156,7 +156,7 @@ func TestStageEmpty(t *testing.T) {
 		t.Fatal("a history that cannot be listed raised no error")
 	}
 	m = pressKeys(t, m, "esc")
-	if v := screen(m); !strings.Contains(v, "the history could not be listed") {
+	if v := screen(m); !strings.Contains(v, "could not list the history: aws said no · r tries again") {
 		t.Errorf("the history tab:\n%s", v)
 	}
 	f.err = nil
@@ -173,7 +173,7 @@ func TestStageUnreadable(t *testing.T) {
 	f.err = errAWS
 	m, cmd := m.openStage(ordersProd)
 	m = pressKeys(t, settle(t, m, cmd), "esc")
-	if v := screen(m); !strings.Contains(v, "the state of orders/prod could not be read") || !strings.Contains(v, "r reads it again") {
+	if v := screen(m); !strings.Contains(v, "could not read the state of orders/prod: aws said no · r tries again") {
 		t.Fatalf("the stage:\n%s", v)
 	}
 	f.err = nil

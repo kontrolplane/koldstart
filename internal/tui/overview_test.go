@@ -53,7 +53,7 @@ func TestOverviewLoadFails(t *testing.T) {
 		t.Fatalf("error %q, want the failed load", m.error)
 	}
 	m = pressKeys(t, m, "x")
-	if v := screen(m); !strings.Contains(v, "could not list the stages: r tries again") {
+	if v := screen(m); !strings.Contains(v, "could not list the stages: aws said no · r tries again") {
 		t.Errorf("the page does not say the load failed:\n%s", v)
 	}
 	m, cmd := update(t, m, refreshTickMsg{gen: m.refreshGen})

@@ -24,7 +24,9 @@ func (m model) Init() tea.Cmd {
 
 // busy reports whether something runs that the spinner shows.
 func (m model) busy() bool {
-	return m.loading || m.state.plan.applying || m.state.function.invoking
+	r := m.state.resource
+	reading := m.page == resourcePage && r.tab == liveTab && !r.liveLoaded && readable(r.res)
+	return m.loading || m.state.plan.applying || m.state.function.invoking || m.state.function.logs.loadingOlder || reading
 }
 
 // keepSpinning restarts the spinner when something began after it last stopped.
@@ -36,10 +38,12 @@ func (m model) keepSpinning() (model, tea.Cmd) {
 	return m, m.spinner.Tick
 }
 
-// loadError reports a failed load. Data already on screen stays there with the error in the
-// footer, so a refresh failing every few seconds does not keep raising a dialog.
+// loadError reports a failed load. Data already on screen stays there, marked as of when it was
+// read, with the error in the footer, so a refresh failing every few seconds does not keep
+// raising a dialog.
 func (m model) loadError(what string, err error, onScreen bool) (model, tea.Cmd) {
 	if onScreen {
+		m.stale = !m.refreshedAt.IsZero()
 		return m.setStatus(what+": "+err.Error(), styles.ToneDanger)
 	}
 	m.error = what + ": " + err.Error()
@@ -149,6 +153,38 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		m, tick := m.scheduleRefresh()
 		m, load := m.refresh()
 		return m, tea.Batch(tick, load)
+	default:
+		return m.toInput(msg)
+	}
+	return m, nil
+}
+
+// toInput hands a message the model does not know, as the blink of a cursor or a paste, to the
+// text input that has focus.
+func (m model) toInput(msg tea.Msg) (model, tea.Cmd) {
+	f := &m.state.function
+	switch {
+	case m.tooSmall():
+	case m.page == overviewPage && m.state.overview.filter.active:
+		changed, cmd := m.state.overview.filter.update(msg, m.keys)
+		if changed {
+			m = m.updateOverviewTable()
+		}
+		return m, cmd
+	case m.page == stagePage && m.state.stage.filter.active:
+		changed, cmd := m.state.stage.filter.update(msg, m.keys)
+		if changed {
+			m = m.updateStageTables()
+		}
+		return m, cmd
+	case m.page == functionPage && f.tab == logsTab && f.logs.filter.active:
+		changed, cmd := f.logs.filter.update(msg, m.keys)
+		if changed {
+			f.logs.scroll = 0
+		}
+		return m, cmd
+	case m.page == removePage:
+		return m.removeUpdate(msg)
 	}
 	return m, nil
 }
@@ -193,7 +229,7 @@ func (m model) keyPress(msg tea.KeyPressMsg) (model, tea.Cmd) {
 		return m.versionUpdate(msg)
 	case planPage:
 		if m.loading {
-			return m.leavePlan()
+			return m.cancelPlan()
 		}
 		return m.planUpdate(msg)
 	case unlockPage:
@@ -426,8 +462,12 @@ func (m model) frameMeta() (string, string) {
 	if t != nil && t.position() != "" {
 		foot = append(foot, styles.Faint(t.position()))
 	}
-	if !m.refreshedAt.IsZero() && m.refreshes() {
-		foot = append(foot, styles.Faint("read at "+m.refreshedAt.Local().Format(time.TimeOnly)))
+	switch at := m.refreshedAt.Local().Format(time.TimeOnly); {
+	case m.refreshedAt.IsZero() || !m.refreshes():
+	case m.stale:
+		foot = append(foot, styles.Render(styles.S("as of "+at+", could not read again", styles.ToneWarning)))
+	default:
+		foot = append(foot, styles.Faint("read at "+at))
 	}
 	if m.paused {
 		foot = append(foot, styles.Render(styles.S("⏸ paused", styles.ToneWarning)))
@@ -529,7 +569,9 @@ func (m model) shortHelp() [][2]string {
 		case invocationsTab:
 			h = append(h, hint(k.View, "open"))
 		case invokeTab:
-			h = append(h, hint(k.EditEvent))
+			if m.b.EventsDir(m.state.function.name) != "" {
+				h = append(h, hint(k.EditEvent))
+			}
 		}
 		h = append(h, hint(k.NextTab), hint(k.Invoke))
 		if m.b.Local(m.state.stage.ref) {
