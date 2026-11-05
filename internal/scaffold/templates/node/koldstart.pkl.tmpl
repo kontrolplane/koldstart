@@ -1,0 +1,17 @@
+amends "{{.Project}}"
+
+import "{{.Kdst}}"
+
+app = "{{.App}}"
+region = "{{.Region}}"
+
+functions {
+  ["api"] {
+    runtime = "nodejs22.x"
+    handler = "src/api.handler"
+    memory = 256
+    events {
+      new kdst.HttpRoute { method = "GET"; path = "/hello" }
+    }
+  }
+}

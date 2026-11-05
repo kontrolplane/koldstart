@@ -91,6 +91,7 @@ func Root(name string, ui UI) *cobra.Command {
 	root.Flags().Bool("version", false, "print the version and exit")
 
 	root.AddCommand(versionCommand(name))
+	root.AddCommand(initCommand(name, opts))
 	root.AddCommand(packageCommand(name, opts))
 	root.AddCommand(planCommand(name, opts))
 	root.AddCommand(deployCommand(name, opts))

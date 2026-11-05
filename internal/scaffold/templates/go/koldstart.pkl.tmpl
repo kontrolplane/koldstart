@@ -1,0 +1,17 @@
+amends "{{.Project}}"
+
+import "{{.Kdst}}"
+
+app = "{{.App}}"
+region = "{{.Region}}"
+
+functions {
+  ["api"] {
+    runtime = "provided.al2023"
+    handler = "./cmd/api"
+    memory = 256
+    events {
+      new kdst.HttpRoute { method = "GET"; path = "/hello" }
+    }
+  }
+}
