@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"time"
+
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 
@@ -66,22 +68,12 @@ func (m model) applyUnlocked(msg unlockedMsg) (model, tea.Cmd) {
 	return m, tea.Batch(status, load)
 }
 
+// unlockView asks before releasing a lock, saying who holds it in the words a deploy refused by
+// it says.
 func (m model) unlockView() string {
 	u := m.state.unlock
-	held := []styles.Span{styles.S("held by ", styles.ToneFaint), styles.B(orDash(u.lock.Who), styles.ToneText)}
-	if u.lock.Operation != "" {
-		held = append(held, styles.S(" for a "+u.lock.Operation, styles.ToneBody))
-	}
-	if u.lock.Where != "" {
-		held = append(held, styles.S(" from "+u.lock.Where, styles.ToneBody))
-	}
-	since := "since " + formatTime(u.lock.Since) + ", " + formatAgo(u.lock.Since)
-	if u.lock.Since.IsZero() {
-		since = "since an unknown time"
-	}
 	return dialog("release the lock of "+u.ref.String()+"?", styles.ToneWarning,
-		styles.Render(held...),
-		styles.Render(styles.S(since, styles.ToneFaint)),
+		styles.Render(styles.S(cli.LockHeld(u.lock, time.Now()), styles.ToneBody)),
 		"",
 		styles.Muted("make sure that deploy is really gone: two deploys of one stage at once can leave its state wrong."),
 		"",

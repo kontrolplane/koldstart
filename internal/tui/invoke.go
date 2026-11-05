@@ -215,7 +215,7 @@ func (m model) applyInvoked(msg invokedMsg) (model, tea.Cmd) {
 	case msg.inv.Error != "":
 		return m.setStatus(f.name+" failed: "+functionError(msg.inv), styles.ToneDanger)
 	}
-	return m.setStatus(f.name+" returned in "+formatDuration(msg.inv.Duration), styles.ToneSuccess)
+	return m.setStatus(f.name+" returned in "+cli.Duration(msg.inv.Duration), styles.ToneSuccess)
 }
 
 // invokeUpdate handles a key on the invoke tab: ↑ and ↓ choose the event, pgup and pgdn scroll
@@ -327,7 +327,7 @@ func functionError(inv cli.Invocation) string {
 func resultLines(r invocationResult, width int) []string {
 	took := ""
 	if r.inv.Duration > 0 {
-		took = " in " + formatDuration(r.inv.Duration)
+		took = " in " + cli.Duration(r.inv.Duration)
 	}
 	where := " in aws"
 	if r.local {

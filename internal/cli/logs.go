@@ -40,7 +40,7 @@ cloudwatch logs filter pattern, such as ERROR or "{ $.level = \"error\" }".`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if since <= 0 {
-				return fmt.Errorf("--since %s: want a duration back from now, such as 30m or 2h", since)
+				return usage(cmd, fmt.Errorf("--since %s: want a duration back from now, such as 30m or 2h", since))
 			}
 			ctx := cmd.Context()
 			s, err := openStage(ctx, opts, false)
@@ -65,7 +65,7 @@ cloudwatch logs filter pattern, such as ERROR or "{ $.level = \"error\" }".`,
 			}
 			if !tail {
 				if p.printed == 0 {
-					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "no logs of %s in the last %s: --since looks further back, --tail follows them\n", function, shortDuration(since))
+					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "no logs of %s in the last %s: --since looks further back, --tail follows them\n", function, Duration(since))
 				}
 				return nil
 			}
@@ -96,18 +96,6 @@ func (p *logPrinter) print(timestamp int64, message string) {
 	message = strings.ReplaceAll(strings.TrimRight(message, "\r\n"), "\n", indent)
 	_, _ = fmt.Fprintf(p.w, "%s  %s\n", t, message)
 	p.printed++
-}
-
-// shortDuration writes a duration without the zero units time.Duration writes: 10m, not 10m0s.
-func shortDuration(d time.Duration) string {
-	s := d.String()
-	if strings.HasSuffix(s, "m0s") {
-		s = strings.TrimSuffix(s, "0s")
-	}
-	if strings.HasSuffix(s, "h0m") {
-		s = strings.TrimSuffix(s, "0m")
-	}
-	return s
 }
 
 // printLogs prints the events of the group since start, and returns the time of the last one.

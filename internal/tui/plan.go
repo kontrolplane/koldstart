@@ -277,21 +277,14 @@ func (m model) leavePlan() (model, tea.Cmd) {
 	return m.openStage(m.state.plan.ref)
 }
 
-// summaryActions are the actions in the order plan counts them.
-var summaryActions = []engine.Action{engine.Create, engine.Update, engine.Replace, engine.Delete, engine.Keep, engine.Adopt}
-
 // planSummary counts the changes of each action, as plan does, each in the tone of its action.
 func planSummary(plan *engine.Plan) []styles.Span {
-	counts := plan.Counts()
 	var spans []styles.Span
-	for _, a := range summaryActions {
-		if counts[a] == 0 {
-			continue
-		}
+	for _, c := range cli.PlanCounts(plan) {
 		if len(spans) > 0 {
 			spans = append(spans, styles.S(", ", styles.ToneFaint))
 		}
-		spans = append(spans, styles.S(fmt.Sprintf("%d to %s", counts[a], cli.Verb(a)), actionTones[a]))
+		spans = append(spans, styles.S(c.String(), actionTones[c.Action]))
 	}
 	if len(spans) == 0 {
 		return []styles.Span{styles.S("no changes", styles.ToneBody)}
@@ -306,16 +299,6 @@ var actionTones = map[engine.Action]styles.Tone{
 	engine.Delete:  styles.ToneDanger,
 	engine.Keep:    styles.ToneMuted,
 	engine.Adopt:   styles.ToneInfo,
-}
-
-// doing says what an action is doing, for a node in flight.
-var doing = map[engine.Action]string{
-	engine.Create:  "creating",
-	engine.Update:  "updating",
-	engine.Replace: "replacing",
-	engine.Delete:  "deleting",
-	engine.Keep:    "leaving in place",
-	engine.Adopt:   "taking over",
 }
 
 // planStatusWidth is the room on the right of each change for its progress.
@@ -401,40 +384,47 @@ func errorLines(id string, err error, width int) []string {
 }
 
 // applyLines say how the apply goes: how many nodes are done and for how long, and once it ended,
-// whether it failed.
+// what it did and whether it failed, in the words deploy and remove end with.
 func (m model) applyLines(width int) []string {
 	p := m.state.plan
 	if p.progress == nil {
 		return nil
 	}
-	total, done, failed := len(m.planChanges()), 0, 0
+	finished, failed, stopped := map[engine.Action]int{}, 0, 0
 	for _, pr := range p.progress {
 		switch {
 		case pr.err != nil:
 			failed++
 		case pr.done:
-			done++
+			finished[pr.action]++
+		default:
+			stopped++
 		}
-	}
-	counts := fmt.Sprintf("%d of %d done", done, total)
-	if failed > 0 {
-		counts += fmt.Sprintf(", %d failed", failed)
 	}
 	var line cell
 	switch {
 	case p.applying:
+		done := 0
+		for _, n := range finished {
+			done += n
+		}
+		counts := fmt.Sprintf("%d of %d done", done, len(m.planChanges()))
+		if failed > 0 {
+			counts += fmt.Sprintf(", %d failed", failed)
+		}
 		line = cell{styles.S(m.spinner.View()+" ", styles.ToneAccent), styles.S(applyingWord(p.remove)+" · "+counts, styles.ToneBody),
-			styles.S(" · "+elapsed(time.Since(p.startedAt)), styles.ToneFaint)}
+			styles.S(" · "+cli.Elapsed(time.Since(p.startedAt)), styles.ToneFaint)}
 	case p.failed:
-		line = cell{styles.S("✗ ", styles.ToneDanger), styles.S("failed after "+formatDuration(p.finishedAt.Sub(p.startedAt))+" · "+counts, styles.ToneDanger)}
+		summary := cli.ApplySummary(finished, failed, stopped)
+		line = cell{styles.S("✗ ", styles.ToneDanger), styles.S("failed after "+cli.Duration(p.finishedAt.Sub(p.startedAt))+" · "+summary, styles.ToneDanger)}
 		return []string{" " + renderCell(line, column{width: width - 1}, nil), " " + renderCell(text(m.planAgain(), styles.ToneFaint), column{width: width - 1}, nil)}
 	default:
 		what := "deployed"
 		if p.remove {
 			what = "removed"
 		}
-		line = cell{styles.S("✓ ", styles.ToneSuccess), styles.S(what+" in "+formatDuration(p.finishedAt.Sub(p.startedAt)), styles.ToneSuccess),
-			styles.S(" · "+counts, styles.ToneFaint)}
+		line = cell{styles.S("✓ ", styles.ToneSuccess), styles.S(what+" in "+cli.Duration(p.finishedAt.Sub(p.startedAt)), styles.ToneSuccess),
+			styles.S(" · "+cli.ApplySummary(finished, failed, stopped), styles.ToneFaint)}
 	}
 	return []string{" " + renderCell(line, column{width: width - 1}, nil)}
 }
@@ -445,11 +435,6 @@ func applyingWord(remove bool) string {
 		return "removing"
 	}
 	return "deploying"
-}
-
-// elapsed is how long something has run, in whole seconds.
-func elapsed(d time.Duration) string {
-	return max(0, d).Truncate(time.Second).String()
 }
 
 // progressCell says how far a node got while applying.
@@ -467,11 +452,11 @@ func (m model) progressCell(c engine.Change) cell {
 	case !ok:
 		return text("unchanged", styles.ToneFaint)
 	case pr.err != nil:
-		return cell{styles.S("✗ failed after ", styles.ToneDanger), styles.S(formatDuration(pr.duration), styles.ToneFaint)}
+		return cell{styles.S("✗ failed after ", styles.ToneDanger), styles.S(cli.Duration(pr.duration), styles.ToneFaint)}
 	case pr.done:
-		return cell{styles.S("✓ "+cli.PastTense(pr.action)+" in ", styles.ToneSuccess), styles.S(formatDuration(pr.duration), styles.ToneFaint)}
+		return cell{styles.S("✓ "+cli.PastTense(pr.action)+" in ", styles.ToneSuccess), styles.S(cli.Duration(pr.duration), styles.ToneFaint)}
 	case p.applying:
-		return cell{styles.S(m.spinner.View()+" ", styles.ToneAccent), styles.S(doing[pr.action]+" ", styles.ToneMuted), styles.S(elapsed(time.Since(pr.since)), styles.ToneFaint)}
+		return cell{styles.S(m.spinner.View()+" ", styles.ToneAccent), styles.S(cli.Participle(pr.action)+" ", styles.ToneMuted), styles.S(cli.Elapsed(time.Since(pr.since)), styles.ToneFaint)}
 	}
 	return text("✗ stopped", styles.ToneDanger)
 }

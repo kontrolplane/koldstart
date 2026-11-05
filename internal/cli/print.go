@@ -39,6 +39,52 @@ func Verb(a engine.Action) string { return verbs[a] }
 // PastTense says what an action did, as created or left in place.
 func PastTense(a engine.Action) string { return pastTenses[a] }
 
+// Participle says what an action is doing, as creating or leaving in place.
+func Participle(a engine.Action) string { return participles[a] }
+
+// ActionCount is how many changes of a plan take an action.
+type ActionCount struct {
+	Action engine.Action
+	N      int
+}
+
+// String says what the changes do, as 2 to create.
+func (c ActionCount) String() string { return fmt.Sprintf("%d to %s", c.N, verbs[c.Action]) }
+
+// PlanCounts counts the changes of a plan by action, in the order its summary names them, and
+// leaves out the actions it takes none of.
+func PlanCounts(plan *engine.Plan) []ActionCount {
+	counts := plan.Counts()
+	var out []ActionCount
+	for _, a := range actionOrder {
+		if counts[a] > 0 {
+			out = append(out, ActionCount{Action: a, N: counts[a]})
+		}
+	}
+	return out
+}
+
+// ApplySummary counts what applying a plan did, as 8 created, 1 updated, with how many failed
+// and how many were stopped, or says nothing changed.
+func ApplySummary(done map[engine.Action]int, failed, stopped int) string {
+	var parts []string
+	for _, a := range actionOrder {
+		if done[a] > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", done[a], pastTenses[a]))
+		}
+	}
+	if failed > 0 {
+		parts = append(parts, fmt.Sprintf("%d failed", failed))
+	}
+	if stopped > 0 {
+		parts = append(parts, fmt.Sprintf("%d stopped", stopped))
+	}
+	if len(parts) == 0 {
+		return "nothing changed"
+	}
+	return strings.Join(parts, ", ")
+}
+
 // actionOrder is the order the summaries of a plan and of applying it count actions in.
 var actionOrder = []engine.Action{engine.Create, engine.Update, engine.Replace, engine.Delete, engine.Keep, engine.Adopt}
 
@@ -113,12 +159,9 @@ func printPlanTo(w io.Writer, app, stage, region, account string, plan *engine.P
 
 // planCounts counts the changes of a plan, as 2 to create, 1 to update.
 func planCounts(plan *engine.Plan) string {
-	counts := plan.Counts()
 	var parts []string
-	for _, a := range actionOrder {
-		if counts[a] > 0 {
-			parts = append(parts, fmt.Sprintf("%d to %s", counts[a], verbs[a]))
-		}
+	for _, c := range PlanCounts(plan) {
+		parts = append(parts, c.String())
 	}
 	if len(parts) == 0 {
 		return "no changes"

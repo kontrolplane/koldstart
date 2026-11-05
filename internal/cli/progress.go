@@ -153,7 +153,7 @@ func (p *progress) event(ev engine.Event) {
 	}
 	p.clear()
 	id := padRight(ev.ID, p.idWidth)
-	took := elapsed(ev.Duration)
+	took := Duration(ev.Duration)
 	switch {
 	case ev.Err != nil && errors.Is(ev.Err, context.Canceled):
 		p.stopped++
@@ -183,7 +183,7 @@ func (p *progress) tick() {
 		if n := int(now.Sub(r.since) / progressNote); n > r.notes {
 			r.notes = n
 			_, _ = fmt.Fprintf(&p.buf, "  %s %s  %s\n", p.colour.paint(sgrFaint, "…"), padRight(r.id, p.idWidth),
-				p.colour.paint(sgrFaint, "still "+participles[r.action]+" after "+elapsed(now.Sub(r.since))))
+				p.colour.paint(sgrFaint, "still "+participles[r.action]+" after "+Elapsed(now.Sub(r.since))))
 		}
 	}
 }
@@ -214,7 +214,7 @@ func (p *progress) draw() {
 		ids = append(ids, r.id)
 	}
 	line := fmt.Sprintf("  %s %d of %d  %s  %s", p.colour.paint(sgrCyan, spinner[p.frame%len(spinner)]), finished, p.total,
-		strings.Join(ids, ", "), p.colour.paint(sgrFaint, elapsed(p.now().Sub(p.start))))
+		strings.Join(ids, ", "), p.colour.paint(sgrFaint, Elapsed(p.now().Sub(p.start))))
 	p.buf.WriteString("\r" + ansi.Truncate(line, p.width()-1, "…") + "\x1b[K")
 	p.drawn = true
 }
@@ -232,34 +232,7 @@ func (p *progress) clear() {
 func (p *progress) summary() string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	var parts []string
-	for _, a := range actionOrder {
-		if p.done[a] > 0 {
-			parts = append(parts, fmt.Sprintf("%d %s", p.done[a], pastTenses[a]))
-		}
-	}
-	if p.failed > 0 {
-		parts = append(parts, fmt.Sprintf("%d failed", p.failed))
-	}
-	if p.stopped > 0 {
-		parts = append(parts, fmt.Sprintf("%d stopped", p.stopped))
-	}
-	if len(parts) == 0 {
-		return "nothing changed"
-	}
-	return strings.Join(parts, ", ")
-}
-
-// elapsed writes a duration as precisely as is useful: 12ms, 4.2s, 3m5s.
-func elapsed(d time.Duration) string {
-	switch {
-	case d < time.Second:
-		return d.Round(time.Millisecond).String()
-	case d < time.Minute:
-		return d.Round(100 * time.Millisecond).String()
-	default:
-		return d.Round(time.Second).String()
-	}
+	return ApplySummary(p.done, p.failed, p.stopped)
 }
 
 // padRight pads s with spaces to width runes.

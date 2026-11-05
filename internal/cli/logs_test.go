@@ -37,23 +37,3 @@ func TestLogPrinter(t *testing.T) {
 		})
 	}
 }
-
-// TestShortDuration checks --since is written without zero units.
-func TestShortDuration(t *testing.T) {
-	tests := []struct {
-		in   time.Duration
-		want string
-	}{
-		{in: 10 * time.Minute, want: "10m"},
-		{in: time.Hour, want: "1h"},
-		{in: 90 * time.Minute, want: "1h30m"},
-		{in: 90 * time.Second, want: "1m30s"},
-		{in: 48 * time.Hour, want: "48h"},
-		{in: 30 * time.Second, want: "30s"},
-	}
-	for _, tt := range tests {
-		if got := shortDuration(tt.in); got != tt.want {
-			t.Errorf("shortDuration(%s) = %q, want %q", tt.in, got, tt.want)
-		}
-	}
-}

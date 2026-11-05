@@ -138,7 +138,7 @@ func (s *stage) rebuild(ctx context.Context, cmd *cobra.Command, rts *runtimes) 
 		rebuilt = append(rebuilt, f.Name)
 	}
 	if len(rebuilt) > 0 {
-		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "rebuilt %s in %s\n", strings.Join(rebuilt, ", "), time.Since(start).Round(time.Millisecond))
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "rebuilt %s in %s\n", strings.Join(rebuilt, ", "), Duration(time.Since(start)))
 	}
 }
 

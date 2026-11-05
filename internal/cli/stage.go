@@ -214,7 +214,7 @@ func (s *stage) beginProgress(cmd *cobra.Command, plan *engine.Plan) *progress {
 // on stdout as done, such as deployed, or on stderr when err says it failed or was stopped. It
 // returns err.
 func (s *stage) endProgress(cmd *cobra.Command, p *progress, plan *engine.Plan, done string, err error) error {
-	took := elapsed(p.end())
+	took := Duration(p.end())
 	switch {
 	case !plan.HasChanges() && err == nil:
 	case errors.Is(err, errStopped):

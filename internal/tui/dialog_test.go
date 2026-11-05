@@ -76,7 +76,7 @@ func TestUnlockWithoutDetails(t *testing.T) {
 	f := newFake(t)
 	f.locks[ordersDev] = &state.LockInfo{Who: "ci"}
 	v := screen(pressKeys(t, started(t, f), "ctrl+x"))
-	if !strings.Contains(v, "held by ci ") || strings.Contains(v, "for a  from") || !strings.Contains(v, "since an unknown time") {
+	if !strings.Contains(v, "ci has held it, since a time it did not record") {
 		t.Errorf("a lock without details:\n%s", v)
 	}
 }

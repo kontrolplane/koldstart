@@ -726,10 +726,7 @@ func (m model) stageFacts() string {
 	}
 	lock := []styles.Span{styles.S("not locked", styles.ToneFaint)}
 	if s.lock != nil {
-		lock = []styles.Span{
-			styles.S("● locked ", styles.ToneWarning), styles.S("by "+s.lock.Who+", "+s.lock.Operation+" from "+s.lock.Where, styles.ToneWarning),
-			styles.S(" since "+formatAgo(s.lock.Since), styles.ToneFaint),
-		}
+		lock = []styles.Span{styles.S("● locked: ", styles.ToneWarning), styles.S(cli.LockHeld(*s.lock, time.Now()), styles.ToneWarning)}
 	}
 	return clip(" "+styles.Render(deployed...)+"\n "+styles.Render(lock...), contentWidth-2, 2)
 }

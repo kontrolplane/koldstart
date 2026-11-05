@@ -115,6 +115,31 @@ func TestApplyProgress(t *testing.T) {
 	}
 }
 
+// TestApplyEnds checks the head says what an apply did once it ended, in the words deploy and
+// remove end with: what was created and replaced, what failed and what was stopped.
+func TestApplyEnds(t *testing.T) {
+	created := engine.Event{ID: "resource/table", Action: engine.Create, Done: true, Duration: time.Second}
+	tests := []struct {
+		name   string
+		events []engine.Event
+		end    error
+		want   string
+	}{
+		{name: "deployed", events: []engine.Event{created, {ID: "function/worker", Action: engine.Replace, Done: true}}, want: "· 1 created, 1 replaced"},
+		{name: "failed", events: []engine.Event{created, {ID: "function/api", Action: engine.Update}, {ID: "function/worker", Action: engine.Replace, Done: true, Err: errAWS}}, end: errAWS, want: "· 1 created, 1 failed, 1 stopped"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := applying(t, planned(t), tt.events...)
+			m, _ = update(t, m, appliedMsg{plan: m.state.plan.plan, applied: true, err: tt.end})
+			m.error = ""
+			if v := screen(m); !strings.Contains(v, tt.want) {
+				t.Errorf("the head does not say %q:\n%s", tt.want, v)
+			}
+		})
+	}
+}
+
 // TestApplyFailsPartWay checks a failed apply shows the node's error under it, how far it got, and
 // how to finish it, both in the dialog and on the page once the dialog is closed.
 func TestApplyFailsPartWay(t *testing.T) {
@@ -132,7 +157,7 @@ func TestApplyFailsPartWay(t *testing.T) {
 		t.Fatalf("esc on the error: error %q, page %v; want the plan", m.error, m.page)
 	}
 	v := screen(m)
-	for _, want := range []string{"failed after", "1 of 5 done, 1 failed", "InvalidParameterValueException: the role cannot be assumed by lambda", "d plans what is left"} {
+	for _, want := range []string{"failed after", "1 created, 1 failed", "InvalidParameterValueException: the role cannot be assumed by lambda", "d plans what is left"} {
 		if !strings.Contains(v, want) {
 			t.Errorf("the plan does not say %q:\n%s", want, v)
 		}

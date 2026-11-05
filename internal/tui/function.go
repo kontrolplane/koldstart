@@ -389,7 +389,7 @@ func seconds(n int32) string {
 	if n <= 0 {
 		return ""
 	}
-	return formatDuration(time.Duration(n) * time.Second)
+	return cli.Duration(time.Duration(n) * time.Second)
 }
 
 // configLines are what koldstart deployed the function with.
@@ -494,7 +494,7 @@ func (m model) liveLines(width int) []string {
 		if len(code) > 0 {
 			code = append(code, sep())
 		}
-		code = append(code, styles.S(formatBytes(live.CodeSize), styles.ToneMuted))
+		code = append(code, styles.S(cli.Size(live.CodeSize), styles.ToneMuted))
 	}
 	if len(code) == 0 {
 		code = text("-", styles.ToneBody)

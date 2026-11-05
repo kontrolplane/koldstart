@@ -7,7 +7,6 @@ import (
 	"io"
 	"path/filepath"
 	"slices"
-	"strings"
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/spf13/cobra"
@@ -98,7 +97,7 @@ func printInit(w io.Writer, name, dir, app, region, template string, res scaffol
 		_, _ = fmt.Fprintf(w, "  kept  %s, which was there already\n", f)
 	}
 	if len(res.Gitignore) > 0 {
-		_, _ = fmt.Fprintf(w, "  added %s to .gitignore\n", strings.Join(res.Gitignore, " and "))
+		_, _ = fmt.Fprintf(w, "  added %s to .gitignore\n", andList(res.Gitignore))
 	}
 	_, _ = fmt.Fprintln(w, "\nnext:")
 	if dir != "." {

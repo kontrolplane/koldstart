@@ -179,6 +179,7 @@ func TestUsageErrors(t *testing.T) {
 		{name: "help of an unknown command", args: []string{"help", "deplo"}, want: `unknown command "deplo" for kdst: did you mean deploy? (see kdst --help)`, code: exitUsage},
 		{name: "unknown output", args: []string{"version", "-o", "yaml"}, want: `-o "yaml": want text or json (see kdst version --help)`, code: exitUsage},
 		{name: "unknown output of outputs", args: []string{"outputs", "-o", "yaml"}, want: `-o "yaml": want text or json (see kdst outputs --help)`, code: exitUsage},
+		{name: "no time back", args: []string{"logs", "-f", "api", "--since", "0s"}, want: "--since 0s: want a duration back from now, such as 30m or 2h (see kdst logs --help)", code: exitUsage},
 		{name: "no configuration", args: []string{"plan"}, want: "no koldstart.pkl here: run kdst init to start a project, or pass --config", code: exitFailed},
 	}
 	for _, tt := range tests {

@@ -62,7 +62,7 @@ func TestProgressLines(t *testing.T) {
 				{ID: "url/api", Action: engine.Create, Done: true, Err: errors.New("denied"), Duration: 3 * time.Second},
 				{ID: "function/api", Action: engine.Update, Done: true, Err: fmt.Errorf("calling lambda: %w", context.Canceled), Duration: 2 * time.Minute},
 			},
-			want:    []string{"  ✗ url/api          create failed after 3s", "  ✗ function/api     update stopped after 2m0s"},
+			want:    []string{"  ✗ url/api          create failed after 3s", "  ✗ function/api     update stopped after 2m"},
 			summary: "1 failed, 1 stopped",
 		},
 		{
@@ -182,12 +182,12 @@ func TestEndProgress(t *testing.T) {
 		wantErr    string
 		wantNotErr string
 	}{
-		{name: "applied", plan: testPlan, stdout: "\ndeployed orders/dev in 0s: 1 created\n"},
+		{name: "applied", plan: testPlan, stdout: "\ndeployed orders/dev in 0ms: 1 created\n"},
 		{name: "no changes", plan: &engine.Plan{}},
 		{name: "failed", plan: testPlan, err: applyFailed(context.Background(), errors.New("url/api: denied"), "deploy"),
-			stderr: "\nfailed after 0s: 1 created\n", wantErr: "url/api: denied\nwhat was done is in the state: deploy again to finish"},
+			stderr: "\nfailed after 0ms: 1 created\n", wantErr: "url/api: denied\nwhat was done is in the state: deploy again to finish"},
 		{name: "stopped", plan: testPlan, err: applyFailed(stopped, errors.New("url/api: context canceled"), "remove"),
-			stderr: "\nstopped after 0s: 1 created\n", wantErr: "stopped: what was done is in the state, remove again to finish", wantNotErr: "url/api"},
+			stderr: "\nstopped after 0ms: 1 created\n", wantErr: "stopped: what was done is in the state, remove again to finish", wantNotErr: "url/api"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -213,24 +213,6 @@ func TestEndProgress(t *testing.T) {
 				t.Errorf("endProgress = %v, which lists %q", err, tt.wantNotErr)
 			}
 		})
-	}
-}
-
-// TestElapsed checks durations are written as precisely as is useful.
-func TestElapsed(t *testing.T) {
-	tests := []struct {
-		d    time.Duration
-		want string
-	}{
-		{d: 0, want: "0s"},
-		{d: 12345 * time.Microsecond, want: "12ms"},
-		{d: 4240 * time.Millisecond, want: "4.2s"},
-		{d: 185*time.Second + 400*time.Millisecond, want: "3m5s"},
-	}
-	for _, tt := range tests {
-		if got := elapsed(tt.d); got != tt.want {
-			t.Errorf("elapsed(%s) = %q, want %q", tt.d, got, tt.want)
-		}
 	}
 }
 
@@ -327,13 +309,46 @@ func TestLockedError(t *testing.T) {
 		{
 			name: "days ago",
 			held: state.LockInfo{Who: "ci", Operation: "remove", Since: now.Add(-50 * time.Hour)},
-			want: "orders/dev is locked: ci has been running remove since 2026-11-03 12:30:00, 50h0m ago\n" +
+			want: "orders/dev is locked: ci has been running remove since 2026-11-03 12:30:00, 50h ago\n" +
 				"wait for it to finish, or, when it is gone, release the lock with kdst unlock --stage dev",
 		},
 	}
 	for _, tt := range tests {
 		if got := lockedError("orders", "dev", tt.held, "kdst unlock --stage dev", now).Error(); got != tt.want {
 			t.Errorf("%s: lockedError =\n%s\nwant\n%s", tt.name, got, tt.want)
+		}
+	}
+}
+
+// TestLockHeld checks a lock taken in another time zone reads in the time zone of now, today's
+// without its date, and a lock that leaves out who, what or when still reads as a sentence.
+func TestLockHeld(t *testing.T) {
+	amsterdam := time.FixedZone("CET", 3600)
+	now := time.Date(2026, 11, 5, 0, 30, 0, 0, amsterdam)
+	tests := []struct {
+		name string
+		held state.LockInfo
+		want string
+	}{
+		{
+			name: "taken in utc, today here",
+			held: state.LockInfo{Who: "levi", Operation: "deploy", Since: time.Date(2026, 11, 4, 23, 20, 0, 0, time.UTC)},
+			want: "levi has been running deploy since 00:20:00, 10m ago",
+		},
+		{
+			name: "taken in utc, yesterday here",
+			held: state.LockInfo{Who: "levi", Operation: "deploy", Since: time.Date(2026, 11, 4, 22, 50, 0, 0, time.UTC)},
+			want: "levi has been running deploy since 2026-11-04 23:50:00, 40m ago",
+		},
+		{
+			name: "nothing recorded",
+			held: state.LockInfo{},
+			want: "someone has held it, since a time it did not record",
+		},
+	}
+	for _, tt := range tests {
+		if got := LockHeld(tt.held, now); got != tt.want {
+			t.Errorf("%s: LockHeld = %q, want %q", tt.name, got, tt.want)
 		}
 	}
 }

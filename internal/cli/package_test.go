@@ -27,11 +27,11 @@ func TestPrintArchives(t *testing.T) {
 				{Function: "worker", Path: zip("worker"), Size: 3984588, SHA256: "f95b8ec1a70a0123"},
 				{Function: "x", Path: zip("x"), Size: 12, SHA256: "0123456789ab0123"},
 			},
-			want: "FUNCTION       SIZE  SHA256        ZIP\n" +
-				"api       258.7 KiB  d8d6b993285e  " + filepath.FromSlash(".koldstart/build/dev/api.zip") + "\n" +
-				"image             -  aaaaaaaaaaaa  container image, built on deploy\n" +
-				"worker      3.8 MiB  f95b8ec1a70a  " + filepath.FromSlash(".koldstart/build/dev/worker.zip") + "\n" +
-				"x              12 B  0123456789ab  " + filepath.FromSlash(".koldstart/build/dev/x.zip") + "\n",
+			want: "FUNCTION    SIZE  SHA256        ZIP\n" +
+				"api       259 kb  d8d6b993285e  " + filepath.FromSlash(".koldstart/build/dev/api.zip") + "\n" +
+				"image          -  aaaaaaaaaaaa  container image, built on deploy\n" +
+				"worker    3.8 mb  f95b8ec1a70a  " + filepath.FromSlash(".koldstart/build/dev/worker.zip") + "\n" +
+				"x           12 b  0123456789ab  " + filepath.FromSlash(".koldstart/build/dev/x.zip") + "\n",
 		},
 	}
 	for _, tt := range tests {

@@ -213,7 +213,7 @@ func TestUnlock(t *testing.T) {
 	f := newFake(t)
 	f.locks[ordersDev] = &state.LockInfo{Who: "ci", Where: "github", Operation: "deploy", Since: time.Now().Add(-time.Hour)}
 	m := pressKeys(t, started(t, f), "ctrl+x")
-	if m.page != unlockPage || !strings.Contains(screen(m), "held by") {
+	if m.page != unlockPage || !strings.Contains(screen(m), "ci on github has been running deploy since") {
 		t.Fatalf("ctrl+x: page %v", m.page)
 	}
 	m = pressKeys(t, m, "n")

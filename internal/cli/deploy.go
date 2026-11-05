@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -235,28 +236,32 @@ func lockedError(app, stage string, held state.LockInfo, unlock string, now time
 	return fmt.Errorf("%s\nwait for it to finish, or, when it is gone, release the lock with %s", lockHolder(app, stage, held, now), unlock)
 }
 
-// lockHolder says who holds a stage's lock, doing what and since when: the time alone when it
-// was taken today.
+// lockHolder says a stage is locked, and who holds its lock, as LockHeld does.
 func lockHolder(app, stage string, held state.LockInfo, now time.Time) string {
-	since, today := held.Since.In(now.Location()), now
-	at := since.Format(time.DateTime)
-	if since.YearDay() == today.YearDay() && since.Year() == today.Year() {
-		at = since.Format(time.TimeOnly)
-	}
-	who := held.Who
+	return fmt.Sprintf("%s/%s is locked: %s", app, stage, LockHeld(held, now))
+}
+
+// LockHeld says who holds a lock, from where, doing what and since when, in now's time zone: levi
+// on laptop has been running deploy since 14:26:48, 3m12s ago. The date is left out when the lock
+// was taken today.
+func LockHeld(held state.LockInfo, now time.Time) string {
+	who := cmp.Or(held.Who, "someone")
 	if held.Where != "" {
 		who += " on " + held.Where
 	}
-	return fmt.Sprintf("%s/%s is locked: %s has been running %s since %s, %s ago", app, stage, who, held.Operation, at, ago(now.Sub(held.Since)))
-}
-
-// ago writes how long ago something happened, to the second under an hour and to the minute
-// after.
-func ago(d time.Duration) string {
-	if d < time.Hour {
-		return max(d, 0).Round(time.Second).String()
+	doing := "has held it"
+	if held.Operation != "" {
+		doing = "has been running " + held.Operation
 	}
-	return strings.TrimSuffix(d.Round(time.Minute).String(), "0s")
+	if held.Since.IsZero() {
+		return who + " " + doing + ", since a time it did not record"
+	}
+	since := held.Since.In(now.Location())
+	at := since.Format(time.DateTime)
+	if since.YearDay() == now.YearDay() && since.Year() == now.Year() {
+		at = since.Format(time.TimeOnly)
+	}
+	return fmt.Sprintf("%s %s since %s, %s ago", who, doing, at, Elapsed(now.Sub(held.Since)))
 }
 
 // unlockHint is the command that releases the stage's lock, with the flags cmd was given that

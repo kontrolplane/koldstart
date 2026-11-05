@@ -52,7 +52,7 @@ func printArchives(w io.Writer, root string, archives []build.Archive) error {
 	}
 	width := len("SIZE")
 	for _, a := range archives {
-		width = max(width, len(humanSize(a.Size)))
+		width = max(width, len(Size(a.Size)))
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintf(tw, "FUNCTION\t%*s\tSHA256\tZIP\n", width, "SIZE")
@@ -65,21 +65,7 @@ func printArchives(w io.Writer, root string, archives []build.Archive) error {
 		if err != nil {
 			rel = a.Path
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%*s\t%s\t%s\n", a.Function, width, humanSize(a.Size), a.SHA256[:12], rel)
+		_, _ = fmt.Fprintf(tw, "%s\t%*s\t%s\t%s\n", a.Function, width, Size(a.Size), a.SHA256[:12], rel)
 	}
 	return tw.Flush()
-}
-
-// humanSize formats a byte count the way ls -h does.
-func humanSize(n int64) string {
-	const unit = 1024
-	if n < unit {
-		return fmt.Sprintf("%d B", n)
-	}
-	div, exp := int64(unit), 0
-	for m := n / unit; m >= unit; m /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGT"[exp])
 }
