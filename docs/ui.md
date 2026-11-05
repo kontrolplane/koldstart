@@ -35,7 +35,7 @@ The page on screen is read again every five seconds; `p` pauses that. The live d
 - `esc`: back, clear the filter, cancel a dialog; never quits
 - `ctrl+c`: quit
 - `↑`, `k` and `↓`, `j`: up and down
-- `g`, `G`: first and last row, top and bottom of the logs
+- `g`, `home` and `G`, `end`: first and last row, top and bottom of the logs
 - `pgup`, `pgdn`: page up and down
 - `tab`, `shift+tab`: switch between functions, resources, outputs and history; on a function between its overview, logs, invocations and invoke; on a resource between what was applied and what is in aws
 - `enter`: open: a stage, a function, a resource, a deploy, an invocation, or a change's diff

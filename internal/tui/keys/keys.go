@@ -36,16 +36,17 @@ type KeyMap struct {
 	ForceQuit key.Binding
 }
 
-// Keys are the keybindings docs/ui.md lists.
+// Keys are the keybindings docs/ui.md lists. A help key names every key of its binding, as the
+// footer and the key reference write them: arrows as ↑ ↓ ← →, alternatives joined with /.
 var Keys = KeyMap{
-	Up:        key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑ | k", "up")),
-	Down:      key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓ | j", "down")),
+	Up:        key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
+	Down:      key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
 	PageUp:    key.NewBinding(key.WithKeys("pgup"), key.WithHelp("pgup", "page up")),
 	PageDown:  key.NewBinding(key.WithKeys("pgdown"), key.WithHelp("pgdn", "page down")),
-	Top:       key.NewBinding(key.WithKeys("g", "home"), key.WithHelp("g", "top")),
-	Bottom:    key.NewBinding(key.WithKeys("G", "end"), key.WithHelp("G", "bottom")),
-	Left:      key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("← | h", "left")),
-	Right:     key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→ | l", "right")),
+	Top:       key.NewBinding(key.WithKeys("g", "home"), key.WithHelp("g/home", "top")),
+	Bottom:    key.NewBinding(key.WithKeys("G", "end"), key.WithHelp("G/end", "bottom")),
+	Left:      key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "left")),
+	Right:     key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "right")),
 	Help:      key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 	View:      key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
 	Filter:    key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter")),
