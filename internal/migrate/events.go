@@ -43,7 +43,7 @@ func (c *converter) events(w *writer, where string, events *yaml.Node) {
 		case "alb":
 			c.albEvent(w, at, spec)
 		default:
-			c.leaveOut(w, at, fmt.Sprintf("events: %s has no equivalent in koldstart yet", kind), e)
+			c.leaveOut(w, at, fmt.Sprintf("koldstart has no %s events yet", kind), e)
 		}
 	}
 	w.close()
@@ -86,19 +86,18 @@ func (c *converter) routeAuthorizer(w *writer, where string, n *yaml.Node) {
 	if n == nil {
 		return
 	}
-	name := str(n)
-	if n.Kind == yaml.MappingNode {
-		if str(get(n, "type")) == "aws_iam" {
-			c.todo(where+".authorizer", "aws_iam authorization of routes has no equivalent yet")
-			w.comment("TODO: aws_iam authorization of routes has no equivalent yet.")
-			return
-		}
-		name = str(get(n, "name"))
-		if scopes := get(n, "scopes"); scopes != nil {
-			c.member(w, where+".authorizer.scopes", "scopes", scopes)
-		}
+	if n.Kind != yaml.MappingNode {
+		w.line("authorizer = %s", quote(str(n)))
+		return
 	}
-	w.line("authorizer = %s", quote(name))
+	if str(get(n, "type")) == "aws_iam" {
+		c.leave(w, Add, where+".authorizer", "koldstart has no aws_iam authorization of routes yet", nil)
+		return
+	}
+	w.line("authorizer = %s", quote(str(get(n, "name"))))
+	if scopes := get(n, "scopes"); scopes != nil {
+		c.member(w, where+".authorizer.scopes", "scopes", scopes)
+	}
 }
 
 // restEvent converts a route of the rest api to one of the http api, which is what koldstart
@@ -114,8 +113,7 @@ func (c *converter) restEvent(w *writer, where string, n *yaml.Node) {
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
-	c.todo(where, "a route of the rest api, now one of the http api: request validation, api keys and usage plans have no equivalent")
-	w.comment("TODO: this was a route of the rest api (http); it is one of the http api (httpApi) now.")
+	c.leave(w, Review, where, "a route of the rest api is one of the http api now: check it does without request validation, api keys and usage plans", nil)
 	w.open("new kdst.HttpRoute")
 	w.line("method = %s", quote(method))
 	w.line("path = %s", quote(path))
@@ -182,8 +180,8 @@ func (c *converter) batching(w *writer, where string, n *yaml.Node, window strin
 		w.close()
 	}
 	for _, key := range []string{"maximumConcurrency", "parallelizationFactor", "bisectBatchOnFunctionError", "maximumRetryAttempts", "destinations", "tumblingWindowInSeconds"} {
-		if get(n, key) != nil {
-			c.todo(where+"."+key, key+" has no equivalent in koldstart yet")
+		if v := get(n, key); v != nil {
+			c.leaveOut(w, where+"."+key, "koldstart has no "+key+" yet", v)
 		}
 	}
 }
@@ -203,7 +201,7 @@ func (c *converter) streamEvent(w *writer, where string, n *yaml.Node) {
 	case "TRIM_HORIZON":
 		w.line(`startingPosition = "TRIM_HORIZON"`)
 	default:
-		c.todo(where+".startingPosition", position+" has no equivalent: the stream starts at LATEST")
+		c.leave(w, Review, where+".startingPosition", "the stream starts at LATEST, as koldstart has no "+position, nil)
 	}
 	c.batching(w, where, n, "batchWindow")
 	w.close()
@@ -215,9 +213,9 @@ func (c *converter) topicEvent(w *writer, where string, n *yaml.Node) {
 	w.open("new kdst.Topic")
 	switch {
 	case n.Kind == yaml.ScalarNode && !strings.HasPrefix(n.Value, "arn:") && !strings.Contains(n.Value, "${"):
-		w.line(`topic = kdst.ref(%s, "TopicArn")`, quote(c.add(n.Value, "AWS::SNS::Topic", "TopicName")))
+		w.line(`topic = kdst.ref(%s, "TopicArn")`, quote(c.add(where, n.Value, "AWS::SNS::Topic", "TopicName")))
 	case n.Kind == yaml.MappingNode && get(n, "arn") == nil && get(n, "topicName") != nil:
-		w.line(`topic = kdst.ref(%s, "TopicArn")`, quote(c.add(str(get(n, "topicName")), "AWS::SNS::Topic", "TopicName")))
+		w.line(`topic = kdst.ref(%s, "TopicArn")`, quote(c.add(where, str(get(n, "topicName")), "AWS::SNS::Topic", "TopicName")))
 	default:
 		c.source(w, where, "topic", n)
 	}
@@ -243,7 +241,7 @@ func (c *converter) bucketEvent(w *writer, where string, n *yaml.Node) {
 	case existing || strings.Contains(bucket, "${"):
 		c.assign(w, where+".bucket", "bucket", c.text(bucket), n)
 	default:
-		w.line(`bucket = kdst.ref(%s, "BucketName")`, quote(c.add(bucket, "AWS::S3::Bucket", "BucketName")))
+		w.line(`bucket = kdst.ref(%s, "BucketName")`, quote(c.add(where, bucket, "AWS::S3::Bucket", "BucketName")))
 	}
 	if event := str(get(n, "event")); event != "" {
 		w.line("events { %s }", quote(event))
@@ -261,9 +259,9 @@ func (c *converter) bucketEvent(w *writer, where string, n *yaml.Node) {
 
 var resourceName = regexp.MustCompile(`[^A-Za-z0-9-]+`)
 
-// add records a resource the serverless framework makes without declaring it, once, and returns
-// its name in resources.
-func (c *converter) add(physical, typ, property string) string {
+// add records a resource the serverless framework makes without declaring it for the event at
+// where, once, and returns its name in resources.
+func (c *converter) add(where, physical, typ, property string) string {
 	for _, r := range c.added {
 		if r.typ == typ && r.value == physical {
 			return r.name
@@ -280,7 +278,7 @@ func (c *converter) add(physical, typ, property string) string {
 		name += "-" + strings.ToLower(strings.TrimPrefix(typ[strings.LastIndex(typ, ":")+1:], ":"))
 	}
 	c.resourceNames[name] = name
-	c.added = append(c.added, addedResource{name: name, typ: typ, property: property, value: physical})
+	c.added = append(c.added, addedResource{name: name, typ: typ, property: property, value: physical, where: where})
 	return name
 }
 
@@ -290,7 +288,7 @@ func (c *converter) add(physical, typ, property string) string {
 func (c *converter) ruleEvent(w *writer, where string, spec *yaml.Node) {
 	pattern := get(spec, "pattern")
 	if pattern == nil {
-		c.leaveOut(w, where, "an eventBridge event without a pattern, such as a schedule: use kdst.Schedule", spec)
+		c.leaveOut(w, where, "an EventRule needs a pattern: write a schedule as new kdst.Schedule { expression = ... }", spec)
 		return
 	}
 	w.open("new kdst.EventRule")
@@ -307,7 +305,7 @@ func (c *converter) ruleEvent(w *writer, where string, spec *yaml.Node) {
 	}
 	for _, key := range []string{"inputPath", "inputTransformer", "retryPolicy", "deadLetterQueueArn"} {
 		if v := get(spec, key); v != nil {
-			c.leaveOut(w, where+"."+key, key+" has no equivalent: the function gets the event, or input", v)
+			c.leaveOut(w, where+"."+key, "koldstart has no "+key+": the function gets the event, or input", v)
 		}
 	}
 	if isFalse(get(spec, "enabled")) {
@@ -324,12 +322,12 @@ func (c *converter) webSocketEvent(w *writer, where string, spec *yaml.Node) {
 		route = str(get(spec, "route"))
 		for _, key := range []string{"authorizer", "routeResponseSelectionExpression"} {
 			if v := get(spec, key); v != nil {
-				c.leaveOut(w, where+"."+key, key+" has no equivalent on a websocket route yet", v)
+				c.leaveOut(w, where+"."+key, "koldstart has no "+key+" on a websocket route yet", v)
 			}
 		}
 	}
 	if route == "" {
-		c.leaveOut(w, where, "a websocket event without its route", spec)
+		c.leaveOut(w, where, "give the websocket event its route", spec)
 		return
 	}
 	w.line("new kdst.WebSocketRoute { route = %s }", quote(route))
@@ -340,7 +338,7 @@ func (c *converter) albEvent(w *writer, where string, spec *yaml.Node) {
 	listener := get(spec, "listenerArn")
 	priority, ok := integer(get(spec, "priority"))
 	if listener == nil || !ok {
-		c.leaveOut(w, where, "an alb event without its listenerArn and priority", spec)
+		c.leaveOut(w, where, "give the alb event its listenerArn and priority", spec)
 		return
 	}
 	conditions := get(spec, "conditions")
@@ -359,7 +357,7 @@ func (c *converter) albEvent(w *writer, where string, spec *yaml.Node) {
 	}
 	for _, key := range []string{"header", "query", "ip"} {
 		if v := get(conditions, key); v != nil {
-			c.leaveOut(w, where+".conditions."+key, "a condition on the "+key+" has no equivalent yet", v)
+			c.leaveOut(w, where+".conditions."+key, "koldstart has no alb condition on the "+key+" yet", v)
 		}
 	}
 	if isTrue(get(spec, "multiValueHeaders")) {

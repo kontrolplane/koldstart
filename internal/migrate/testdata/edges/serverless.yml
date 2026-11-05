@@ -1,9 +1,17 @@
 service: legacy
 
+plugins:
+  - serverless-domain-manager
+  - ./plugins/seed
+
 provider:
   name: aws
   runtime: nodejs18.x
   region: eu-central-1
+  deploymentBucket:
+    name: legacy-deploys
+  tracing:
+    lambda: true
   ecr:
     images:
       thumbnailer:
@@ -43,6 +51,8 @@ functions:
   old_api:
     handler: src/api.handler
     reservedConcurrency: 5
+    tags:
+      owner: api
     environment:
       TOPIC: !Sub arn:aws:sns:${AWS::Region}:${AWS::AccountId}:alerts
 

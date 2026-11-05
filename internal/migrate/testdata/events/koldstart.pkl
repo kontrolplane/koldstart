@@ -1,4 +1,6 @@
-// Converted from serverless.yml by kdst migrate. Look for TODO: what it could not convert.
+// Converted from serverless.yml by kdst migrate.
+// A TODO comment marks each thing it could not convert, or converted differently.
+
 amends "package://github.com/kontrolplane/koldstart/releases/download/v0.1.0/koldstart@0.1.0#/Project.pkl"
 
 import "package://github.com/kontrolplane/koldstart/releases/download/v0.1.0/koldstart@0.1.0#/kdst.pkl"
@@ -46,7 +48,7 @@ functions {
         bus = "orders"
         input = "{\"kind\":\"order\"}"
       }
-      // TODO: an eventBridge event without a pattern, such as a schedule: use kdst.Schedule
+      // TODO: an EventRule needs a pattern: write a schedule as new kdst.Schedule { expression = ... }
       // was: {schedule: rate(1 hour)}
     }
   }
@@ -64,7 +66,7 @@ functions {
           "GET"
           "POST"
         }
-        // TODO: a condition on the header has no equivalent yet
+        // TODO: koldstart has no alb condition on the header yet
         // was: {name: x-version, values: ["2"]}
         multiValueHeaders = true
       }
@@ -86,16 +88,16 @@ functions {
       new kdst.HttpRoute {
         method = "GET"
         path = "/me"
+        authorizer = "users"
         scopes {
           "profile"
         }
-        authorizer = "users"
       }
       new kdst.HttpRoute {
         method = "ANY"
         path = "$default"
       }
-      // TODO: this was a route of the rest api (http); it is one of the http api (httpApi) now.
+      // TODO: a route of the rest api is one of the http api now: check it does without request validation, api keys and usage plans
       new kdst.HttpRoute {
         method = "GET"
         path = "/legacy/{id}"
@@ -155,12 +157,12 @@ functions {
 }
 
 resources {
-  // serverless.yml made this for an event of a function.
+  // serverless.yml made this topic for functions.listener.events[0].
   ["alerts"] {
     type = "AWS::SNS::Topic"
     properties { TopicName = "alerts" }
   }
-  // serverless.yml made this for an event of a function.
+  // serverless.yml made this bucket for functions.listener.events[2].
   ["notifier-uploads"] {
     type = "AWS::S3::Bucket"
     properties { BucketName = "notifier-uploads" }

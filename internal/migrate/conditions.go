@@ -22,7 +22,7 @@ func (c *converter) convertConditions() {
 	for _, name := range keys(conditions) {
 		expr, todo := c.condition(get(conditions, name), 0)
 		if todo != "" {
-			c.todo("resources.Conditions."+name, todo)
+			c.todo(Add, "resources.Conditions."+name, todo)
 			continue
 		}
 		c.conditions[name] = expr
@@ -255,7 +255,6 @@ func (c *converter) locals(w *writer) {
 	if len(c.conditions) == 0 && !c.usesMappings && !c.usesParams {
 		return
 	}
-	w.blank()
 	for _, name := range slices.Sorted(func(yield func(string) bool) {
 		for k := range c.conditions {
 			if !yield(k) {
@@ -263,16 +262,19 @@ func (c *converter) locals(w *writer) {
 			}
 		}
 	}) {
-		w.comment("The condition " + name + " of serverless.yml.")
+		w.blank()
+		w.comment("From resources.Conditions." + name + ".")
 		w.line("local %s = %s", localName("condition", name), c.conditions[name])
 	}
 	if c.usesMappings {
-		w.comment("The Mappings of serverless.yml.")
+		w.blank()
+		w.comment("From resources.Mappings.")
 		c.mapping(w, "resources.Mappings", "local cfnMappings = new Mapping", get(get(c.doc, "resources"), "Mappings"))
 	}
 	if c.usesParams {
 		params := c.paramsOf()
-		w.comment("The params of serverless.yml, by stage; param() takes the stage's, or default's.")
+		w.blank()
+		w.comment("From params, by stage.")
 		w.open("local params = new Mapping")
 		for _, stage := range slices.Sorted(func(yield func(string) bool) {
 			for k := range params {
@@ -288,6 +290,8 @@ func (c *converter) locals(w *writer) {
 			w.close()
 		}
 		w.close()
+		w.blank()
+		w.comment("The param of the stage, or else of default.")
 		w.line(`local function param(name: String) = params.getOrNull(kdst.stage)?.getOrNull(name) ?? params.getOrNull("default")?.getOrNull(name) ?? throw("no param \(name) for the stage \(kdst.stage)")`)
 	}
 }

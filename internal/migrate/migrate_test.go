@@ -55,18 +55,21 @@ func compare(t *testing.T, path, got string) {
 	}
 }
 
+// goldenName is the name the golden files are converted as.
+const goldenName = "kdst"
+
 // TestGolden converts each serverless.yml under testdata, and checks the koldstart.pkl and the
 // todos are the ones beside it.
 func TestGolden(t *testing.T) {
 	golden(t, func(t *testing.T, dir string, src []byte) {
-		res, err := Convert(src, "0.1.0", dir)
+		res, err := Convert(src, "0.1.0", dir, WithName(goldenName))
 		if err != nil {
 			t.Fatalf("Convert: %v", err)
 		}
 		compare(t, filepath.Join(dir, "koldstart.pkl"), res.Pkl)
 		var todos strings.Builder
-		for _, todo := range res.Todos {
-			todos.WriteString(todo.String() + "\n")
+		if err := WriteTodos(&todos, res.Todos); err != nil {
+			t.Fatal(err)
 		}
 		compare(t, filepath.Join(dir, "todos.txt"), todos.String())
 	})
@@ -94,7 +97,7 @@ func evaluator(t *testing.T) pkl.Evaluator {
 func TestGoldenEvaluates(t *testing.T) {
 	ev := evaluator(t)
 	golden(t, func(t *testing.T, dir string, src []byte) {
-		res, err := Convert(src, "0.1.0", dir)
+		res, err := Convert(src, "0.1.0", dir, WithName(goldenName))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -116,6 +119,68 @@ func TestConvertRefuses(t *testing.T) {
 		if _, err := Convert([]byte(src), "0.1.0", "."); err == nil {
 			t.Errorf("Convert(%q): want an error", src)
 		}
+	}
+}
+
+// TestWithName checks the file and the todos give commands by the name the binary was run as, and
+// by koldstart without one.
+func TestWithName(t *testing.T) {
+	src := []byte("service: x\nprovider: {name: aws}\nplugins: [serverless-offline]\n")
+	tests := []struct {
+		name string
+		opts []Option
+		want string
+	}{
+		{name: "short", opts: []Option{WithName("kdst")}, want: "kdst"},
+		{name: "long", opts: []Option{WithName("koldstart")}, want: "koldstart"},
+		{name: "none", want: "koldstart"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res, err := Convert(src, "0.1.0", ".", tt.opts...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := "by " + tt.want + " migrate."; !strings.Contains(res.Pkl, want) {
+				t.Errorf("the file says no %q:\n%s", want, res.Pkl)
+			}
+			if len(res.Todos) != 1 || !strings.HasPrefix(res.Todos[0].What, tt.want+" offline ") {
+				t.Errorf("todos = %v, want one for %s offline", res.Todos, tt.want)
+			}
+		})
+	}
+}
+
+// TestWriteTodos checks todos are listed under their kind's heading, the kinds that matter most
+// first, in the order they came within a kind.
+func TestWriteTodos(t *testing.T) {
+	tests := []struct {
+		name  string
+		todos []Todo
+		want  string
+	}{
+		{name: "none"},
+		{
+			name:  "one kind",
+			todos: []Todo{{Kind: Review, Where: "a", What: "x"}, {Kind: Review, Where: "b", What: "y"}},
+			want:  Review.String() + ":\n  a: x\n  b: y\n",
+		},
+		{
+			name:  "by kind",
+			todos: []Todo{{Kind: Drop, Where: "d", What: "x"}, {Kind: Add, Where: "a", What: "x"}, {Kind: Fix, Where: "f", What: "x"}},
+			want:  Fix.String() + ":\n  f: x\n\n" + Add.String() + ":\n  a: x\n\n" + Drop.String() + ":\n  d: x\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got strings.Builder
+			if err := WriteTodos(&got, tt.todos); err != nil {
+				t.Fatal(err)
+			}
+			if got.String() != tt.want {
+				t.Errorf("got:\n%s\nwant:\n%s", got.String(), tt.want)
+			}
+		})
 	}
 }
 

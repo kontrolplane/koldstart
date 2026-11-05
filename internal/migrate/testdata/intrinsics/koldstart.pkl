@@ -1,4 +1,6 @@
-// Converted from serverless.yml by kdst migrate. Look for TODO: what it could not convert.
+// Converted from serverless.yml by kdst migrate.
+// A TODO comment marks each thing it could not convert, or converted differently.
+
 amends "package://github.com/kontrolplane/koldstart/releases/download/v0.1.0/koldstart@0.1.0#/Project.pkl"
 
 import "package://github.com/kontrolplane/koldstart/releases/download/v0.1.0/koldstart@0.1.0#/kdst.pkl"
@@ -83,13 +85,16 @@ outputs {
   }
 }
 
-// The condition IsBig of serverless.yml.
+// From resources.Conditions.IsBig.
 local conditionIsBig = (kdst.stage == "prod") || (kdst.stage == "staging")
-// The condition IsNotProd of serverless.yml.
+
+// From resources.Conditions.IsNotProd.
 local conditionIsNotProd = !(kdst.stage == "prod")
-// The condition IsProd of serverless.yml.
+
+// From resources.Conditions.IsProd.
 local conditionIsProd = kdst.stage == "prod"
-// The Mappings of serverless.yml.
+
+// From resources.Mappings.
 local cfnMappings = new Mapping {
   ["RegionNames"] = new Mapping {
     ["eu-west-1"] = new Mapping {
@@ -100,7 +105,8 @@ local cfnMappings = new Mapping {
     }
   }
 }
-// The params of serverless.yml, by stage; param() takes the stage's, or default's.
+
+// From params, by stage.
 local params = new Mapping {
   ["default"] = new Mapping {
     ["domain"] = "dev.shop.example.com"
@@ -110,4 +116,6 @@ local params = new Mapping {
     ["domain"] = "shop.example.com"
   }
 }
+
+// The param of the stage, or else of default.
 local function param(name: String) = params.getOrNull(kdst.stage)?.getOrNull(name) ?? params.getOrNull("default")?.getOrNull(name) ?? throw("no param \(name) for the stage \(kdst.stage)")

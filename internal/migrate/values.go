@@ -678,9 +678,7 @@ func (c *converter) assign(w *writer, where, head string, v value, n *yaml.Node)
 
 // leaveOut writes what could not be converted as a todo, with the yaml it came from.
 func (c *converter) leaveOut(w *writer, where, why string, n *yaml.Node) {
-	c.todo(where, why)
-	w.comment("TODO: " + why)
-	w.comment("was: " + flow(n))
+	c.leave(w, Add, where, why, n)
 }
 
 // flow is a node as one line of yaml.

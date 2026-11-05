@@ -1,2 +1,5 @@
-functions.api: nodejs20.x is deprecated on lambda: it runs on nodejs22.x now
-functions.api.environment.ZONE: Fn::Select of a list that is only known while deploying, such as Fn::GetAZs
+left out, to write by hand:
+  functions.api.environment.ZONE: Fn::Select of a list that is only known while deploying, such as Fn::GetAZs
+
+works differently, to check:
+  provider.runtime: runs on nodejs22.x now, as koldstart does not build nodejs20.x: test it there

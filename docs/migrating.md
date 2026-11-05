@@ -1,6 +1,6 @@
 # migrating from the serverless framework
 
-`kdst migrate` reads a `serverless.yml` and writes a `koldstart.pkl` next to it. What it cannot convert is left in the file as a `// TODO` comment, on the line above where it belongs, and listed at the end of the run. The new file is checked with pkl before it is written, so it is valid pkl, and passes the checks a deploy makes, even where it is not complete.
+`kdst migrate` reads a `serverless.yml` and writes a `koldstart.pkl` next to it. What it cannot convert, or converts to something that works differently, is left in the file as a `// TODO` comment, on the line above where it belongs, and listed at the end of the run by the `serverless.yml` key it came from. The list is grouped by what each needs, most urgent first: what to fix before you deploy, what was left out and is to write by hand, what works differently and is to check, and what koldstart does not need. The new file is checked with pkl before it is written, so it is valid pkl, and passes the checks a deploy makes, even where it is not complete.
 
 ```bash
 kdst migrate
