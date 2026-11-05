@@ -254,10 +254,10 @@ func (m model) functionCopyValue() string {
 
 func (m model) functionView() string {
 	f := m.state.function
-	var body, hint string
+	var body string
 	switch f.tab {
 	case overviewTab:
-		body, hint = m.overviewTabView()
+		body = m.overviewTabView()
 	case logsTab:
 		body = m.logsView()
 	case invocationsTab:
@@ -269,11 +269,29 @@ func (m model) functionView() string {
 	if !f.logs.loaded {
 		counts[logsTab], counts[invocationsTab] = "", ""
 	}
-	bar := indent(tabBar(functionTabs, counts, int(f.tab)))
-	if hint != "" {
-		bar = spread(bar, styles.Faint(hint), contentWidth-1)
+	return indent(tabBar(functionTabs, counts, int(f.tab))) + "\n\n" + body
+}
+
+// functionPosition is where the function's tab is: the lines in sight of the overview, the logs
+// and what an invocation returned, or the invocation under the cursor.
+func (m model) functionPosition() string {
+	f := m.state.function
+	switch f.tab {
+	case overviewTab:
+		o := m.functionOverview()
+		return scrollCue(min(f.scroll, o.maxScroll()), o.height(), max(len(o.left), len(o.right)))
+	case logsTab:
+		return m.logsPosition()
+	case invocationsTab:
+		if f.logs.loaded {
+			return f.invocations.position()
+		}
+	case invokeTab:
+		height := functionBodyHeight()
+		n := len(m.invokeLines(resultWidth()))
+		return scrollCue(min(f.scroll, maxResultScroll(n, height)), height, n)
 	}
-	return bar + "\n\n" + body
+	return ""
 }
 
 const labelWidth = 14
@@ -686,8 +704,8 @@ func (m model) triggerLines(width int) []string {
 	return lines
 }
 
-// overviewTabView draws the overview at its scroll, and a hint of what is above or below it.
-func (m model) overviewTabView() (string, string) {
+// overviewTabView draws the overview at its scroll.
+func (m model) overviewTabView() string {
 	o := m.functionOverview()
 	height := o.height()
 	scroll := min(m.state.function.scroll, o.maxScroll())
@@ -699,15 +717,5 @@ func (m model) overviewTabView() (string, string) {
 	if len(o.notice) > 0 {
 		body = strings.Join(o.notice, "\n") + "\n\n" + body
 	}
-	var hint string
-	switch {
-	case o.maxScroll() == 0:
-	case scroll == 0:
-		hint = "↓ more"
-	case scroll == o.maxScroll():
-		hint = "↑ more"
-	default:
-		hint = "↑↓ more"
-	}
-	return lipgloss.NewStyle().PaddingLeft(1).Render(body), hint
+	return lipgloss.NewStyle().PaddingLeft(1).Render(body)
 }

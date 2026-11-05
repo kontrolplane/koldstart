@@ -205,11 +205,11 @@ func (m model) planUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	head, body, rows := m.planLines()
+	head, body := m.planLines()
 	height := planBodyHeight(head)
-	if cursor, ok := moveCursor(msg, m.keys, p.cursor, len(rows), height); ok {
+	if cursor, ok := moveCursor(msg, m.keys, p.cursor, len(body.rows), height); ok {
 		p.cursor = cursor
-		_, p.scroll = selectable(body, rows, p.cursor, p.scroll, height)
+		_, p.scroll = selectable(body, p.cursor, p.scroll, height)
 	}
 	return m, nil
 }
@@ -325,12 +325,12 @@ const planStatusWidth = 24
 const maxErrorLines = 3
 
 // planLines are the lines of the plan: the head, which stays in place, and the body of changes,
-// with the index of the line of each change.
-func (m model) planLines() ([]string, []string, []int) {
+// each of which can be chosen.
+func (m model) planLines() ([]string, pickList) {
 	p := m.state.plan
 	width := contentWidth - 5
 	if p.plan == nil {
-		return nil, nil, nil
+		return nil, pickList{}
 	}
 	title := "deploy of " + p.ref.String()
 	switch {
@@ -353,10 +353,9 @@ func (m model) planLines() ([]string, []string, []int) {
 	)
 	head = append(head, m.applyLines(width)...)
 	head = append(head, "")
-	var body []string
-	var rows []int
+	var body pickList
+	cols := []column{{width: width - planStatusWidth - 1}, {width: 1}, {width: planStatusWidth, right: true}}
 	for _, c := range m.planChanges() {
-		rows = append(rows, len(body))
 		line := cell{
 			styles.S(fmt.Sprintf(" %-4s", cli.Symbol(c.Action)), actionTones[c.Action]),
 			styles.S(c.ID, styles.ToneText),
@@ -367,26 +366,26 @@ func (m model) planLines() ([]string, []string, []int) {
 		case c.Gone:
 			line = append(line, styles.S("  deleted outside koldstart", styles.ToneWarning))
 		}
-		status := renderCell(m.progressCell(c), column{width: planStatusWidth, right: true}, nil)
-		body = append(body, renderCell(line, column{width: width - planStatusWidth - 1}, nil)+" "+status)
+		status := m.progressCell(c)
+		body.add(renderCell(line, cols[0], nil)+" "+renderCell(status, cols[2], nil), litRow(cols, line, nil, status))
 		if len(c.Drift) > 0 {
-			body = append(body, renderCell(text("        changed outside koldstart: "+strings.Join(c.Drift, ", "), styles.ToneWarning), column{width: width}, nil))
+			body.lines = append(body.lines, renderCell(text("        changed outside koldstart: "+strings.Join(c.Drift, ", "), styles.ToneWarning), column{width: width}, nil))
 		}
 		if c.Action == engine.Update || c.Action == engine.Replace || c.Action == engine.Adopt {
 			for _, change := range cli.FieldChanges(c) {
-				body = append(body, renderCell(text("        "+change, styles.ToneMuted), column{width: width}, nil))
+				body.lines = append(body.lines, renderCell(text("        "+change, styles.ToneMuted), column{width: width}, nil))
 			}
 		}
 		if pr := p.progress[c.ID]; pr.err != nil {
 			for _, l := range errorLines(c.ID, pr.err, width-8) {
-				body = append(body, "        "+styles.Render(styles.S(l, styles.ToneDanger)))
+				body.lines = append(body.lines, "        "+styles.Render(styles.S(l, styles.ToneDanger)))
 			}
 		}
 	}
-	if len(rows) == 0 {
-		body = append(body, " "+styles.Faint(p.ref.String()+" is as the configuration says: there is nothing to "+m.planWhat()))
+	if len(body.rows) == 0 {
+		body.lines = append(body.lines, " "+styles.Faint(p.ref.String()+" is as the configuration says: there is nothing to "+m.planWhat()))
 	}
-	return head, body, rows
+	return head, body
 }
 
 // errorLines are a node's error wrapped to width, without the node's id the engine puts first,
@@ -483,8 +482,8 @@ func planBodyHeight(head []string) int {
 }
 
 func (m model) planView() string {
-	head, body, rows := m.planLines()
-	view, _ := selectable(body, rows, m.state.plan.cursor, m.state.plan.scroll, planBodyHeight(head))
+	head, body := m.planLines()
+	view, _ := selectable(body, m.state.plan.cursor, m.state.plan.scroll, planBodyHeight(head))
 	if len(head) == 0 {
 		return view
 	}

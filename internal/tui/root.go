@@ -424,29 +424,66 @@ func (m model) breadcrumb() []styles.Span {
 	return spans
 }
 
-// frameMeta is what is set into the frame's edges: the filter on top, and at the bottom the
-// position in the table, when the page was read, and whether refreshing is paused.
-func (m model) frameMeta() (string, string) {
-	var filter string
-	var t *dataTable
+// position is where the page on screen is, for the frame's foot: the row under the cursor of a
+// table or a list of changes, as 12 of 240, or the lines of a page that scrolls in sight, as
+// lines 12–40 of 230.
+func (m model) position() string {
+	if m.loading {
+		return ""
+	}
 	switch m.page {
 	case overviewPage:
-		filter, t = m.state.overview.filter.text, &m.state.overview.table
+		return m.state.overview.table.position()
 	case stagePage:
-		s := &m.state.stage
-		filter, t = s.filter.text, &s.tables[s.tab]
+		s := m.state.stage
+		return s.tables[s.tab].position()
 	case functionPage:
-		f := &m.state.function
-		switch f.tab {
-		case logsTab:
-			filter = f.logs.filter.text
-		case invocationsTab:
-			t = &f.invocations
+		return m.functionPosition()
+	case resourcePage:
+		return scrollCue(m.state.resource.scroll, contentHeight, len(m.resourceLines()))
+	case versionPage:
+		v := m.state.version
+		l := m.versionLines()
+		if len(l.rows) == 0 {
+			return scrollCue(v.scroll, contentHeight, len(l.lines))
+		}
+		return l.position(v.cursor)
+	case planPage:
+		_, body := m.planLines()
+		return body.position(m.state.plan.cursor)
+	case diffPage:
+		return scrollCue(m.state.diff.scroll, contentHeight, len(m.diffLines()))
+	case invocationPage:
+		return scrollCue(m.state.invocation.scroll, contentHeight, len(m.invocationLines()))
+	}
+	return ""
+}
+
+// pageFilter is the filter of the page on screen, if it has one.
+func (m model) pageFilter() *filterBox {
+	switch m.page {
+	case overviewPage:
+		return &m.state.overview.filter
+	case stagePage:
+		return &m.state.stage.filter
+	case functionPage:
+		if m.state.function.tab == logsTab {
+			return &m.state.function.logs.filter
 		}
 	}
+	return nil
+}
+
+// frameMeta is what is set into the frame's edges: the filter on top, while it is typed or
+// holds text, and at the bottom where the page is, when it was read, and whether refreshing is
+// paused.
+func (m model) frameMeta() (string, string) {
 	var meta string
-	if filter != "" {
-		meta = styles.Render(styles.S("filter ", styles.ToneFaint), styles.S(filter, styles.ToneText))
+	if f := m.pageFilter(); f != nil && (f.active || f.text != "") {
+		meta = styles.Render(styles.S("filter", styles.ToneFaint))
+		if f.text != "" {
+			meta = styles.Render(styles.S("filter ", styles.ToneFaint), styles.S(f.text, styles.ToneText))
+		}
 	}
 	var foot []string
 	if f := m.state.function; m.page == functionPage && f.tab == logsTab {
@@ -459,8 +496,8 @@ func (m model) frameMeta() (string, string) {
 			foot = append(foot, styles.Render(styles.S("● ", styles.ToneAccent), styles.S("following, read every "+refreshEvery.String(), styles.ToneMuted)))
 		}
 	}
-	if t != nil && t.position() != "" {
-		foot = append(foot, styles.Faint(t.position()))
+	if p := m.position(); p != "" {
+		foot = append(foot, styles.Faint(p))
 	}
 	switch at := m.refreshedAt.Local().Format(time.TimeOnly); {
 	case m.refreshedAt.IsZero() || !m.refreshes():
@@ -489,16 +526,9 @@ func (m model) footer() string {
 		status = ansi.Truncate(status, frameWidth*2/3, "…")
 	}
 	width := frameWidth - 3 - ansi.StringWidth(status)
-	var left string
-	switch {
-	case m.page == overviewPage && m.state.overview.filter.active:
-		left = m.state.overview.filter.view(width, m.keys)
-	case m.page == stagePage && m.state.stage.filter.active:
-		left = m.state.stage.filter.view(width, m.keys)
-	case m.page == functionPage && m.state.function.tab == logsTab && m.state.function.logs.filter.active:
-		left = m.state.function.logs.filter.view(width, m.keys)
-	default:
-		left = fitHints(width, m.shortHelp()...)
+	left := fitHints(width, m.shortHelp()...)
+	if f := m.pageFilter(); f != nil && f.active {
+		left = f.view(width, m.keys)
 	}
 	return " " + spread(ansi.Truncate(left, width, "…"), status+" ", frameWidth-1)
 }
@@ -571,6 +601,9 @@ func (m model) shortHelp() [][2]string {
 		case invokeTab:
 			if m.b.EventsDir(m.state.function.name) != "" {
 				h = append(h, hint(k.EditEvent))
+			}
+			if len(m.invokeLines(resultWidth())) > functionBodyHeight() {
+				h = append(h, [2]string{k.PageUp.Help().Key + "/" + k.PageDown.Help().Key, "scroll"})
 			}
 		}
 		h = append(h, hint(k.NextTab), hint(k.Invoke))

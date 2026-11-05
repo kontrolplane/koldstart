@@ -198,10 +198,33 @@ func (t *dataTable) page(n int) {
 
 // position describes the scroll position, as 12 of 240.
 func (t dataTable) position() string {
-	if len(t.rows) == 0 {
+	return ofCount(t.cursor, len(t.rows))
+}
+
+// ofCount names the row at cursor among n, as 12 of 240, or nothing without rows.
+func ofCount(cursor, n int) string {
+	if n == 0 {
 		return ""
 	}
-	return formatInt(t.cursor+1) + " of " + formatInt(len(t.rows))
+	return formatInt(cursor+1) + " of " + formatInt(n)
+}
+
+// cursorMark is the marker of the row under the cursor, on the ground of the selection.
+func cursorMark(bg color.Color) string {
+	return styles.Fg(styles.ToneAccent).Background(bg).Render("▌") + pad(tableGutter-1, bg)
+}
+
+// litRow draws cells side by side in their columns, lifted onto the ground of the selection, for a
+// chosen line of a page that is not a table, as a change of a plan.
+func litRow(cols []column, cells ...cell) string {
+	bg := styles.P.Selection
+	var b strings.Builder
+	for i, c := range cells {
+		if i < len(cols) {
+			b.WriteString(renderCell(lift(c), cols[i], bg))
+		}
+	}
+	return b.String()
 }
 
 func (t dataTable) View() string {
@@ -239,7 +262,7 @@ func (t dataTable) renderRow(r int) string {
 	marker := strings.Repeat(" ", tableGutter)
 	if selected {
 		bg = styles.P.Selection
-		marker = styles.Fg(styles.ToneAccent).Background(bg).Render("▌") + pad(1, bg)
+		marker = cursorMark(bg)
 	}
 	var b strings.Builder
 	b.WriteString(marker)

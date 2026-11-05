@@ -140,7 +140,7 @@ func TestPrependKeepsTheView(t *testing.T) {
 	m, _ := onLogs(t, nil)
 	l := &m.state.function.logs
 	l.lines, l.from, l.follow, l.scroll = logSeries(at, maxLogLines, "line"), at, false, 100
-	shown := screen(m)
+	shown := ansi.Strip(m.logsView())
 	m, cmd := m.loadOlder()
 	msg := cmd().(logsLoadedMsg)
 	msg.events = logSeries(at.Add(-time.Hour), 10, "older")
@@ -149,8 +149,11 @@ func TestPrependKeepsTheView(t *testing.T) {
 	if len(l.lines) != maxLogLines || l.lines[0].Message != "older 000" || l.scroll != 90 {
 		t.Fatalf("%d lines, the first %q, scroll %d", len(l.lines), l.lines[0].Message, l.scroll)
 	}
-	if screen(m) != shown {
-		t.Errorf("the view moved:\n%s\nwas:\n%s", screen(m), shown)
+	if v := ansi.Strip(m.logsView()); v != shown {
+		t.Errorf("the view moved:\n%s\nwas:\n%s", v, shown)
+	}
+	if got, want := m.position(), "lines 4,881–4,910 of 5,000"; got != want {
+		t.Errorf("position %q, want %q, the lines in sight ten further down", got, want)
 	}
 }
 

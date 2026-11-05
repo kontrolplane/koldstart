@@ -110,7 +110,7 @@ func TestInvokeResultScrolls(t *testing.T) {
 	f.result = cli.Invocation{Payload: []byte(`[` + strings.Repeat(`{"a":1},`, 60) + `{"a":2}]`)}
 	m := invokeTabWith(t, f, map[string]string{"a.json": "{}", "b.json": "{}"})
 	m = pressKeys(t, m, "i")
-	if v := screen(m); !strings.Contains(v, "lines 1-") || !strings.Contains(v, "pgup/pgdn scroll") {
+	if v := screen(m); !strings.Contains(v, "lines 1–") || !strings.Contains(v, "pgup/pgdn scroll") {
 		t.Fatalf("a long result does not say it scrolls:\n%s", v)
 	}
 	m = pressKeys(t, m, "pgdown")

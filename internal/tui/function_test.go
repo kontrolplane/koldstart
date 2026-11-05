@@ -202,11 +202,11 @@ func TestOverviewEnvironmentAndTriggers(t *testing.T) {
 }
 
 // TestOverviewScroll checks the overview scrolls no further than its longer column, so one key
-// back up moves it, and the tab bar says there is more.
+// back up moves it, and the frame says which lines are in sight.
 func TestOverviewScroll(t *testing.T) {
 	m := pressKeys(t, started(t, newFake(t)), "enter")
 	m, _ = update(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
-	if v := screen(m); !strings.Contains(v, "↓ more") || strings.Contains(v, "last update") {
+	if v := screen(m); !strings.Contains(v, "lines 1–14 of ") || strings.Contains(v, "last update") {
 		t.Fatalf("at 80×24 the overview should be cut, with a hint:\n%s", v)
 	}
 	for range 50 {
@@ -216,14 +216,15 @@ func TestOverviewScroll(t *testing.T) {
 	if m.state.function.scroll != end {
 		t.Fatalf("scroll %d after 50 lines down, want the end at %d", m.state.function.scroll, end)
 	}
-	if v := screen(m); !strings.Contains(v, "↑ more") || !strings.Contains(v, "last update") {
+	total := max(len(m.functionOverview().left), len(m.functionOverview().right))
+	if v := screen(m); !strings.Contains(v, "–"+formatInt(total)+" of "+formatInt(total)) || !strings.Contains(v, "last update") {
 		t.Errorf("at the end the hint should point up, and what lambda says be in sight:\n%s", v)
 	}
 	if m = pressKeys(t, m, "k"); m.state.function.scroll != end-1 {
 		t.Errorf("one line up: scroll %d, want %d", m.state.function.scroll, end-1)
 	}
 	m, _ = update(t, m, tea.WindowSizeMsg{Width: 200, Height: 60})
-	if v := screen(m); strings.Contains(v, "more") {
+	if v := screen(m); strings.Contains(v, "lines ") {
 		t.Errorf("with room for it all there should be no hint:\n%s", v)
 	}
 }

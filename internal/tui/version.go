@@ -73,14 +73,14 @@ func (m model) versionUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 		c := changes[v.cursor]
 		return m.openDiff(c.id, c.verb+" in this deploy", inputsOf(v.before, c.id), inputsOf(v.current, c.id))
 	}
-	lines, rows := m.versionLines()
-	if len(rows) == 0 {
-		v.scroll = min(scrollBy(msg, m.keys, v.scroll, contentHeight), max(0, len(lines)-contentHeight))
+	l := m.versionLines()
+	if len(l.rows) == 0 {
+		v.scroll = min(scrollBy(msg, m.keys, v.scroll, contentHeight), max(0, len(l.lines)-contentHeight))
 		return m, nil
 	}
-	if cursor, ok := moveCursor(msg, m.keys, v.cursor, len(rows), contentHeight); ok {
+	if cursor, ok := moveCursor(msg, m.keys, v.cursor, len(l.rows), contentHeight); ok {
 		v.cursor = cursor
-		_, v.scroll = selectable(lines, rows, v.cursor, v.scroll, contentHeight)
+		_, v.scroll = selectable(l, v.cursor, v.scroll, contentHeight)
 	}
 	return m, nil
 }
@@ -178,12 +178,12 @@ func outputChanges(before, after *state.State) []cell {
 	return out
 }
 
-// versionLines are the lines of the version, with the index of the line of each change.
-func (m model) versionLines() ([]string, []int) {
+// versionLines are the lines of the version, each change one that can be chosen.
+func (m model) versionLines() pickList {
 	v := m.state.version
 	width := contentWidth - 5
 	if !v.loaded || v.current == nil {
-		return nil, nil
+		return pickList{}
 	}
 	cur := v.current
 	lines := []string{
@@ -206,11 +206,12 @@ func (m model) versionLines() ([]string, []int) {
 		title += " · " + plural(len(changes), "resource")
 	}
 	lines = append(lines, styles.SectionHeader(title, width))
-	var rows []int
+	l := pickList{lines: lines}
+	cols := []column{{width: width}}
 	for _, c := range changes {
-		rows = append(rows, len(lines))
-		lines = append(lines, renderCell(c.line, column{width: width}, nil))
+		l.add(renderCell(c.line, cols[0], nil), litRow(cols, c.line))
 	}
+	lines = l.lines
 	if len(changes) == 0 {
 		empty := "no resource or output changed: the deploy found everything as configured"
 		if len(outputs) > 0 {
@@ -224,11 +225,11 @@ func (m model) versionLines() ([]string, []int) {
 			lines = append(lines, renderCell(c, column{width: width}, nil))
 		}
 	}
-	return lines, rows
+	l.lines = lines
+	return l
 }
 
 func (m model) versionView() string {
-	lines, rows := m.versionLines()
-	view, _ := selectable(lines, rows, m.state.version.cursor, m.state.version.scroll, contentHeight)
+	view, _ := selectable(m.versionLines(), m.state.version.cursor, m.state.version.scroll, contentHeight)
 	return view
 }

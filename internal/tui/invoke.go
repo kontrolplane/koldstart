@@ -225,7 +225,7 @@ func (m model) invokeUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.PageUp, m.keys.PageDown):
 		height := functionBodyHeight()
-		f.scroll = min(scrollBy(msg, m.keys, f.scroll, height-1), maxResultScroll(len(m.invokeLines(resultWidth())), height))
+		f.scroll = min(scrollBy(msg, m.keys, f.scroll, height), maxResultScroll(len(m.invokeLines(resultWidth())), height))
 	case f.events.move(msg, m.keys):
 		f.scroll = 0
 	}
@@ -287,27 +287,16 @@ func (m model) invokeHints(name string) []string {
 	return append(lines, styles.Faint("e edits the event"))
 }
 
-// maxResultScroll is how far n lines of a result scroll in height, the last line of which says
-// where they are when they do not fit.
+// maxResultScroll is how far n lines of a result scroll in height.
 func maxResultScroll(n, height int) int {
-	if n <= height {
-		return 0
-	}
-	return n - height + 1
+	return max(0, n-height)
 }
 
 func (m model) invokeView() string {
 	f := m.state.function
 	height := functionBodyHeight()
 	left, right := eventsWidth(), resultWidth()
-	lines := m.invokeLines(right)
-	body := scrolled(lines, f.scroll, height)
-	if len(lines) > height {
-		offset := min(f.scroll, maxResultScroll(len(lines), height))
-		end := min(len(lines), offset+height-1)
-		body = scrolled(lines, offset, height-1) + "\n" +
-			styles.Faint(fmt.Sprintf("lines %d-%d of %d · pgup/pgdn scroll", offset+1, end, len(lines)))
-	}
+	body := scrolled(m.invokeLines(right), f.scroll, height)
 	return lipgloss.NewStyle().PaddingLeft(1).Render(lipgloss.JoinHorizontal(lipgloss.Top,
 		fill(f.events.View(), left, height),
 		"  ",

@@ -127,26 +127,60 @@ func moveCursor(msg tea.KeyPressMsg, k keys.KeyMap, cursor, n, page int) (int, b
 	return max(0, min(cursor, n-1)), true
 }
 
-// selectable draws height lines of a page with rows that can be selected, rows holding the index
-// of the line of each, the selected one marked. It scrolls so the selected row is in sight, and
-// returns the scroll it drew at.
-func selectable(lines []string, rows []int, cursor, scroll, height int) (string, int) {
+// pickList is a page of lines some of which can be chosen, as the changes of a plan: rows holds
+// the index of the line of each, and lit the line of each drawn chosen, on the selection's ground.
+type pickList struct {
+	lines []string
+	rows  []int
+	lit   []string
+}
+
+// add appends a line that can be chosen, as it is drawn and as it is drawn chosen.
+func (l *pickList) add(line, lit string) {
+	l.rows = append(l.rows, len(l.lines))
+	l.lines = append(l.lines, line)
+	l.lit = append(l.lit, lit)
+}
+
+// position names the chosen row among the rows, as the tables do.
+func (l pickList) position(cursor int) string {
+	return ofCount(cursor, len(l.rows))
+}
+
+// selectable draws height lines of a page with rows that can be selected, the selected one marked
+// and painted as a table paints the row under its cursor. It scrolls so the selected row is in
+// sight, and returns the scroll it drew at.
+func selectable(l pickList, cursor, scroll, height int) (string, int) {
 	selected := -1
-	if cursor >= 0 && cursor < len(rows) {
-		selected = rows[cursor]
+	if cursor >= 0 && cursor < len(l.rows) {
+		selected = l.rows[cursor]
 	}
 	if selected >= 0 {
 		scroll = min(scroll, selected)
 		scroll = max(scroll, selected-height+1)
 	}
-	scroll = max(0, min(scroll, len(lines)-height))
+	scroll = max(0, min(scroll, len(l.lines)-height))
 	out := make([]string, 0, height)
-	for i := scroll; i < min(len(lines), scroll+height); i++ {
-		mark := "  "
-		if i == selected {
-			mark = styles.Accent("▌") + " "
+	for i := scroll; i < min(len(l.lines), scroll+height); i++ {
+		switch {
+		case i == selected && cursor < len(l.lit):
+			out = append(out, cursorMark(styles.P.Selection)+l.lit[cursor])
+		case i == selected:
+			out = append(out, styles.Accent("▌")+" "+l.lines[i])
+		default:
+			out = append(out, "  "+l.lines[i])
 		}
-		out = append(out, mark+lines[i])
 	}
 	return strings.Join(out, "\n"), scroll
+}
+
+// scrollCue says which lines of a page that scrolls are in sight, as lines 12–40 of 230: shown
+// lines from the one at first, of total. It is empty when every line is in sight.
+func scrollCue(first, shown, total int) string {
+	first = max(0, min(first, total-1))
+	shown = min(shown, total-first)
+	if shown <= 0 || shown >= total {
+		return ""
+	}
+	return "lines " + formatInt(first+1) + "–" + formatInt(first+shown) + " of " + formatInt(total)
 }

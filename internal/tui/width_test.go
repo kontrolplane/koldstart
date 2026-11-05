@@ -124,7 +124,7 @@ func TestSelectable(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			view, scroll := selectable(lines, rows, tt.cursor, tt.scroll, tt.height)
+			view, scroll := selectable(pickList{lines: lines, rows: rows}, tt.cursor, tt.scroll, tt.height)
 			if scroll != tt.want {
 				t.Errorf("scroll %d, want %d", scroll, tt.want)
 			}

@@ -394,7 +394,6 @@ func (m model) logsError() string {
 func (m model) logsView() string {
 	f := m.state.function
 	l := f.logs
-	height := functionBodyHeight()
 	switch {
 	case f.logGroup == "":
 		return " " + styles.Muted("no log group: deploy the function first")
@@ -403,29 +402,78 @@ func (m model) logsView() string {
 	case !l.loaded:
 		return " " + styles.Muted(readingNote("the logs"))
 	}
-	rows, all := m.lastRows(l.scroll + height)
-	if all && len(rows) == 0 {
+	w := m.logsWindow()
+	if w.all && len(w.rows) == 0 {
 		empty := fmt.Sprintf("nothing logged since %s", formatTime(l.from))
 		if l.filter.text != "" {
 			empty = noMatch("line", styles.Clean(l.filter.text))
 		}
 		return lipgloss.NewStyle().PaddingLeft(1).Render(m.logsHead() + "\n\n" + styles.Muted(empty))
 	}
-	head := 0
-	if all {
-		head = 1
-	}
-	total := len(rows) + head
-	scroll := min(l.scroll, max(0, total-height))
-	end := total - scroll
-	start := max(0, end-height)
-	lines := make([]string, 0, end-start)
-	for i := start; i < end; i++ {
-		if i < head {
+	lines := make([]string, 0, w.end-w.start)
+	for i := w.start; i < w.end; i++ {
+		if i < w.head {
 			lines = append(lines, m.logsHead())
 			continue
 		}
-		lines = append(lines, rows[i-head].paint(logWidth()))
+		lines = append(lines, w.rows[i-w.head].paint(logWidth()))
 	}
 	return lipgloss.NewStyle().PaddingLeft(1).Render(strings.Join(lines, "\n"))
+}
+
+// logsWindow is what the logs tab has in sight: the last drawn rows, a head line above them once
+// they are all of them, and the lines from start to end of the head and the rows.
+type logsWindow struct {
+	rows       []logRow
+	all        bool
+	head       int
+	start, end int
+}
+
+// logsWindow works out the lines of the logs in sight at the scroll, the newest at the bottom.
+func (m model) logsWindow() logsWindow {
+	l := m.state.function.logs
+	height := functionBodyHeight()
+	w := logsWindow{}
+	w.rows, w.all = m.lastRows(l.scroll + height)
+	if w.all {
+		w.head = 1
+	}
+	total := len(w.rows) + w.head
+	w.end = total - min(l.scroll, max(0, total-height))
+	w.start = max(0, w.end-height)
+	return w
+}
+
+// logsPosition is the lines of the logs in sight, counted as the tab counts them, a line for each
+// event the filter keeps, however many rows it wraps to.
+func (m model) logsPosition() string {
+	f := m.state.function
+	l := f.logs
+	if f.logGroup == "" || !l.loaded {
+		return ""
+	}
+	total := len(l.lines)
+	if l.filter.text != "" {
+		total = 0
+		for _, e := range l.lines {
+			if l.filter.matches(e.Message) {
+				total++
+			}
+		}
+	}
+	w := m.logsWindow()
+	from, to := max(0, w.start-w.head), max(0, w.end-w.head)
+	below, shown := 0, 0
+	for _, r := range w.rows[to:] {
+		if r.first {
+			below++
+		}
+	}
+	for i, r := range w.rows[from:to] {
+		if r.first || i == 0 {
+			shown++
+		}
+	}
+	return scrollCue(total-below-shown, shown, total)
 }

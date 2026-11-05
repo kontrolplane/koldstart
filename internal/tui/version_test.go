@@ -113,7 +113,7 @@ func TestVersionWithoutChangesScrolls(t *testing.T) {
 		after.Outputs["output"+strings.Repeat("x", i)] = "v"
 	}
 	m := pressKeys(t, openNewestDeploy(t, before, after), "G")
-	lines, _ := m.versionLines()
+	lines := m.versionLines().lines
 	if want := len(lines) - contentHeight; m.state.version.scroll != want {
 		t.Errorf("G: scroll %d, want %d", m.state.version.scroll, want)
 	}

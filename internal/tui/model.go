@@ -160,17 +160,11 @@ func (m model) markRead() model {
 
 // typing reports whether keys go into a text input, so letters are not shortcuts.
 func (m model) typing() bool {
-	switch m.page {
-	case overviewPage:
-		return m.state.overview.filter.active
-	case stagePage:
-		return m.state.stage.filter.active
-	case functionPage:
-		return m.state.function.tab == logsTab && m.state.function.logs.filter.active
-	case removePage:
+	if m.page == removePage {
 		return true
 	}
-	return false
+	f := m.pageFilter()
+	return f != nil && f.active
 }
 
 // refreshes reports whether the page on screen reads its data again every few seconds.
