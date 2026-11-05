@@ -239,16 +239,23 @@ func (c *Console) Metrics(ctx context.Context, ref StageRef, names []string) (ma
 	return out, nil
 }
 
-// Summary sums metrics over their window.
+// Summary sums metrics over their window. Each series is summed on its own, so series of
+// different lengths are summed whole rather than read past the end of the shorter ones.
 func (m Metrics) Summary() MetricsSummary {
-	var s MetricsSummary
-	for i := range m.Invocations {
-		s.Invocations += m.Invocations[i]
-		s.Errors += m.Errors[i]
-		s.Throttles += m.Throttles[i]
-		s.DurationP99 = max(s.DurationP99, m.DurationP99[i])
+	s := MetricsSummary{Invocations: sum(m.Invocations), Errors: sum(m.Errors), Throttles: sum(m.Throttles)}
+	for _, v := range m.DurationP99 {
+		s.DurationP99 = max(s.DurationP99, v)
 	}
 	return s
+}
+
+// sum adds up the points of a series.
+func sum(series []float64) float64 {
+	var total float64
+	for _, v := range series {
+		total += v
+	}
+	return total
 }
 
 // LogsBetween reads a log group's events from since until until, the newest MaxLogEvents of
