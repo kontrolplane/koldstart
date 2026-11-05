@@ -115,7 +115,7 @@ func TestResultErrorWraps(t *testing.T) {
 	r := invocationResult{inv: cli.Invocation{Error: "Unhandled", Payload: payload}}
 	for width := 30; width <= 90; width++ {
 		v := ansi.Strip(strings.Join(resultLines(r, width), "\n"))
-		for _, word := range strings.Fields(message) {
+		for word := range strings.FieldsSeq(message) {
 			if len(word) <= width/2 && !strings.Contains(v, word) {
 				t.Fatalf("width %d: %q is broken over two lines:\n%s", width, word, v)
 			}

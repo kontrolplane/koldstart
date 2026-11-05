@@ -319,11 +319,11 @@ func rowIn(labels int, label string, value cell, width int) string {
 	return l + renderCell(value, column{width: max(1, width-labels)}, nil)
 }
 
-// labelsFor is how wide the labels of keys are drawn: the longest with its padding, at least
+// labelsFor is how wide labels for names are drawn: the longest with its padding, at least
 // labelWidth and at most half of width.
-func labelsFor(keys []string, width int) int {
+func labelsFor(names []string, width int) int {
 	w := labelWidth
-	for _, k := range keys {
+	for _, k := range names {
 		w = max(w, ansi.StringWidth(k)+2)
 	}
 	return max(labelWidth, min(w, width/2))
