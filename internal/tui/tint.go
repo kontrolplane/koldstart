@@ -75,18 +75,24 @@ func valueLevelTone(level string) styles.Tone {
 }
 
 // tintJSON tints a JSON line. It does not check the line is valid, a broken one is tinted as far
-// as it reads.
+// as it reads. The parts come in the order of the line, so a part in the tone of the one before
+// grows that span over the line rather than copying it again.
 func tintJSON(line string) cell {
 	var c cell
+	from := 0
+	at := 0
 	add := func(text string, tone styles.Tone) {
 		if text == "" {
 			return
 		}
+		end := at + len(text)
 		if n := len(c); n > 0 && c[n-1].Tone == tone {
-			c[n-1].Text += text
-			return
+			c[n-1].Text = line[from:end]
+		} else {
+			from = at
+			c = append(c, styles.Span{Text: line[at:end], Tone: tone})
 		}
-		c = append(c, styles.Span{Text: text, Tone: tone})
+		at = end
 	}
 	depth := 0
 	key := ""
@@ -318,26 +324,31 @@ func wrapCell(c cell, width int) []cell {
 		return []cell{c}
 	}
 	var lines []cell
+	parts := cellSlicer{c: c}
 	start, used := 0, 0
 	cut, next, cutUsed := -1, -1, 0
 	for i := 0; i < len(text); {
-		r, size := utf8.DecodeRuneInString(text[i:])
-		w := ansi.StringWidth(string(r))
+		g, w := ansi.FirstGraphemeCluster(text[i:], ansi.GraphemeWidth)
+		if g == "" {
+			_, n := utf8.DecodeRuneInString(text[i:])
+			g, w = text[i:i+n], 1
+		}
+		size := len(g)
 		if used+w > width && i > start {
 			if cut <= start || cutUsed*2 < width {
 				cut, next = i, i
-				if r == ' ' {
+				if g == " " {
 					next = i + size
 				}
 			}
-			lines = append(lines, sliceCell(c, start, cut))
+			lines = append(lines, parts.slice(start, cut))
 			start, i, used, cut = next, next, 0, -1
 			continue
 		}
-		switch r {
-		case ' ':
+		switch g {
+		case " ":
 			cut, next, cutUsed = i, i+size, used
-		case ',':
+		case ",":
 			cut, next, cutUsed = i+size, i+size, used+w
 			if next < len(text) && text[next] == ' ' {
 				next++
@@ -347,7 +358,7 @@ func wrapCell(c cell, width int) []cell {
 		i += size
 	}
 	if start < len(text) {
-		lines = append(lines, sliceCell(c, start, len(text)))
+		lines = append(lines, parts.slice(start, len(text)))
 	}
 	return lines
 }
@@ -361,11 +372,28 @@ func plainText(c cell) string {
 	return b.String()
 }
 
-// sliceCell is the part of a cell from byte from to byte to of its text.
-func sliceCell(c cell, from, to int) cell {
+// cellSlicer cuts a cell into parts by byte offsets of its text, each part after the one before,
+// so cutting a long line into many walks its spans once rather than once a part.
+type cellSlicer struct {
+	c cell
+	// span is the first span the next part can take from, and at where it starts in the text.
+	span int
+	at   int
+}
+
+// slice is the part of the cell from byte from to byte to of its text. from is no less than the
+// from of the part before.
+func (k *cellSlicer) slice(from, to int) cell {
+	for k.span < len(k.c) && k.at+len(k.c[k.span].Text) <= from {
+		k.at += len(k.c[k.span].Text)
+		k.span++
+	}
 	var out cell
-	at := 0
-	for _, s := range c {
+	at := k.at
+	for _, s := range k.c[k.span:] {
+		if at >= to {
+			break
+		}
 		end := at + len(s.Text)
 		if lo, hi := max(from, at), min(to, end); lo < hi {
 			out = append(out, styles.Span{Text: s.Text[lo-at : hi-at], Tone: s.Tone, Bold: s.Bold})
@@ -384,17 +412,18 @@ func highlight(c cell, want string) cell {
 		return c
 	}
 	var out cell
+	parts := cellSlicer{c: c}
 	at := 0
 	for {
 		i := strings.Index(lower[at:], want)
 		if i < 0 {
 			break
 		}
-		out = append(out, sliceCell(c, at, at+i)...)
+		out = append(out, parts.slice(at, at+i)...)
 		out = append(out, styles.Span{Text: text[at+i : at+i+len(want)], Tone: styles.ToneAccent, Bold: true})
 		at += i + len(want)
 	}
-	return append(out, sliceCell(c, at, len(text))...)
+	return append(out, parts.slice(at, len(text))...)
 }
 
 // logCells are the drawn lines of one log message: each of its lines tinted and wrapped to width.
