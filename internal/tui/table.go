@@ -26,12 +26,12 @@ type column struct {
 	hide  bool
 }
 
-// minimum is the narrowest the column gets.
+// minimum is the narrowest the column gets while the table fits.
 func (c column) minimum() int {
 	if c.grow == 0 {
 		return c.width
 	}
-	return max(c.width, len(c.title), minColumnWidth)
+	return max(c.width, ansi.StringWidth(c.title), minColumnWidth)
 }
 
 // cell is the content of a table cell, in spans so a selected row can repaint it.
@@ -60,6 +60,9 @@ type dataTable struct {
 	offset  int
 	height  int
 	empty   string
+	// spare is the width no column takes, painted at the end of a row so a selected row spans the
+	// table.
+	spare int
 }
 
 func newTable(columns []column, empty string) dataTable {
@@ -68,7 +71,10 @@ func newTable(columns []column, empty string) dataTable {
 	return t
 }
 
-func (t dataTable) width() int { return columnsWidth(t.columns, func(c column) int { return c.width }) }
+// width is the width the table draws at: its columns, the gaps between them and the spare.
+func (t dataTable) width() int {
+	return columnsWidth(t.columns, func(c column) int { return c.width }) + t.spare
+}
 
 // columnsWidth is the width of the visible columns, at the width the function gives them, with
 // the gutter and the gaps between them.
@@ -83,11 +89,12 @@ func columnsWidth(columns []column, width func(column) int) int {
 }
 
 // setSize fits the columns to width and shows height body rows. While the columns do not fit at
-// their minimum, the ones with the highest drop are hidden. What is left over is shared by the
-// growing columns.
+// their minimum, the ones with the highest drop are hidden; if they still do not fit, the widest
+// give way. What is left over is shared by the growing columns, or kept as spare when none shows.
 func (t *dataTable) setSize(width, height int) {
 	t.height = max(height, minTableHeight)
 	t.columns = slices.Clone(t.base)
+	t.spare = 0
 	for columnsWidth(t.columns, column.minimum) > width {
 		worst := -1
 		for i, c := range t.columns {
@@ -107,22 +114,42 @@ func (t *dataTable) setSize(width, height int) {
 			shares += c.grow
 		}
 	}
+	t.shrink(width)
 	extra := width - t.width()
-	if extra <= 0 || shares == 0 {
-		t.setCursor(t.cursor)
-		return
-	}
-	given, last := 0, -1
-	for i, c := range t.columns {
-		if c.grow > 0 && !c.hide {
-			n := extra * c.grow / shares
-			t.columns[i].width += n
-			given += n
-			last = i
+	switch {
+	case extra <= 0:
+	case shares == 0:
+		t.spare = extra
+	default:
+		given, last := 0, -1
+		for i, c := range t.columns {
+			if c.grow > 0 && !c.hide {
+				n := extra * c.grow / shares
+				t.columns[i].width += n
+				given += n
+				last = i
+			}
 		}
+		t.columns[last].width += extra - given
 	}
-	t.columns[last].width += extra - given
 	t.setCursor(t.cursor)
+}
+
+// shrink narrows the widest shown column, the rightmost of equals, a column at a time until the
+// table fits width or every column is one wide.
+func (t *dataTable) shrink(width int) {
+	for over := t.width() - width; over > 0; over-- {
+		widest := -1
+		for i, c := range t.columns {
+			if !c.hide && c.width > 1 && (widest < 0 || c.width >= t.columns[widest].width) {
+				widest = i
+			}
+		}
+		if widest < 0 {
+			return
+		}
+		t.columns[widest].width--
+	}
 }
 
 func (t *dataTable) setRows(rows []tableRow) {
@@ -149,9 +176,9 @@ func (t *dataTable) move(msg tea.KeyPressMsg, k keys.KeyMap) bool {
 	case key.Matches(msg, k.Down):
 		t.setCursor(t.cursor + 1)
 	case key.Matches(msg, k.PageUp):
-		t.setCursor(t.cursor - t.height)
+		t.page(-t.height)
 	case key.Matches(msg, k.PageDown):
-		t.setCursor(t.cursor + t.height)
+		t.page(t.height)
 	case key.Matches(msg, k.Top):
 		t.setCursor(0)
 	case key.Matches(msg, k.Bottom):
@@ -160,6 +187,13 @@ func (t *dataTable) move(msg tea.KeyPressMsg, k keys.KeyMap) bool {
 		return false
 	}
 	return true
+}
+
+// page moves the rows in sight and the cursor by n rows, so the cursor keeps its place on screen
+// until the first or the last row is in sight.
+func (t *dataTable) page(n int) {
+	t.offset = max(0, min(t.offset+n, len(t.rows)-t.height))
+	t.setCursor(t.cursor + n)
 }
 
 // position describes the scroll position, as 12 of 240.
@@ -227,15 +261,23 @@ func (t dataTable) renderRow(r int) string {
 		}
 		b.WriteString(renderCell(content, c, bg))
 	}
+	if bg != nil {
+		b.WriteString(pad(t.spare, bg))
+	}
 	return b.String()
 }
 
-// lift raises faint spans on a selected row, where the ground has less contrast to spare.
+// lift raises faint spans on a selected row, where the ground has less contrast to spare. The
+// light selection takes more of it than the dark one: muted text on it reads at under 4:1, so there
+// faint and muted spans are lifted to body.
 func lift(c cell) cell {
 	out := make(cell, len(c))
 	for i, s := range c {
-		if s.Tone == styles.ToneFaint {
+		switch {
+		case s.Tone == styles.ToneFaint && styles.P.Dark:
 			s.Tone = styles.ToneMuted
+		case (s.Tone == styles.ToneFaint || s.Tone == styles.ToneMuted) && !styles.P.Dark:
+			s.Tone = styles.ToneBody
 		}
 		out[i] = s
 	}
@@ -253,7 +295,7 @@ func pad(n int, bg color.Color) string {
 }
 
 // renderCell cuts the spans to the column width and aligns them. Content that does not fit ends
-// in an ellipsis, also when the cut falls between two spans.
+// in an ellipsis, also when the cut falls between two spans or a wide rune does not fit whole.
 func renderCell(c cell, col column, bg color.Color) string {
 	total := 0
 	for _, s := range c {
@@ -272,12 +314,16 @@ func renderCell(c cell, col column, bg color.Color) string {
 			break
 		}
 		txt := s.Text
-		if w := ansi.StringWidth(txt); used+w > budget {
+		full := used+ansi.StringWidth(txt) <= budget
+		if !full {
 			txt = ansi.Truncate(txt, budget-used, "")
 		}
 		used += ansi.StringWidth(txt)
 		b.WriteString(paint(s, bg, txt))
 		last = s
+		if !full {
+			break
+		}
 	}
 	if cut && col.width > 0 {
 		b.WriteString(paint(last, bg, "…"))

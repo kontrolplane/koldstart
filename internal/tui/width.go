@@ -28,9 +28,14 @@ func indent(s string) string {
 // tableWidth is the width of a table that fills the content area, a column in from each side.
 func tableWidth() int { return contentWidth - 2 }
 
-// spread places left and right on one line of the given width.
+// spread places left and right on one line of the given width. When they do not fit, left is cut
+// to an ellipsis so right stays whole.
 func spread(left, right string, width int) string {
-	gap := max(1, width-ansi.StringWidth(left)-ansi.StringWidth(right))
+	rw := ansi.StringWidth(right)
+	if ansi.StringWidth(left)+1+rw > width {
+		left = truncate(left, width-rw-1)
+	}
+	gap := max(1, width-ansi.StringWidth(left)-rw)
 	return left + strings.Repeat(" ", gap) + right
 }
 
