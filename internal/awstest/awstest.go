@@ -5,7 +5,10 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"net/http"
+	"net/url"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -35,6 +38,30 @@ func Emulator(t *testing.T) aws.Config {
 		t.Fatalf("loading the emulator's config: %v", err)
 	}
 	return cfg
+}
+
+// Get requests a url aws gave out, such as an http api's endpoint. The emulator answers for
+// every host on its own address, so a url of an aws host goes there with its host in the Host
+// header.
+func Get(t *testing.T, rawURL string) (*http.Response, error) {
+	t.Helper()
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	if strings.HasSuffix(u.Hostname(), ".amazonaws.com") {
+		endpoint, err := url.Parse(os.Getenv(EnvEndpoint))
+		if err != nil {
+			return nil, err
+		}
+		req.URL.Scheme, req.URL.Host = endpoint.Scheme, endpoint.Host
+		req.Host = u.Hostname()
+	}
+	return http.DefaultClient.Do(req)
 }
 
 // Name returns a name no other test run uses, so tests can share one emulator.

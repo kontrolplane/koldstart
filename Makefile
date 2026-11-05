@@ -70,17 +70,17 @@ vuln: ## check for known vulnerabilities
 test: ## run the unit tests
 	go test -race -count=1 ./...
 
-# The emulator tests run against MiniStack. Without KOLDSTART_TEST_ENDPOINT they skip.
+# The emulator tests run against Floci. Without KOLDSTART_TEST_ENDPOINT they skip.
 EMULATOR ?= http://127.0.0.1:4566
 
-emulator: ## start MiniStack on 127.0.0.1:4566 and wait for it
+emulator: ## start Floci on 127.0.0.1:4566 and wait for it
 	docker compose up -d
-	@for _ in $$(seq 1 60); do curl -fs -o /dev/null $(EMULATOR)/_localstack/health && exit 0; sleep 1; done; echo "ministack did not become ready"; exit 1
+	@for _ in $$(seq 1 60); do curl -fs -o /dev/null $(EMULATOR)/_localstack/health && exit 0; sleep 1; done; echo "floci did not become ready"; exit 1
 
-emulator.down: ## stop MiniStack and drop what it held
+emulator.down: ## stop Floci and drop what it held
 	docker compose down
 
-test-emulator: ## run the tests that talk to aws against MiniStack; make emulator first
+test-emulator: ## run the tests that talk to aws against Floci; make emulator first
 	KOLDSTART_TEST_ENDPOINT=$(EMULATOR) go test -race -count=1 -run 'Emulator' ./...
 
 check: lint vuln test release.check ## run what CI runs

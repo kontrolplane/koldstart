@@ -44,15 +44,11 @@ jobs:
       - name: Test
         run: make test
 
-  # The tests that talk to aws, against MiniStack as make test-emulator runs them.
+  # The tests that talk to aws, against Floci as make emulator and make test-emulator run them
+  # here: Floci starts lambda's runtime images through the runner's docker.
   emulator:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    services:
-      ministack:
-        image: ministackorg/ministack:1.5.37@sha256:cdfa6ba04f4c7febd9e14a34a21e31b9f0fb5279ee6af545784c05219f5a59a4
-        ports:
-          - 4566:4566
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -64,11 +60,15 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Wait for MiniStack
-        run: for _ in $(seq 1 60); do curl -fs -o /dev/null http://127.0.0.1:4566/_localstack/health && exit 0; sleep 1; done; exit 1
+      - name: Start Floci
+        run: make emulator
 
-      - name: Test against MiniStack
+      - name: Test against Floci
         run: make test-emulator
+
+      - name: Floci's logs
+        if: failure()
+        run: docker compose logs
 
   # The versions the Makefile pins, so CI and make check lint alike.
   lint:

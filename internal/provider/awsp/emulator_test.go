@@ -217,7 +217,7 @@ func TestEventsEmulator(t *testing.T) {
 	apply(t, e, backend, app, nodes)
 
 	st, _, _ := backend.Read(ctx, app, "dev")
-	resp, err := http.Get(st.Resources[desired.HTTPAPIID].Attributes["ApiEndpoint"] + "/hi/levi")
+	resp, err := awstest.Get(t, st.Resources[desired.HTTPAPIID].Attributes["ApiEndpoint"]+"/hi/levi")
 	if err != nil {
 		t.Fatal(err)
 	}
