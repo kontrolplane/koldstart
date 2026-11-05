@@ -65,8 +65,9 @@ profile, or %s.`, defaultRegion),
 		},
 	}
 	cmd.Flags().StringVar(&app, "app", "", "the app's name, the directory's by default")
-	cmd.Flags().StringVarP(&template, "template", "t", scaffold.Node, "the handler's language: "+orList(scaffold.Templates))
+	cmd.Flags().StringVarP(&template, "template", "t", scaffold.Node, "the language: "+orList(scaffold.Templates))
 	cmd.Flags().BoolVar(&force, "force", false, "write over a koldstart.pkl that is there")
+	_ = cmd.RegisterFlagCompletionFunc("template", cobra.FixedCompletions(scaffold.Templates, cobra.ShellCompDirectiveNoFileComp))
 	return cmd
 }
 

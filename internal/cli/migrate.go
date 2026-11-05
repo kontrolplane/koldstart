@@ -87,8 +87,8 @@ checked with pkl before it is written, so it is valid even where it is not compl
 			return nil
 		},
 	}
-	cmd.Flags().StringVarP(&out, "out", "o", "", "where to write the koldstart.pkl, beside serverless.yml without it")
-	cmd.Flags().BoolVar(&force, "force", false, "write over the koldstart.pkl when there is one")
+	cmd.Flags().StringVarP(&out, "out", "o", "", "the file to write, beside serverless.yml by default")
+	cmd.Flags().BoolVar(&force, "force", false, "write over a koldstart.pkl that is there")
 	return cmd
 }
 

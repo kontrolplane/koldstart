@@ -30,8 +30,8 @@ json object, {} when there are none.`,
   %[1]s outputs -o json | jq -r .httpApiUrl`, name),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if output != outputText && output != outputJSON {
-				return fmt.Errorf("-o %q: want text or json", output)
+			if err := checkOutput(cmd, output); err != nil {
+				return err
 			}
 			s, err := openStage(cmd.Context(), opts, false)
 			if err != nil {
@@ -51,7 +51,7 @@ json object, {} when there are none.`,
 			return nil
 		},
 	}
-	cmd.Flags().StringVarP(&output, "output", "o", outputText, "text or json")
+	outputFlag(cmd, &output)
 	return cmd
 }
 

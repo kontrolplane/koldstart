@@ -38,7 +38,7 @@ and run its functions on this machine; any stage can be browsed, invoked, unlock
 			return ui(cmd.Context(), c, theme)
 		},
 	}
-	cmd.Flags().StringVar(&theme, "theme", "auto", "auto follows the terminal; dark and light paint their own background")
+	cmd.Flags().StringVar(&theme, "theme", "auto", "the colours: auto, dark or light")
 	_ = cmd.RegisterFlagCompletionFunc("theme", cobra.FixedCompletions(themes, cobra.ShellCompDirectiveNoFileComp))
 	return cmd
 }

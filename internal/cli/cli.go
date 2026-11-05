@@ -128,9 +128,9 @@ works on a stage works on the one --stage names, dev without it.`, name),
 
 	flags := root.PersistentFlags()
 	flags.StringVarP(&opts.Stage, "stage", "s", envOr("KOLDSTART_STAGE", "dev"), "stage to work on; $KOLDSTART_STAGE")
-	flags.StringVarP(&opts.Config, "config", "c", envOr("KOLDSTART_CONFIG", "koldstart.pkl"), "configuration file; $KOLDSTART_CONFIG")
-	flags.StringVar(&opts.Profile, "profile", os.Getenv("AWS_PROFILE"), "aws profile from the shared aws config; $AWS_PROFILE")
-	flags.StringVar(&opts.Region, "region", os.Getenv("AWS_REGION"), "aws region, takes precedence over region in the configuration; $AWS_REGION")
+	flags.StringVarP(&opts.Config, "config", "c", envOr("KOLDSTART_CONFIG", "koldstart.pkl"), "pkl file; $KOLDSTART_CONFIG")
+	flags.StringVar(&opts.Profile, "profile", os.Getenv("AWS_PROFILE"), "aws profile to use; $AWS_PROFILE")
+	flags.StringVar(&opts.Region, "region", os.Getenv("AWS_REGION"), "aws region, over the configured one; $AWS_REGION")
 	flags.BoolVar(&opts.Debug, "debug", false, "write debug logs to "+debugLog)
 	flags.BoolP("help", "h", false, "print the flags and exit")
 	root.Flags().Bool("version", false, "print the version and exit")
@@ -182,15 +182,28 @@ the version of go and the platform it was built for.`,
   %[1]s version -o json | jq -r .commit`, name),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if output != outputText && output != outputJSON {
-				return usage(cmd, fmt.Errorf("-o %q: want text or json", output))
+			if err := checkOutput(cmd, output); err != nil {
+				return err
 			}
 			return printVersion(cmd.OutOrStdout(), output, version.Current())
 		},
 	}
-	cmd.Flags().StringVarP(&output, "output", "o", outputText, "text or json")
-	_ = cmd.RegisterFlagCompletionFunc("output", cobra.FixedCompletions([]cobra.Completion{outputText, outputJSON}, cobra.ShellCompDirectiveNoFileComp))
+	outputFlag(cmd, &output)
 	return cmd
+}
+
+// outputFlag adds -o to cmd, text or json, and completes its values.
+func outputFlag(cmd *cobra.Command, output *string) {
+	cmd.Flags().StringVarP(output, "output", "o", outputText, "the format: text or json")
+	_ = cmd.RegisterFlagCompletionFunc("output", cobra.FixedCompletions([]cobra.Completion{outputText, outputJSON}, cobra.ShellCompDirectiveNoFileComp))
+}
+
+// checkOutput refuses an -o other than text or json, as a usage error.
+func checkOutput(cmd *cobra.Command, output string) error {
+	if output != outputText && output != outputJSON {
+		return usage(cmd, fmt.Errorf("-o %q: want text or json", output))
+	}
+	return nil
 }
 
 func printVersion(w io.Writer, output string, info version.Info) error {

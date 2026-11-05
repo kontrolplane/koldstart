@@ -48,8 +48,8 @@ they are still there.`,
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&plan.AllowReplace, "allow-replace", false, "plan replacing retained resources, which leaves the old ones in place")
-	cmd.Flags().BoolVar(&plan.Refresh, "refresh", false, "read every resource as it is, to find what was deleted or changed outside koldstart")
+	cmd.Flags().BoolVar(&plan.AllowReplace, "allow-replace", false, "plan replacing retained resources; the old ones stay")
+	cmd.Flags().BoolVar(&plan.Refresh, "refresh", false, "show what changed outside koldstart")
 	return cmd
 }
 
@@ -94,8 +94,8 @@ and plain lines elsewhere, as in ci.`,
 		},
 	}
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "apply without asking")
-	cmd.Flags().BoolVar(&plan.AllowReplace, "allow-replace", false, "replace retained resources, which leaves the old ones in place")
-	cmd.Flags().BoolVar(&plan.Refresh, "refresh", false, "read every resource as it is, and create again or set back what was deleted or changed outside koldstart")
+	cmd.Flags().BoolVar(&plan.AllowReplace, "allow-replace", false, "replace retained resources; the old ones stay")
+	cmd.Flags().BoolVar(&plan.Refresh, "refresh", false, "undo what changed outside koldstart")
 	cmd.AddCommand(deployFunctionCommand(name, opts))
 	return cmd
 }

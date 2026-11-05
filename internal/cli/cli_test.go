@@ -178,6 +178,7 @@ func TestUsageErrors(t *testing.T) {
 		{name: "required flag", args: []string{"logs"}, want: "kdst logs needs -f/--function (see kdst logs --help)", code: exitUsage},
 		{name: "help of an unknown command", args: []string{"help", "deplo"}, want: `unknown command "deplo" for kdst: did you mean deploy? (see kdst --help)`, code: exitUsage},
 		{name: "unknown output", args: []string{"version", "-o", "yaml"}, want: `-o "yaml": want text or json (see kdst version --help)`, code: exitUsage},
+		{name: "unknown output of outputs", args: []string{"outputs", "-o", "yaml"}, want: `-o "yaml": want text or json (see kdst outputs --help)`, code: exitUsage},
 		{name: "no configuration", args: []string{"plan"}, want: "no koldstart.pkl here: run kdst init to start a project, or pass --config", code: exitFailed},
 	}
 	for _, tt := range tests {
@@ -232,6 +233,8 @@ func TestCompletion(t *testing.T) {
 		{name: "commands", args: []string{"pl"}, want: []string{"plan\t"}},
 		{name: "theme", args: []string{"ui", "--theme", ""}, want: []string{"auto", "dark", "light", ":4"}},
 		{name: "output", args: []string{"version", "-o", ""}, want: []string{"text", "json", ":4"}},
+		{name: "output of outputs", args: []string{"outputs", "-o", ""}, want: []string{"text", "json", ":4"}},
+		{name: "template", args: []string{"init", "--template", ""}, want: []string{"node", "go", "python", ":4"}},
 		{name: "help", args: []string{"help", "deploy", ""}, want: []string{"function\t", ":4"}},
 		{name: "no arguments", args: []string{"plan", ""}, want: []string{":4"}},
 		{name: "configuration", args: []string{"--config", ""}, want: []string{"pkl", ":8"}},
