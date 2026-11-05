@@ -120,6 +120,10 @@ func (c *converter) convert() (*Result, error) {
 	}
 	c.tags(&w, provider)
 	c.http(&w, provider)
+	if expr := str(get(provider, "websocketsApiRouteSelectionExpression")); expr != "" {
+		w.blank()
+		w.line("websocket { routeSelection = %s }", quote(expr))
+	}
 
 	functions := get(c.doc, "functions")
 	if len(keys(functions)) > 0 {

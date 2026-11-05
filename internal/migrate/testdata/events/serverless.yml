@@ -4,6 +4,7 @@ provider:
   name: aws
   runtime: nodejs22.x
   region: us-east-1
+  websocketsApiRouteSelectionExpression: $request.body.type
   httpApi:
     cors: true
     authorizers:
@@ -14,6 +15,43 @@ provider:
           - notifier
 
 functions:
+  realtime:
+    handler: src/realtime.handler
+    events:
+      - websocket: $default
+      - websocket:
+          route: $disconnect
+      - websocket:
+          route: chat
+  onOrder:
+    handler: src/orders.handler
+    events:
+      - eventBridge:
+          eventBus: orders
+          pattern:
+            source:
+              - orders.service
+            detail-type:
+              - OrderPlaced
+          input:
+            kind: order
+      - eventBridge:
+          schedule: rate(1 hour)
+  legacy:
+    handler: src/legacy.handler
+    events:
+      - alb:
+          listenerArn: arn:aws:elasticloadbalancing:us-east-1:123456789012:listener/app/legacy/50dc6c495c0c9188/f2f7dc8efc522ab2
+          priority: 10
+          multiValueHeaders: true
+          conditions:
+            path: /legacy/*
+            method:
+              - GET
+              - POST
+            header:
+              name: x-version
+              values: ["2"]
   api:
     handler: src/api.handler
     url:
