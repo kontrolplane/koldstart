@@ -1,0 +1,198 @@
+/// A koldstart project: the functions of an app, what invokes them, and the resources they use.
+///
+/// A `koldstart.pkl` amends this module, and imports `kdst.pkl` for `ref()`, the secrets, the
+/// stage and the events:
+///
+/// ```
+/// amends "package://github.com/kontrolplane/koldstart/releases/download/v0.1.0/koldstart@0.1.0#/Project.pkl"
+/// import "package://github.com/kontrolplane/koldstart/releases/download/v0.1.0/koldstart@0.1.0#/kdst.pkl"
+/// ```
+module koldstart.Project
+
+/// The version of this schema. koldstart refuses a file with a newer one than it reads.
+fixed schemaVersion: Int = 1
+
+/// The name of the application, in the name of everything deployed and in its state.
+app: String(matches(Regex(#"[a-z][a-z0-9-]{0,23}"#)))
+
+/// The aws region to deploy into. `--region` takes precedence.
+region: String?
+
+/// The stage from `--stage`, `dev` without it. Read only; inside functions and resources, read
+/// it as `kdst.stage`.
+fixed stage: String = read?("prop:stage") ?? "dev"
+
+/// The functions, by name.
+functions: Mapping<Name, Function>
+
+/// Any other aws resources, by name, created through the cloud control api.
+resources: Mapping<Name, Resource>
+
+/// Values printed by `kdst outputs` and shown in `kdst ui`.
+outputs: Mapping<String, Value>
+
+/// Tags added to everything koldstart creates, next to its own.
+tags: Mapping<String, String>
+
+/// The stage's http api, which all `Events.HttpRoute`s share.
+http: Http
+
+/// The name of a function or resource. Functions and resources share one namespace.
+typealias Name = String(matches(Regex(#"[A-Za-z][A-Za-z0-9-]{0,39}"#)))
+
+/// A string, or a value known only while deploying.
+typealias Value = String|Ref|Secret|StageOutput
+
+class Ref {
+  fixed `$koldstart`: "ref" = "ref"
+  resource: String
+  attribute: String
+}
+
+class Secret {
+  fixed `$koldstart`: "secret" = "secret"
+  source: "ssm"|"secretsmanager"
+  name: String(!isEmpty)
+  key: String = ""
+  /// When true, the environment variable holds the arn, the function may read it, and the
+  /// function reads the value itself, so it is not in the function's configuration.
+  atRuntime: Boolean = false
+
+  /// This secret, one key of its json value.
+  function field(jsonKey: String): Secret = (this) { key = jsonKey }
+
+  /// This secret, read by the function when it starts rather than while deploying.
+  function readAtRuntime(): Secret = (this) { atRuntime = true }
+}
+
+class StageOutput {
+  fixed `$koldstart`: "output" = "output"
+  app: String
+  stage: String
+  output: String
+}
+
+class Function {
+  /// `nodejs22.x` or `nodejs24.x` for javascript and typescript, `provided.al2023` for go.
+  runtime: "nodejs22.x"|"nodejs24.x"|"provided.al2023"
+
+  /// For node, the file and its export, `src/api.handler`. For go, the package to build,
+  /// `./cmd/worker`.
+  handler: String(!isEmpty)
+
+  /// Memory in megabytes.
+  memory: Int(isBetween(128, 10240)) = 1024
+
+  /// At most 15 minutes.
+  timeout: Duration(isBetween(1.s, 15.min)) = 6.s
+
+  architecture: "arm64"|"x86_64" = "arm64"
+
+  /// The size of /tmp in megabytes.
+  ephemeralStorage: Int(isBetween(512, 10240)) = 512
+
+  reservedConcurrency: Int(isPositive)?
+
+  /// How many days the log group keeps logs.
+  logRetention: LogRetention = 30
+
+  environment: Mapping<String(matches(Regex(#"[A-Za-z_][A-Za-z0-9_]*"#))), Value>
+
+  /// What invokes the function, the event classes of `kdst.pkl`.
+  events: Listing<Event>
+
+  /// The function's own url. `auth` has no default: `"none"` makes it public.
+  url: FunctionUrl?
+
+  /// Statements added to the function's role.
+  permissions: Listing<Statement>
+
+  /// Resources of the project the function may use, by name: their names and arns become
+  /// environment variables, and a policy for the access is added to the role.
+  link: Mapping<String, "read"|"write"|"readwrite">
+
+  vpc: Vpc?
+
+  /// For node: packages to leave out of the bundle and copy from node_modules.
+  bundle: Bundle
+
+  /// For typescript: run `tsc --noEmit` before bundling.
+  typecheck: Boolean = false
+}
+
+/// The days a log group can keep logs, as cloudwatch allows them.
+typealias LogRetention = Int(List(1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288, 3653).contains(this))
+
+class FunctionUrl {
+  /// `"iam"` requires signed requests, `"none"` makes the url public.
+  auth: "iam"|"none"
+  cors: Cors?
+}
+
+class Cors {
+  origins: Listing<String>
+  methods: Listing<String>
+  headers: Listing<String>
+  expose: Listing<String>
+  credentials: Boolean = false
+  maxAge: Duration = 0.s
+}
+
+class Statement {
+  effect: "Allow"|"Deny" = "Allow"
+  actions: Listing<String>(!isEmpty)
+  resources: Listing<Value>(!isEmpty)
+}
+
+class Vpc {
+  subnetIds: Listing<Value>(!isEmpty)
+  securityGroupIds: Listing<Value>(!isEmpty)
+}
+
+class Bundle {
+  externals: Listing<String>
+  /// Ship a source map, and turn on `--enable-source-maps`.
+  sourcemap: Boolean = false
+}
+
+class Http {
+  /// A custom domain for the api, such as `api.example.com`.
+  domain: String?
+  /// The acm certificate of the domain, in the region of the api.
+  certificate: Value?
+  cors: Cors?
+  /// Authorizers routes pick with `authorizer = "name"`.
+  authorizers: Mapping<String, Authorizer>
+  /// The stage-wide request limit.
+  throttling: Throttling?
+}
+
+/// Base class of `kdst.JwtAuthorizer` and `kdst.LambdaAuthorizer`.
+abstract class Authorizer
+
+class Throttling {
+  /// Requests per second.
+  rate: Number(isPositive)
+  burst: Int(isPositive)
+}
+
+class Resource {
+  /// The CloudFormation type name, such as `AWS::DynamoDB::Table`.
+  type: String(matches(Regex(#"AWS::[A-Za-z0-9]+::[A-Za-z0-9]+"#)))
+  /// The properties CloudFormation documents for the type.
+  properties: Dynamic = new Dynamic {}
+  /// Whether `kdst remove` and a replacement delete the resource. Without it, tables, buckets,
+  /// databases and other resources that hold data are retained.
+  deletionPolicy: ("retain"|"delete")?
+}
+
+/// Base class of the events in `kdst.pkl`.
+abstract class Event
+
+output {
+  renderer = new JsonRenderer {
+    converters {
+      [Duration] = (d) -> d.toUnit("s").value.toInt()
+    }
+  }
+}

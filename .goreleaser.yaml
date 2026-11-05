@@ -1,0 +1,98 @@
+version: 2
+project_name: koldstart
+
+# The schema package, which koldstart.pkl files amend, goes on the same release as the binaries.
+before:
+  hooks:
+    - rm -rf .pkl-out
+    - go run ./hack/schema -version {{ .Version }} -out .pkl-out
+
+builds:
+  - main: ./cmd/koldstart
+    binary: koldstart
+    env:
+      - CGO_ENABLED=0
+    # No windows in v1, see #1. Windows users run the container image.
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    ldflags:
+      - -s -w
+      - -X github.com/kontrolplane/koldstart/internal/version.buildVersion={{ .Version }}
+      - -X github.com/kontrolplane/koldstart/internal/version.buildCommit={{ .FullCommit }}
+      - -X github.com/kontrolplane/koldstart/internal/version.buildDate={{ .CommitDate }}
+
+archives:
+  - formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- .Arch }}
+
+sboms:
+  - artifacts: archive
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+homebrew_casks:
+  - name: koldstart
+    binaries:
+      - koldstart
+    # The same binary again as kdst; casks take no target in binaries.
+    custom_block: |
+      binary "koldstart", target: "kdst"
+    dependencies:
+      - formula: pkl
+    generate_completions_from_executable:
+      executable: koldstart
+      args: [completion]
+      shells: [bash, zsh, fish]
+    repository:
+      owner: kontrolplane
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Casks
+    homepage: https://kontrolplane.dev/projects/#koldstart
+    description: "Deploy serverless applications to AWS Lambda."
+    license: Apache-2.0
+    commit_author:
+      use_github_app_token: true
+    commit_msg_template: "{{ .ProjectName }}: update to {{ .Tag }}"
+    skip_upload: auto
+    hooks:
+      post:
+        install_steps: |
+          on_macos do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/koldstart"]
+          end
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "Merge pull request"
+      - "Merge branch"
+
+release:
+  github:
+    owner: kontrolplane
+    name: koldstart
+  extra_files:
+    - glob: ./.pkl-out/koldstart@*
+  draft: false
+  prerelease: auto
+  name_template: "{{ .ProjectName }} v{{ .Version }}"

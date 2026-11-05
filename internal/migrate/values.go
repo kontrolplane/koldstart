@@ -1,0 +1,463 @@
+package migrate
+
+import (
+	"encoding/json"
+	"fmt"
+	"strconv"
+	"strings"
+
+	"go.yaml.in/yaml/v3"
+)
+
+// The intrinsic functions of CloudFormation koldstart converts, and Condition, which it does not.
+const (
+	intrinsicRef       = "Ref"
+	intrinsicCondition = "Condition"
+)
+
+// isTrue and isFalse report whether a yaml value is the boolean true or false.
+func isTrue(n *yaml.Node) bool  { return n != nil && n.Kind == yaml.ScalarNode && n.Value == "true" }
+func isFalse(n *yaml.Node) bool { return n != nil && n.Kind == yaml.ScalarNode && n.Value == "false" }
+
+// The yaml tags of plain values.
+const (
+	tagString = "!!str"
+	tagInt    = "!!int"
+	tagFloat  = "!!float"
+	tagBool   = "!!bool"
+	tagNull   = "!!null"
+)
+
+// value is a pkl expression for a yaml value that has one: a scalar, a variable, or a ref. ok is
+// false for objects and lists, which are written as blocks, and for what cannot be converted,
+// which todo then says why.
+type value struct {
+	expr string
+	ok   bool
+	todo string
+	// interpolable is a string value that can sit inside a "...\(x)..." string.
+	interpolable bool
+}
+
+func literal(expr string) value     { return value{expr: expr, ok: true, interpolable: true} }
+func notConverted(why string) value { return value{todo: why} }
+
+// scalar converts a scalar yaml value.
+func (c *converter) scalar(n *yaml.Node) value {
+	switch n.ShortTag() {
+	case tagInt, tagFloat, tagBool:
+		return value{expr: n.Value, ok: true}
+	case tagNull:
+		return value{expr: "null", ok: true}
+	default:
+		return c.text(n.Value)
+	}
+}
+
+// text converts a string, the serverless variables in it included.
+func (c *converter) text(s string) value {
+	parts, err := splitVariables(s)
+	if err != nil {
+		return notConverted(err.Error())
+	}
+	if len(parts) == 1 && parts[0].variable {
+		return c.variable(parts[0].text)
+	}
+	var b strings.Builder
+	for _, p := range parts {
+		if !p.variable {
+			b.WriteString(strings.Trim(quote(p.text), `"`))
+			continue
+		}
+		v := c.variable(p.text)
+		if !v.ok {
+			return v
+		}
+		if !v.interpolable {
+			return notConverted("${" + p.text + "} is a secret or an output, which cannot sit inside a string")
+		}
+		b.WriteString(`\(` + v.expr + `)`)
+	}
+	return literal(`"` + b.String() + `"`)
+}
+
+// part is a piece of a string: text, or the inside of a ${...} variable.
+type part struct {
+	text     string
+	variable bool
+}
+
+// splitVariables splits a string into text and the variables in it, which may nest.
+func splitVariables(s string) ([]part, error) {
+	var parts []part
+	for {
+		i := strings.Index(s, "${")
+		if i < 0 {
+			if s != "" || parts == nil {
+				parts = append(parts, part{text: s})
+			}
+			return parts, nil
+		}
+		if i > 0 {
+			parts = append(parts, part{text: s[:i]})
+		}
+		depth, end := 0, -1
+		for j := i; j < len(s) && end < 0; j++ {
+			switch {
+			case strings.HasPrefix(s[j:], "${"):
+				depth++
+				j++
+			case s[j] == '}':
+				depth--
+				if depth == 0 {
+					end = j
+				}
+			}
+		}
+		if end < 0 {
+			return nil, fmt.Errorf("a ${ without its } in %q", s)
+		}
+		parts = append(parts, part{text: s[i+2 : end], variable: true})
+		s = s[end+1:]
+	}
+}
+
+// variable converts what is inside a ${...}.
+func (c *converter) variable(inner string) value {
+	primary, fallback := splitFallback(inner)
+	if strings.Contains(primary, "${") {
+		return notConverted("${" + inner + "} has a variable inside a variable")
+	}
+	source, path, _ := strings.Cut(primary, ":")
+	switch {
+	case primary == "sls:stage" || primary == "opt:stage" || primary == "self:provider.stage":
+		return literal("kdst.stage")
+	case primary == "self:service":
+		return literal("module.app")
+	case primary == "aws:region" || primary == "opt:region" || primary == "self:provider.region":
+		if c.region == "" {
+			return notConverted("${" + inner + "}: no provider.region to refer to")
+		}
+		return literal("module.region")
+	case source == "self":
+		return c.self(path, inner)
+	case source == "env":
+		if fallback != "" {
+			return literal(fmt.Sprintf(`read?(%s) ?? %s`, quote("env:"+path), quote(unquoteFallback(fallback))))
+		}
+		return literal(fmt.Sprintf("read(%s)", quote("env:"+path)))
+	case source == "ssm":
+		name := strings.TrimSuffix(path, "~true")
+		if !strings.HasPrefix(name, "/") && !strings.HasPrefix(name, "arn:") {
+			return notConverted("${" + inner + "}: ssm with a region or another form")
+		}
+		return value{expr: fmt.Sprintf("kdst.ssm(%s)", quote(name)), ok: true}
+	case source == "cf":
+		stack, output, ok := strings.Cut(path, ".")
+		i := strings.LastIndex(stack, "-")
+		if !ok || i <= 0 {
+			return notConverted("${" + inner + "}: a stack name that is not <service>-<stage>")
+		}
+		return value{expr: fmt.Sprintf("kdst.stageOutput(%s, %s, %s)", quote(stack[:i]), quote(stack[i+1:]), quote(output)), ok: true}
+	default:
+		return notConverted("${" + inner + "} has no equivalent: an import, a read() or a value of your own")
+	}
+}
+
+// splitFallback splits ${a, b} into a and its fallback b.
+func splitFallback(inner string) (string, string) {
+	primary, fallback, _ := strings.Cut(inner, ",")
+	return strings.TrimSpace(primary), strings.TrimSpace(fallback)
+}
+
+func unquoteFallback(s string) string {
+	return strings.Trim(s, `'"`)
+}
+
+// self converts ${self:path}: the value the path names, converted where it is.
+func (c *converter) self(path, inner string) value {
+	if c.selfDepth > 10 {
+		return notConverted("${" + inner + "} refers to itself")
+	}
+	n := lookup(c.doc, strings.Split(path, "."))
+	if n == nil {
+		return notConverted("${" + inner + "} names nothing in serverless.yml")
+	}
+	if n.Kind != yaml.ScalarNode {
+		return notConverted("${" + inner + "} names an object or a list: write it out")
+	}
+	c.selfDepth++
+	defer func() { c.selfDepth-- }()
+	return c.scalar(n)
+}
+
+// intrinsic converts a CloudFormation intrinsic function, or reports that n is none.
+func (c *converter) intrinsic(n *yaml.Node) (value, bool) {
+	name, arg := intrinsicOf(n)
+	switch name {
+	case "":
+		return value{}, false
+	case intrinsicRef:
+		return c.ref(arg.Value), true
+	case "Fn::GetAtt":
+		var target, attribute string
+		if arg.Kind == yaml.SequenceNode && len(arg.Content) == 2 {
+			target, attribute = arg.Content[0].Value, arg.Content[1].Value
+		} else {
+			target, attribute, _ = strings.Cut(arg.Value, ".")
+		}
+		return c.getAtt(target, attribute), true
+	default:
+		return notConverted(name + " has no equivalent: write it as a pkl expression"), true
+	}
+}
+
+// intrinsicOf returns the function a node calls and its argument: { Ref: x }, or !Ref x.
+func intrinsicOf(n *yaml.Node) (string, *yaml.Node) {
+	if strings.HasPrefix(n.Tag, "!") && !strings.HasPrefix(n.Tag, "!!") {
+		name := strings.TrimPrefix(n.Tag, "!")
+		if name != intrinsicRef && name != intrinsicCondition {
+			name = "Fn::" + name
+		}
+		arg := *n
+		arg.Tag = ""
+		return name, &arg
+	}
+	if n.Kind == yaml.MappingNode && len(n.Content) == 2 {
+		key := n.Content[0].Value
+		if key == intrinsicRef || strings.HasPrefix(key, "Fn::") || key == intrinsicCondition {
+			return key, n.Content[1]
+		}
+	}
+	return "", nil
+}
+
+// ref converts a Ref: to a resource, its identifier, which is what Ref returns for most types;
+// to a function, its name.
+func (c *converter) ref(target string) value {
+	switch target {
+	case "AWS::Region":
+		if c.region == "" {
+			return notConverted("Ref AWS::Region: no provider.region to refer to")
+		}
+		return literal("module.region")
+	case "AWS::AccountId", "AWS::StackName", "AWS::Partition", "AWS::URLSuffix", "AWS::StackId", "AWS::NoValue":
+		return notConverted("Ref " + target + " has no equivalent")
+	}
+	if fn, ok := c.functionOf(target); ok {
+		return value{expr: fmt.Sprintf(`kdst.ref(%s, "FunctionName")`, quote(fn)), ok: true}
+	}
+	if name, ok := c.resourceNames[target]; ok {
+		return value{expr: fmt.Sprintf(`kdst.ref(%s, "Identifier")`, quote(name)), ok: true}
+	}
+	return notConverted("Ref " + target + " names nothing koldstart deploys")
+}
+
+// getAtt converts a Fn::GetAtt to a ref of the same attribute.
+func (c *converter) getAtt(target, attribute string) value {
+	if fn, ok := c.functionOf(target); ok {
+		return value{expr: fmt.Sprintf("kdst.ref(%s, %s)", quote(fn), quote(attribute)), ok: true}
+	}
+	if name, ok := c.resourceNames[target]; ok {
+		return value{expr: fmt.Sprintf("kdst.ref(%s, %s)", quote(name), quote(attribute)), ok: true}
+	}
+	return notConverted("Fn::GetAtt " + target + "." + attribute + " names nothing koldstart deploys")
+}
+
+// functionOf finds the function a logical id of the serverless framework stands for, such as
+// ApiLambdaFunction for the function api.
+func (c *converter) functionOf(logicalID string) (string, bool) {
+	name, ok := c.functionsByLogicalID[logicalID]
+	return name, ok
+}
+
+// logicalID is the logical id the serverless framework gives a function's lambda function.
+func logicalID(function string) string {
+	r := strings.NewReplacer("-", "Dash", "_", "Underscore")
+	name := r.Replace(function)
+	return strings.ToUpper(name[:1]) + name[1:] + "LambdaFunction"
+}
+
+// property writes key = value, or key { ... } for an object or a list, as dynamic properties.
+func (c *converter) property(w *writer, where, key string, n *yaml.Node) {
+	c.member(w, where, member(key), n)
+}
+
+// member writes a property or an element of a dynamic object: head = value, or head { ... }.
+func (c *converter) member(w *writer, where, head string, n *yaml.Node) {
+	if v, ok := c.intrinsic(n); ok {
+		c.assign(w, where, head, v, n)
+		return
+	}
+	switch n.Kind {
+	case yaml.ScalarNode:
+		c.assign(w, where, head, c.scalar(n), n)
+	case yaml.AliasNode:
+		c.member(w, where, head, n.Alias)
+	case yaml.MappingNode:
+		w.open(head)
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			k := n.Content[i].Value
+			c.property(w, where+"."+k, k, n.Content[i+1])
+		}
+		w.close()
+	case yaml.SequenceNode:
+		if len(n.Content) == 0 {
+			c.assign(w, where, head, literal("new Listing {}"), n)
+			return
+		}
+		w.open(head)
+		for i, item := range n.Content {
+			c.element(w, fmt.Sprintf("%s[%d]", where, i), item)
+		}
+		w.close()
+	}
+}
+
+// element writes an element of a list.
+func (c *converter) element(w *writer, where string, n *yaml.Node) {
+	if v, ok := c.intrinsic(n); ok {
+		c.elementValue(w, where, v, n)
+		return
+	}
+	switch n.Kind {
+	case yaml.MappingNode:
+		c.member(w, where, "new", n)
+	case yaml.SequenceNode:
+		c.member(w, where, "new Listing", n)
+	case yaml.AliasNode:
+		c.element(w, where, n.Alias)
+	default:
+		c.elementValue(w, where, c.scalar(n), n)
+	}
+}
+
+func (c *converter) elementValue(w *writer, where string, v value, n *yaml.Node) {
+	if !v.ok {
+		c.leaveOut(w, where, v.todo, n)
+		return
+	}
+	w.line("%s", v.expr)
+}
+
+// assign writes head = value, or leaves it out with a todo.
+func (c *converter) assign(w *writer, where, head string, v value, n *yaml.Node) {
+	if !v.ok {
+		c.leaveOut(w, where, v.todo, n)
+		return
+	}
+	if head == "new" || head == "new Listing" {
+		w.line("%s", v.expr)
+		return
+	}
+	w.line("%s = %s", head, v.expr)
+}
+
+// leaveOut writes what could not be converted as a todo, with the yaml it came from.
+func (c *converter) leaveOut(w *writer, where, why string, n *yaml.Node) {
+	c.todo(where, why)
+	w.comment("TODO: " + why)
+	w.comment("was: " + flow(n))
+}
+
+// flow is a node as one line of yaml.
+func flow(n *yaml.Node) string {
+	copied := deepCopy(n)
+	setFlow(copied)
+	data, err := yaml.Marshal(copied)
+	if err != nil {
+		return n.Value
+	}
+	return strings.TrimSpace(string(data))
+}
+
+func deepCopy(n *yaml.Node) *yaml.Node {
+	c := *n
+	c.Content = make([]*yaml.Node, len(n.Content))
+	for i, child := range n.Content {
+		c.Content[i] = deepCopy(child)
+	}
+	return &c
+}
+
+func setFlow(n *yaml.Node) {
+	if n.Kind == yaml.MappingNode || n.Kind == yaml.SequenceNode {
+		n.Style = yaml.FlowStyle
+	}
+	n.HeadComment, n.LineComment, n.FootComment = "", "", ""
+	for _, child := range n.Content {
+		setFlow(child)
+	}
+}
+
+// jsonString is a yaml value as a pkl string of its json, as filter policies and inputs take it.
+func jsonString(n *yaml.Node) (string, error) {
+	var v any
+	if err := n.Decode(&v); err != nil {
+		return "", err
+	}
+	data, err := json.Marshal(v)
+	if err != nil {
+		return "", err
+	}
+	return quote(string(data)), nil
+}
+
+// lookup finds the node at a path of keys in a mapping.
+func lookup(n *yaml.Node, path []string) *yaml.Node {
+	for _, key := range path {
+		n = get(n, key)
+		if n == nil {
+			return nil
+		}
+	}
+	return n
+}
+
+// get returns the value of a key of a mapping, or nil.
+func get(n *yaml.Node, key string) *yaml.Node {
+	if n == nil {
+		return nil
+	}
+	if n.Kind == yaml.AliasNode {
+		n = n.Alias
+	}
+	if n.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		if n.Content[i].Value == key {
+			return n.Content[i+1]
+		}
+	}
+	return nil
+}
+
+// str returns the string of a scalar, or "".
+func str(n *yaml.Node) string {
+	if n == nil || n.Kind != yaml.ScalarNode {
+		return ""
+	}
+	return n.Value
+}
+
+// integer returns the number of a scalar, and whether it is one.
+func integer(n *yaml.Node) (int, bool) {
+	if n == nil {
+		return 0, false
+	}
+	i, err := strconv.Atoi(n.Value)
+	return i, err == nil
+}
+
+// keys returns the keys of a mapping, in their order.
+func keys(n *yaml.Node) []string {
+	if n == nil || n.Kind != yaml.MappingNode {
+		return nil
+	}
+	out := make([]string, 0, len(n.Content)/2)
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		out = append(out, n.Content[i].Value)
+	}
+	return out
+}

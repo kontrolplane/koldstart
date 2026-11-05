@@ -1,0 +1,52 @@
+service: legacy
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  region: eu-central-1
+  environment:
+    REGION: ${aws:region}
+    BUCKET: ${self:service}-${sls:stage}-files
+    FROM_FILE: ${file(./config.json):key}
+    SHARED: ${cf:shared-prod.QueueUrl}
+    LOG_LEVEL: ${env:LOG_LEVEL, 'info'}
+
+functions:
+  scraper:
+    handler: handler.main
+    runtime: python3.12
+  image:
+    image: 123456789012.dkr.ecr.eu-central-1.amazonaws.com/legacy:latest
+  worker:
+    handler: bootstrap
+    runtime: provided.al2
+    layers:
+      - arn:aws:lambda:eu-central-1:123456789012:layer:tools:1
+  old_api:
+    handler: src/api.handler
+    reservedConcurrency: 5
+    environment:
+      TOPIC: !Sub arn:aws:sns:${AWS::Region}:${AWS::AccountId}:alerts
+
+resources:
+  Resources:
+    Files:
+      Type: AWS::S3::Bucket
+      DeletionPolicy: Snapshot
+      DependsOn: Seeder
+      Properties:
+        BucketName: ${self:provider.environment.BUCKET}
+        Tags:
+          - Key: aws:cloudformation:custom
+            Value: "yes"
+    Seeder:
+      Type: Custom::Seed
+      Properties:
+        ServiceToken: !GetAtt SeedLambdaFunction.Arn
+  Outputs:
+    FilesArn:
+      Value: !GetAtt Files.Arn
+      Export:
+        Name: legacy-files
+    Joined:
+      Value: !Join ["-", [a, b]]

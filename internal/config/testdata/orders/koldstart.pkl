@@ -1,0 +1,69 @@
+amends "../../../../pkl/Project.pkl"
+
+import "../../../../pkl/kdst.pkl"
+
+app = "orders"
+region = "eu-west-1"
+
+tags { ["team"] = "payments" }
+
+http {
+  authorizers {
+    ["users"] = new kdst.JwtAuthorizer { issuer = "https://auth.example.com"; audience { "orders" } }
+  }
+  throttling = new { rate = 100; burst = 200 }
+}
+
+functions {
+  ["api"] {
+    runtime = "nodejs22.x"
+    handler = "src/api.handler"
+    memory = if (kdst.stage == "prod") 1024 else 256
+    timeout = 10.s
+    environment {
+      ["TABLE_NAME"] = kdst.ref("orders", "TableName")
+      ["API_KEY"] = kdst.ssm("/orders/api-key")
+      ["DB_PASSWORD"] = kdst.secretsmanager("db").field("password").readAtRuntime()
+      ["PAYMENTS_URL"] = kdst.stageOutput("payments", kdst.stage, "apiUrl")
+      ["LOG_LEVEL"] = "info"
+    }
+    events {
+      new kdst.HttpRoute { method = "GET"; path = "/orders/{id}"; authorizer = "users" }
+      new kdst.HttpRoute { method = "POST"; path = "/orders" }
+    }
+    link { ["orders"] = "read" }
+    url = new { auth = "iam" }
+  }
+  ["worker"] {
+    runtime = "provided.al2023"
+    handler = "./cmd/worker"
+    environment { ["TABLE_NAME"] = kdst.ref("orders", "TableName") }
+    events {
+      new kdst.Queue { queue = kdst.ref("jobs", "Arn"); batchSize = 10; maximumBatchingWindow = 2.s }
+      new kdst.Schedule { expression = "rate(5 minutes)" }
+    }
+    permissions {
+      new { actions { "dynamodb:PutItem" }; resources { kdst.ref("orders", "Arn") } }
+    }
+  }
+}
+
+resources {
+  ["orders"] {
+    type = "AWS::DynamoDB::Table"
+    properties {
+      BillingMode = "PAY_PER_REQUEST"
+      AttributeDefinitions { new { AttributeName = "id"; AttributeType = "S" } }
+      KeySchema { new { AttributeName = "id"; KeyType = "HASH" } }
+    }
+  }
+  ["jobs"] {
+    type = "AWS::SQS::Queue"
+    properties {
+      RedrivePolicy { deadLetterTargetArn = kdst.ref("dead", "Arn"); maxReceiveCount = 3 }
+    }
+  }
+  ["dead"] { type = "AWS::SQS::Queue" }
+}
+
+outputs { ["table"] = kdst.ref("orders", "TableName") }

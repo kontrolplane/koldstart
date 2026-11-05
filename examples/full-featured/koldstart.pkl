@@ -1,0 +1,72 @@
+amends "package://github.com/kontrolplane/koldstart/releases/download/v0.1.0/koldstart@0.1.0#/Project.pkl"
+
+import "package://github.com/kontrolplane/koldstart/releases/download/v0.1.0/koldstart@0.1.0#/kdst.pkl"
+
+app = "shop"
+region = "eu-west-1"
+
+tags {
+  ["team"] = "checkout"
+}
+
+functions {
+  ["api"] {
+    runtime = "nodejs22.x"
+    handler = "src/api.handler"
+    memory = if (kdst.stage == "prod") 1024 else 256
+    timeout = 10.s
+    environment {
+      ["API_KEY"] = kdst.ssm("/shop/\(kdst.stage)/api-key")
+    }
+    link {
+      ["orders"] = "read"
+      ["jobs"] = "readwrite"
+    }
+    events {
+      new kdst.HttpRoute { method = "GET"; path = "/orders/{id}" }
+      new kdst.HttpRoute { method = "POST"; path = "/orders" }
+    }
+  }
+  ["worker"] {
+    runtime = "provided.al2023"
+    handler = "./cmd/worker"
+    timeout = 30.s
+    link {
+      ["orders"] = "readwrite"
+    }
+    events {
+      new kdst.Queue { queue = kdst.ref("jobs", "Arn"); batchSize = 10 }
+    }
+  }
+  ["report"] {
+    runtime = "nodejs22.x"
+    handler = "src/report.handler"
+    link {
+      ["orders"] = "read"
+    }
+    events {
+      new kdst.Schedule { expression = "rate(1 hour)"; enabled = kdst.stage == "prod" }
+    }
+  }
+}
+
+resources {
+  ["orders"] {
+    type = "AWS::DynamoDB::Table"
+    properties {
+      BillingMode = "PAY_PER_REQUEST"
+      AttributeDefinitions { new { AttributeName = "id"; AttributeType = "S" } }
+      KeySchema { new { AttributeName = "id"; KeyType = "HASH" } }
+    }
+  }
+  ["jobs"] {
+    type = "AWS::SQS::Queue"
+    properties {
+      VisibilityTimeout = 60
+    }
+  }
+}
+
+outputs {
+  ["ordersTable"] = kdst.ref("orders", "TableName")
+}
