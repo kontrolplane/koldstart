@@ -14,7 +14,10 @@ internal/engine/            plans and applies nodes in dependency order, recordi
 internal/state/             the state, locks and zips in a bucket of the account; a memory backend for tests
 internal/provider/awsp/     the hand-written providers, with koldstart:: type names
 internal/provider/cloudcontrol/  everything in resources, through cloud control
+internal/resolve/           reads secrets from ssm and secrets manager, and outputs of other stages
+internal/local/             runs functions here against an emulator of the lambda runtime api; offline
 internal/awstest/           connects tests to the emulator
+hack/schema/                packages the schema in pkl/ with the pkl koldstart pins, for releases
 internal/version/           the build's version, stamped by the linker, in route's shape
 docs/                       the user documentation; it describes the design in #1 until it is built
 ```

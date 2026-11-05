@@ -17,8 +17,8 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
     -ldflags "-s -w -X github.com/kontrolplane/koldstart/internal/version.buildVersion=${VERSION} -X github.com/kontrolplane/koldstart/internal/version.buildCommit=${COMMIT} -X github.com/kontrolplane/koldstart/internal/version.buildDate=${DATE}" \
     -o /out/koldstart ./cmd/koldstart
 
-# alpine rather than distroless: from M1 the image also carries the musl build of pkl, which
-# koldstart evaluates configuration with.
+# alpine rather than distroless, for a shell in ci. koldstart downloads the pkl it pins on first
+# use, into the cache of the user it runs as.
 FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
 COPY --from=build /out/koldstart /usr/local/bin/koldstart
 RUN ln -s koldstart /usr/local/bin/kdst && adduser -D -u 10001 koldstart
