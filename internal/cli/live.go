@@ -251,7 +251,7 @@ func (m Metrics) Summary() MetricsSummary {
 	return s
 }
 
-// LogsBetween reads a log group's events from since until until, the newest maxLogEvents of
+// LogsBetween reads a log group's events from since until until, the newest MaxLogEvents of
 // them, with a cloudwatch logs filter pattern when filter is set. A zero until reads up to now.
 func (c *Console) LogsBetween(ctx context.Context, ref StageRef, group string, since, until time.Time, filter string) ([]LogEvent, error) {
 	in := &cloudwatchlogs.FilterLogEventsInput{LogGroupName: &group, StartTime: aws.Int64(since.UnixMilli())}
@@ -271,8 +271,8 @@ func (c *Console) LogsBetween(ctx context.Context, ref StageRef, group string, s
 		for _, e := range page.Events {
 			out = append(out, LogEvent{Time: time.UnixMilli(aws.ToInt64(e.Timestamp)), Message: strings.TrimRight(aws.ToString(e.Message), "\n"), Stream: aws.ToString(e.LogStreamName)})
 		}
-		if len(out) > maxLogEvents {
-			out = slices.Delete(out, 0, len(out)-maxLogEvents)
+		if len(out) > MaxLogEvents {
+			out = slices.Delete(out, 0, len(out)-MaxLogEvents)
 		}
 	}
 	slices.SortStableFunc(out, func(a, b LogEvent) int { return a.Time.Compare(b.Time) })

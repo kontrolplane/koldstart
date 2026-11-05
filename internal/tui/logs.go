@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"time"
@@ -23,15 +24,21 @@ const (
 	olderStep = time.Hour
 )
 
-// maxLogLines bounds the lines kept; the oldest go first when new ones come.
+// maxLogLines bounds the lines kept. Reading newer lines drops the oldest, and reading older
+// ones the newest.
 const maxLogLines = 5000
+
+// stampWidth is the width of the time in front of a line of the logs, with the gap after it.
+const stampWidth = 14
 
 // logState is the logs of the function on screen: the lines read, whether the newest are
 // followed, as a live tail brings them or by reading again, and how far back they go.
 type logState struct {
 	gen    int
 	loaded bool
-	lines  []cli.LogEvent
+	// err is why the first read of the logs failed.
+	err   string
+	lines []cli.LogEvent
 	// from is the start of the oldest window read; lines before it are not read yet.
 	from time.Time
 	// follow keeps the newest line in sight; scroll is how many lines the view is above it.
@@ -65,42 +72,98 @@ func (m model) applyLogs(msg logsLoadedMsg) (model, tea.Cmd) {
 		l.loadingOlder = false
 	}
 	if msg.err != nil {
+		if !l.loaded && msg.how != logsPrepend {
+			l.err = msg.err.Error()
+		}
 		return m.loadError("could not read the logs of "+f.name, msg.err, l.loaded)
 	}
+	events, from := readWindow(msg.events, msg.from)
 	switch msg.how {
 	case logsAppend:
-		l.lines = appendNew(l.lines, msg.events)
+		l.lines = appendNew(l.lines, events)
+		l.trimOldest()
 	case logsPrepend:
-		l.from = msg.from
-		if len(msg.events) == 0 {
+		l.from = from
+		if len(events) == 0 {
 			l.emptyOlder++
 		} else {
 			l.emptyOlder = 0
 		}
-		l.lines = append(slices.Clone(msg.events), l.lines...)
+		l.lines = append(slices.Clone(events), l.lines...)
+		dropped := l.trimNewest()
+		l.scroll = max(0, l.scroll-len(m.logRows(dropped)))
 	default:
-		l.lines, l.from = msg.events, msg.from
+		l.lines, l.from = events, from
+		l.trimOldest()
 	}
-	if len(l.lines) > maxLogLines {
-		l.lines = slices.Delete(l.lines, 0, len(l.lines)-maxLogLines)
-	}
-	l.loaded = true
+	l.loaded, l.err = true, ""
 	if m.page == functionPage {
 		m.refreshedAt = time.Now()
 	}
 	return m.updateRequests(), nil
 }
 
+// readWindow is what a read of the logs from from brings, and where the window it covers starts.
+// A read that hit cli.MaxLogEvents kept its newest lines, so the window starts after the
+// millisecond of its first line, whose other lines may be cut, and a read of the lines before
+// takes them.
+func readWindow(events []cli.LogEvent, from time.Time) ([]cli.LogEvent, time.Time) {
+	if len(events) < cli.MaxLogEvents {
+		return events, from
+	}
+	first := events[0].Time
+	i := 0
+	for i < len(events) && !events[i].Time.After(first) {
+		i++
+	}
+	return events[i:], first.Add(time.Millisecond)
+}
+
+// trimOldest keeps the newest maxLogLines lines, and the rest of the millisecond the oldest kept
+// is in, so a read of the lines before from takes what was dropped.
+func (l *logState) trimOldest() {
+	if len(l.lines) <= maxLogLines {
+		return
+	}
+	cut := l.lines[len(l.lines)-maxLogLines].Time
+	i := 0
+	for i < len(l.lines) && l.lines[i].Time.Before(cut) {
+		i++
+	}
+	l.lines, l.from = slices.Delete(l.lines, 0, i), cut
+}
+
+// trimNewest keeps the oldest maxLogLines lines, and the rest of the millisecond the newest kept
+// is in, so following again reads what was dropped. It returns the lines it dropped.
+func (l *logState) trimNewest() []cli.LogEvent {
+	if len(l.lines) <= maxLogLines {
+		return nil
+	}
+	cut := l.lines[maxLogLines-1].Time
+	i := maxLogLines
+	for i < len(l.lines) && !l.lines[i].Time.After(cut) {
+		i++
+	}
+	dropped := slices.Clone(l.lines[i:])
+	l.lines = l.lines[:i]
+	return dropped
+}
+
 // appendNew adds the lines that are not on screen yet, as a tail and a read can bring the same.
+// It compares them with every line on screen as new as the oldest of them.
 func appendNew(have, lines []cli.LogEvent) []cli.LogEvent {
 	if len(have) == 0 {
 		return slices.Clone(lines)
 	}
-	seen := map[cli.LogEvent]bool{}
-	for _, e := range have[max(0, len(have)-500):] {
-		seen[e] = true
+	if len(lines) == 0 {
+		return have
 	}
-	out := have
+	oldest := slices.MinFunc(lines, func(a, b cli.LogEvent) int { return a.Time.Compare(b.Time) }).Time
+	seen := map[cli.LogEvent]bool{}
+	for i := len(have) - 1; i >= 0 && !have[i].Time.Before(oldest); i-- {
+		seen[have[i]] = true
+	}
+	out := slices.Clip(have)
 	for _, e := range lines {
 		if !seen[e] {
 			out = append(out, e)
@@ -126,9 +189,7 @@ func (m model) applyTail(msg tailMsg) (model, tea.Cmd) {
 	}
 	if l.follow {
 		l.lines = appendNew(l.lines, msg.lines)
-		if len(l.lines) > maxLogLines {
-			l.lines = slices.Delete(l.lines, 0, len(l.lines)-maxLogLines)
-		}
+		l.trimOldest()
 		m = m.updateRequests()
 	}
 	return m, waitFor(msg.ch)
@@ -146,6 +207,15 @@ func (m model) refreshLogs() (model, tea.Cmd) {
 	return m.loadLogs(f.logs.lines[len(f.logs.lines)-1].Time.Add(time.Millisecond), time.Time{}, logsAppend)
 }
 
+// followLogs keeps the newest line in sight again, reading what came while it was not.
+func (m model) followLogs() (model, tea.Cmd) {
+	l := &m.state.function.logs
+	l.follow, l.scroll = true, 0
+	m, cmd := m.refreshLogs()
+	m, tail := m.startTail()
+	return m, tea.Batch(cmd, tail)
+}
+
 // loadOlder reads the hour of logs before the oldest window read.
 func (m model) loadOlder() (model, tea.Cmd) {
 	l := m.state.function.logs
@@ -161,28 +231,31 @@ func (m model) logsUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Filter):
 		return m, l.filter.open()
 	case key.Matches(msg, m.keys.Follow):
-		l.follow = !l.follow
-		if !l.follow {
+		if l.follow {
+			l.follow = false
 			return m.stopTail(), nil
 		}
-		l.scroll = 0
-		m, cmd := m.refreshLogs()
-		m, tail := m.startTail()
-		return m, tea.Batch(cmd, tail)
+		return m.followLogs()
+	case key.Matches(msg, m.keys.Bottom) && !l.follow:
+		return m.followLogs()
 	}
-	lines := len(m.logLines())
 	page := functionBodyHeight()
-	top := max(0, lines-page)
-	before := l.scroll
+	want := l.scroll + 2*page + 2
+	if key.Matches(msg, m.keys.Top) {
+		want = math.MaxInt
+	}
+	rows, _ := m.lastRows(want)
+	top := max(0, len(rows)+1-page)
+	before := min(l.scroll, top)
 	switch {
 	case key.Matches(msg, m.keys.Up):
-		l.scroll++
+		l.scroll = before + 1
 	case key.Matches(msg, m.keys.Down):
-		l.scroll--
+		l.scroll = before - 1
 	case key.Matches(msg, m.keys.PageUp):
-		l.scroll += page
+		l.scroll = before + page
 	case key.Matches(msg, m.keys.PageDown):
-		l.scroll -= page
+		l.scroll = before - page
 	case key.Matches(msg, m.keys.Top):
 		l.scroll = top
 	case key.Matches(msg, m.keys.Bottom):
@@ -203,45 +276,115 @@ func (m model) logsUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 	return m, nil
 }
 
-// logLines are the lines of the logs as they are drawn: tinted, wrapped to the width, and only
-// the ones the filter matches.
-func (m model) logLines() []string {
+// logRow is one drawn line of the logs, before it is painted: a line of the message of an event,
+// the first with the event's time in front of it.
+type logRow struct {
+	at    time.Time
+	first bool
+	c     cell
+}
+
+// logWidth is the width the lines of the logs are drawn in.
+func logWidth() int { return contentWidth - 4 }
+
+// logRows are the drawn lines of the events the filter keeps, tinted, with what it looks for
+// marked, and wrapped to the width.
+func (m model) logRows(events []cli.LogEvent) []logRow {
 	l := m.state.function.logs
-	width := contentWidth - 4
-	var out []string
-	for _, e := range l.lines {
-		if !l.filter.matches(e.Message) {
-			continue
+	var out []logRow
+	for _, e := range events {
+		if l.filter.matches(e.Message) {
+			out = append(out, entryRows(e, l.filter.text, logWidth())...)
 		}
-		out = append(out, logEntry(e, width)...)
 	}
 	return out
 }
 
-// logEntry draws one line of the logs: its time, and its message tinted and wrapped under it.
-func logEntry(e cli.LogEvent, width int) []string {
-	stamp := styles.Faint(e.Time.Local().Format("15:04:05.000")) + "  "
-	cells := logCells(e.Message, width-14)
-	out := make([]string, 0, len(cells))
+// lastRows are the last n drawn lines of the logs, or more to finish the line of an event, and
+// whether they are all of them. Only what is in sight is tinted, so a long log draws quickly.
+func (m model) lastRows(n int) ([]logRow, bool) {
+	l := m.state.function.logs
+	var chunks [][]logRow
+	count, i := 0, len(l.lines)-1
+	for ; i >= 0 && count < n; i-- {
+		if e := l.lines[i]; l.filter.matches(e.Message) {
+			rows := entryRows(e, l.filter.text, logWidth())
+			chunks = append(chunks, rows)
+			count += len(rows)
+		}
+	}
+	out := make([]logRow, 0, count)
+	for _, rows := range slices.Backward(chunks) {
+		out = append(out, rows...)
+	}
+	return out, i < 0
+}
+
+// entryRows are the drawn lines of one event, where it holds mark marked.
+func entryRows(e cli.LogEvent, mark string, width int) []logRow {
+	cells := markedLogCells(e.Message, mark, width-stampWidth)
+	out := make([]logRow, len(cells))
 	for i, c := range cells {
-		if i > 0 {
-			stamp = strings.Repeat(" ", 14)
-		}
-		out = append(out, stamp+renderCell(c, column{width: width - 14}, nil))
+		out[i] = logRow{at: e.Time, first: i == 0, c: c}
 	}
 	return out
 }
 
-// logsHead says how far back the logs go, and what reads the lines before.
+// paint draws a row in width columns: the time, or the indent under it, and the row's spans.
+func (r logRow) paint(width int) string {
+	stamp := strings.Repeat(" ", stampWidth)
+	if r.first {
+		stamp = styles.Faint(r.at.Local().Format("15:04:05.000")) + "  "
+	}
+	return stamp + renderCell(r.c, column{width: width - stampWidth}, nil)
+}
+
+// logEntry draws one line of the logs: its time, and its message tinted and wrapped beside it.
+func logEntry(e cli.LogEvent, width int) []string {
+	rows := entryRows(e, "", width)
+	out := make([]string, len(rows))
+	for i, r := range rows {
+		out[i] = r.paint(width)
+	}
+	return out
+}
+
+// logsHead says how far back the logs go, how many lines the filter keeps, and what reads the
+// lines before.
 func (m model) logsHead() string {
 	l := m.state.function.logs
+	var parts []string
+	if l.filter.text != "" {
+		kept := 0
+		for _, e := range l.lines {
+			if l.filter.matches(e.Message) {
+				kept++
+			}
+		}
+		parts = append(parts, fmt.Sprintf("%s of %s lines", formatInt(kept), formatInt(len(l.lines))))
+	}
 	switch {
 	case l.loadingOlder:
-		return styles.Accent(m.spinner.View()) + " " + styles.Muted("reading the hour before "+formatTime(l.from)+"…")
+		parts = append(parts, "reading the hour before "+formatTime(l.from)+"…")
 	case l.emptyOlder > 0:
-		return styles.Faint(fmt.Sprintf("nothing logged in the %s before %s · ↑ reads further back", time.Duration(l.emptyOlder)*olderStep, formatTime(l.from.Add(time.Duration(l.emptyOlder)*olderStep))))
+		parts = append(parts, "nothing logged in "+hoursBefore(l.emptyOlder)+" "+formatTime(l.from.Add(time.Duration(l.emptyOlder)*olderStep)), "↑ reads further back")
+	default:
+		parts = append(parts, "from "+formatTime(l.from), "↑ at the top reads the hour before")
 	}
-	return styles.Faint("from " + formatTime(l.from) + " · ↑ at the top reads the hour before")
+	return styles.Faint(strings.Join(parts, " · "))
+}
+
+// hoursBefore names n steps of older lines: the hour before, the 3 hours before.
+func hoursBefore(n int) string {
+	if n == 1 {
+		return "the hour before"
+	}
+	return fmt.Sprintf("the %d hours before", n)
+}
+
+// logsError says why the logs could not be read, and how to try again.
+func (m model) logsError() string {
+	return renderCell(cell{styles.S("could not read the logs: "+m.state.function.logs.err, styles.ToneDanger), styles.S(" · r reads them again", styles.ToneFaint)}, column{width: logWidth()}, nil)
 }
 
 func (m model) logsView() string {
@@ -251,23 +394,34 @@ func (m model) logsView() string {
 	switch {
 	case f.logGroup == "":
 		return " " + styles.Muted("no log group: deploy the function first")
+	case !l.loaded && l.err != "":
+		return " " + m.logsError()
 	case !l.loaded:
 		return " " + styles.Muted("reading the logs…")
 	}
-	lines := m.logLines()
-	if len(lines) == 0 {
+	rows, all := m.lastRows(l.scroll + height)
+	if all && len(rows) == 0 {
 		empty := fmt.Sprintf("nothing logged since %s", formatTime(l.from))
 		if l.filter.text != "" {
-			empty = "no line has " + l.filter.text
+			empty = "no line has " + styles.Clean(l.filter.text)
 		}
 		return lipgloss.NewStyle().PaddingLeft(1).Render(m.logsHead() + "\n\n" + styles.Muted(empty))
 	}
-	end := max(0, len(lines)-l.scroll)
-	start := max(0, end-height)
-	if start == 0 {
-		lines = append([]string{m.logsHead()}, lines...)
-		end++
-		start = max(0, end-height)
+	head := 0
+	if all {
+		head = 1
 	}
-	return lipgloss.NewStyle().PaddingLeft(1).Render(strings.Join(lines[start:end], "\n"))
+	total := len(rows) + head
+	scroll := min(l.scroll, max(0, total-height))
+	end := total - scroll
+	start := max(0, end-height)
+	lines := make([]string, 0, end-start)
+	for i := start; i < end; i++ {
+		if i < head {
+			lines = append(lines, m.logsHead())
+			continue
+		}
+		lines = append(lines, rows[i-head].paint(logWidth()))
+	}
+	return lipgloss.NewStyle().PaddingLeft(1).Render(strings.Join(lines, "\n"))
 }

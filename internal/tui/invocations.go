@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -16,14 +17,19 @@ var invocationColumns = []column{
 	{title: "request", width: 10, grow: 1, drop: 2},
 	{title: "duration", width: 10, right: true},
 	{title: "billed", width: 9, right: true, drop: 3},
-	{title: "memory", width: 11, right: true, drop: 1},
+	{title: "memory", width: 13, right: true, drop: 1},
 	{title: "cold start", width: 10, right: true, drop: 4},
 	{title: "", width: 12},
 }
 
-// updateRequests reads the invocations out of the lines of the logs.
+// updateRequests reads the invocations out of the lines of the logs. The cursor stays on the
+// invocation it was on, or on the newest when it was there.
 func (m model) updateRequests() model {
 	f := &m.state.function
+	var on string
+	if i := f.invocations.cursor; i > 0 && i < len(f.requests) {
+		on = f.requests[i].id
+	}
 	f.requests = requests(f.logs.lines)
 	rows := make([]tableRow, 0, len(f.requests))
 	timeout := time.Duration(f.inputs.Timeout) * time.Second
@@ -31,6 +37,11 @@ func (m model) updateRequests() model {
 		rows = append(rows, requestRow(r, timeout))
 	}
 	f.invocations.setRows(rows)
+	if on != "" {
+		if i := slices.IndexFunc(f.requests, func(r request) bool { return r.id == on }); i >= 0 {
+			f.invocations.setCursor(i)
+		}
+	}
 	return m
 }
 
@@ -44,7 +55,7 @@ func requestRow(r request, timeout time.Duration) tableRow {
 	case r.failed:
 		status = text("✗ failed", styles.ToneDanger)
 	case !r.reported && time.Since(r.last) < timeout+5*time.Second:
-		status = text("running", styles.ToneWarning)
+		status = text("● running", styles.ToneWarning)
 	case !r.reported:
 		status = text("no report", styles.ToneFaint)
 	}
@@ -80,8 +91,13 @@ func (m model) invocationsUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 
 func (m model) invocationsView() string {
 	f := m.state.function
-	if f.logGroup == "" {
+	switch {
+	case f.logGroup == "":
 		return " " + styles.Muted("no log group: deploy the function first")
+	case !f.logs.loaded && f.logs.err != "":
+		return " " + m.logsError()
+	case !f.logs.loaded:
+		return " " + styles.Muted("reading the logs…")
 	}
 	return indent(f.invocations.View())
 }
@@ -105,13 +121,22 @@ func (m model) invocationUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Copy):
 		return m.copy(v.req.id)
 	}
-	v.scroll = scrollBy(msg, m.keys, v.scroll, contentHeight)
+	v.scroll = min(scrollBy(msg, m.keys, v.scroll, contentHeight), max(0, len(m.invocationLines())-contentHeight))
 	return m, nil
 }
 
-func (m model) invocationLines() []string {
+// shownRequest is the invocation on screen as the logs read now tell it, so one that was running
+// shows its report once it comes.
+func (m model) shownRequest() request {
 	r := m.state.invocation.req
-	logs := m.state.function.logs.lines
+	if i := slices.IndexFunc(m.state.function.requests, func(n request) bool { return n.id == r.id }); i >= 0 {
+		return m.state.function.requests[i]
+	}
+	return r
+}
+
+func (m model) invocationLines() []string {
+	r := m.shownRequest()
 	width := contentWidth - 4
 	row := requestRow(r, time.Duration(m.state.function.inputs.Timeout)*time.Second)
 	lines := []string{
@@ -129,11 +154,8 @@ func (m model) invocationLines() []string {
 		lines = append(lines, styles.Muted(strings.Join(facts, " · ")))
 	}
 	lines = append(lines, "", styles.SectionHeader("log", width))
-	for _, i := range r.lines {
-		if i >= len(logs) {
-			continue
-		}
-		lines = append(lines, logEntry(logs[i], width)...)
+	for _, e := range r.lines {
+		lines = append(lines, logEntry(e, width)...)
 	}
 	return lines
 }

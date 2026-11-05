@@ -25,8 +25,8 @@ type request struct {
 	reported  bool
 	failed    bool
 	timedOut  bool
-	// lines are the indexes of the log lines the request wrote, START to REPORT.
-	lines []int
+	// lines are the lines of the log the request wrote, START to REPORT.
+	lines []cli.LogEvent
 }
 
 var (
@@ -34,6 +34,8 @@ var (
 	reportLine = regexp.MustCompile(`^REPORT RequestId: (\S+)`)
 	reportItem = regexp.MustCompile(`(Billed Duration|Init Duration|Duration|Max Memory Used|Memory Size): ([\d.]+)`)
 	nodeLine   = regexp.MustCompile(`^\S+\t([0-9a-f-]{36})\t`)
+	// errorLevel is a line of json or logfmt logged at the error level or worse.
+	errorLevel = regexp.MustCompile(`(?i)"(level|lvl|severity)"\s*:\s*"(error|fatal|critical)"|(^|\s)(level|lvl)="?(error|fatal|critical)\b`)
 )
 
 // failure reports whether a line of a request says it failed: an error a runtime logs, a
@@ -43,7 +45,7 @@ func failure(line string) (failed, timedOut bool) {
 	case strings.Contains(line, "Task timed out"), strings.Contains(line, "Status: timeout"):
 		return true, true
 	case strings.Contains(line, "\tERROR\t"), strings.Contains(line, `"errorType"`), strings.Contains(line, "Runtime.ExitError"),
-		strings.Contains(line, `"level":"ERROR"`), strings.Contains(line, `"level":"error"`), strings.Contains(line, "level=ERROR"):
+		strings.Contains(line, "Status: error"), errorLevel.MatchString(line):
 		return true, false
 	}
 	return false, false
@@ -64,7 +66,7 @@ func requests(logs []cli.LogEvent) []request {
 		}
 		return r
 	}
-	for i, e := range logs {
+	for _, e := range logs {
 		var id string
 		switch {
 		case startLine.MatchString(e.Message):
@@ -99,7 +101,7 @@ func requests(logs []cli.LogEvent) []request {
 			continue
 		}
 		r := get(id, e.Time)
-		r.lines = append(r.lines, i)
+		r.lines = append(r.lines, e)
 		r.last = e.Time
 		if failed, timedOut := failure(e.Message); failed {
 			r.failed = true

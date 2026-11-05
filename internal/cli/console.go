@@ -89,8 +89,8 @@ type Invocation struct {
 	Duration time.Duration
 }
 
-// maxLogEvents bounds the log lines one read returns, keeping the newest.
-const maxLogEvents = 2000
+// MaxLogEvents bounds the log lines one read of LogsBetween returns, keeping the newest.
+const MaxLogEvents = 2000
 
 // openConsole connects to the account of the global flags. The configuration here is loaded
 // when there is one, for its app and region; one that does not load is reported, not fatal.
