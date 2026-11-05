@@ -219,6 +219,17 @@ environment {
 
 The attributes of a resource are its properties as cloud control returns them, such as `Arn` and `TableName`. A function has `Arn` and `FunctionName`.
 
+A ref is a value of its own, not a string, so it cannot sit inside a pkl string. `kdst.join()` joins strings, refs and the account's values into one, once the refs are known:
+
+```pkl
+environment {
+  ["INDEX_ARN"] = kdst.join(List(kdst.ref("orders", "Arn"), "/index/*"))
+  ["TOPIC_ARN"] = kdst.join(List("arn:", kdst.partition, ":sns:", module.region, ":", kdst.accountId, ":alerts"))
+}
+```
+
+`kdst.accountId`, `kdst.partition` and `kdst.urlSuffix` are the account the stage deploys to, the partition of its region, `aws` outside china and govcloud, and the domain of aws's endpoints there. They go wherever a value goes, and in `kdst.join()`.
+
 ## outputs
 
 ```pkl
