@@ -159,11 +159,32 @@ type diffState struct {
 	from   page
 }
 
-// openDiff shows what changes in a resource, from before to after.
+// openDiff shows what changes in a resource, from before to after, scrolled so its first change
+// is in sight, with a few lines above it: the inputs of a function run longer than a short
+// terminal, and the line that changed is often below them.
 func (m model) openDiff(title, detail string, before, after any) (model, tea.Cmd) {
 	m.state.diff = diffState{title: title, detail: detail, lines: lineDiff(jsonLines(before), jsonLines(after)), from: m.page}
+	lines := m.diffLines()
+	for i, line := range lines {
+		if i < diffHeaderLines {
+			continue
+		}
+		if plain := ansi.Strip(line); strings.HasPrefix(plain, "+ ") || strings.HasPrefix(plain, "- ") {
+			if i >= contentHeight {
+				m.state.diff.scroll = min(i-diffContext, max(0, len(lines)-contentHeight))
+			}
+			break
+		}
+	}
 	return m.switchPage(diffPage), nil
 }
+
+// diffHeaderLines are the lines above a diff's json, and diffContext the lines kept in sight
+// above its first change.
+const (
+	diffHeaderLines = 3
+	diffContext     = 3
+)
 
 func (m model) diffUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 	d := &m.state.diff

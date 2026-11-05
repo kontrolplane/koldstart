@@ -150,9 +150,12 @@ func TestApplyFailsPartWay(t *testing.T) {
 		engine.Event{ID: "resource/table", Action: engine.Create, Done: true, Duration: time.Second},
 		engine.Event{ID: "function/worker", Action: engine.Replace, Done: true, Err: err, Duration: time.Second},
 	)
-	m, _ = update(t, m, appliedMsg{err: err})
+	m, _ = update(t, m, appliedMsg{err: fmt.Errorf("%w\nwhat was done is in the state: deploy again to finish", err)})
 	if !strings.Contains(m.error, "the deploy of orders/dev failed") || !strings.Contains(m.error, "d plans what is left") {
 		t.Errorf("error %q, want what failed and how to finish it", m.error)
+	}
+	if n := strings.Count(m.error, "what was done is in the state"); n != 1 || strings.Contains(m.error, "deploy again") {
+		t.Errorf("error %q says %d times what was done is in the state, want once in the keys here", m.error, n)
 	}
 	m = pressKeys(t, m, "esc")
 	if m.error != "" || m.page != planPage {

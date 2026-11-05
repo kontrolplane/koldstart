@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/kontrolplane/koldstart/internal/state"
 )
 
@@ -17,6 +19,24 @@ func openNewestDeploy(t *testing.T, before, current *state.State) model {
 	}
 	m.state.version.before, m.state.version.current = before, current
 	return m
+}
+
+// TestVersionAlignsIDs checks the ids in aws of the resources a deploy created start in one
+// column, as names from permission/api/httpapi to httpapi left them ragged.
+func TestVersionAlignsIDs(t *testing.T) {
+	current := testState(ordersDev)
+	m := openNewestDeploy(t, nil, current)
+	columns := map[int]bool{}
+	for line := range strings.SplitSeq(screen(m), "\n") {
+		for id, r := range current.Resources {
+			if strings.Contains(line, "+ "+id+" ") {
+				columns[ansi.StringWidth(line[:strings.Index(line, r.PhysicalID)])] = true
+			}
+		}
+	}
+	if len(columns) != 1 {
+		t.Errorf("the ids start in columns %v, want one:\n%s", columns, screen(m))
+	}
 }
 
 // TestVersionChanges checks the version page says what a deploy changed, and says so when it
@@ -47,7 +67,7 @@ func TestVersionChanges(t *testing.T) {
 				after.Outputs["httpApiUrl"] = "https://new.example.com"
 				after.Outputs["queueUrl"] = "https://sqs/jobs"
 			},
-			want: []string{"no resource changed", "outputs · 3 changes", "+ queueUrl  https://sqs/jobs", "- old  gone",
+			want: []string{"no resource changed", "outputs · 3 changes", "+ queueUrl    https://sqs/jobs", "- old         gone",
 				"~ httpApiUrl  https://api.example.com  →  https://new.example.com"},
 		},
 		{

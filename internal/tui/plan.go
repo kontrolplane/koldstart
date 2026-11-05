@@ -130,10 +130,11 @@ func (m model) applied(msg appliedMsg) (model, tea.Cmd) {
 	switch {
 	case msg.err != nil:
 		p.done, p.failed = true, true
-		m.error = "the " + m.planWhat() + " of " + p.ref.String() + " failed: " + msg.err.Error()
+		why := msg.err.Error()
 		if len(p.progress) > 0 {
-			m.error += "\n\n" + m.planAgain()
+			why = withoutCLIHint(why) + "\n\n" + m.planAgain()
 		}
+		m.error = "the " + m.planWhat() + " of " + p.ref.String() + " failed: " + why
 		return m, nil
 	case !msg.applied:
 		p.plan, p.progress = msg.plan, nil
@@ -160,6 +161,19 @@ func (m model) applied(msg appliedMsg) (model, tea.Cmd) {
 		done = "deployed the code of " + p.function
 	}
 	return m.setStatus(done, styles.ToneSuccess)
+}
+
+// cliHint starts the line the commands add to a failed apply, telling which command finishes it,
+// which planAgain says here in the keys of the interface.
+const cliHint = "\nwhat was done is in the state: "
+
+// withoutCLIHint drops the command's hint from the end of a failed apply's error, so the dialog
+// does not say twice that what was done is in the state, once naming a command.
+func withoutCLIHint(err string) string {
+	if i := strings.LastIndex(err, cliHint); i >= 0 && !strings.Contains(err[i+1:], "\n") {
+		return err[:i]
+	}
+	return err
 }
 
 // planAgain says how to finish an apply that failed part way.

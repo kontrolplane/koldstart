@@ -1,9 +1,12 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
+
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/kontrolplane/koldstart/internal/cli"
 	"github.com/kontrolplane/koldstart/internal/engine"
@@ -216,6 +219,32 @@ func TestPlanDiff(t *testing.T) {
 	m = pressKeys(t, m, "j", "enter")
 	if !strings.Contains(screen(m), "resource/table") {
 		t.Errorf("the second change:\n%s", screen(m))
+	}
+}
+
+// TestDiffOpensOnTheChange checks a diff longer than the terminal opens with its first change in
+// sight, as the change of a function's timeout sat below the fold of an 80 by 24 terminal.
+func TestDiffOpensOnTheChange(t *testing.T) {
+	before, after := map[string]any{}, map[string]any{}
+	for i := range 40 {
+		before[fmt.Sprintf("key%02d", i)], after[fmt.Sprintf("key%02d", i)] = i, i
+	}
+	after["key30"] = "changed"
+	for _, size := range [][2]int{{80, 24}, {120, 40}, {200, 60}} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			m := started(t, newFake(t))
+			m, _ = update(t, m, tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+			m, _ = m.openDiff("function/api", "update", before, after)
+			v := screen(m)
+			if !strings.Contains(v, `-   "key30": 30`) || !strings.Contains(v, `+   "key30": "changed"`) || !strings.Contains(v, `"key29": 29`) {
+				t.Errorf("the change is not in sight:\n%s", v)
+			}
+		})
+	}
+	m := started(t, newFake(t))
+	after = map[string]any{"key00": "changed"}
+	if m, _ = m.openDiff("function/api", "update", map[string]any{"key00": 0}, after); m.state.diff.scroll != 0 {
+		t.Errorf("a change in sight from the top scrolled to %d", m.state.diff.scroll)
 	}
 }
 

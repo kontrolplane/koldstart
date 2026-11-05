@@ -9,6 +9,7 @@ import (
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/kontrolplane/koldstart/internal/engine"
 	"github.com/kontrolplane/koldstart/internal/state"
@@ -208,8 +209,12 @@ func (m model) versionLines() pickList {
 	lines = append(lines, styles.SectionHeader(title, width))
 	l := pickList{lines: lines}
 	cols := []column{{width: width}}
-	for _, c := range changes {
-		l.add(renderCell(c.line, cols[0], nil), litRow(cols, c.line))
+	cells := make([]cell, len(changes))
+	for i, c := range changes {
+		cells[i] = c.line
+	}
+	for _, c := range alignNames(cells, width/2) {
+		l.add(renderCell(c, cols[0], nil), litRow(cols, c))
 	}
 	lines = l.lines
 	if len(changes) == 0 {
@@ -221,12 +226,33 @@ func (m model) versionLines() pickList {
 	}
 	if len(outputs) > 0 {
 		lines = append(lines, "", styles.SectionHeader("outputs · "+plural(len(outputs), "change"), width))
-		for _, c := range outputs {
+		for _, c := range alignNames(outputs, width/2) {
 			lines = append(lines, renderCell(c, column{width: width}, nil))
 		}
 	}
 	l.lines = lines
 	return l
+}
+
+// alignNames pads the name of each change, its second span after the mark, to the longest of
+// them up to limit, so what follows the names lines up: the ids in aws a deploy created, or what
+// changed in each resource.
+func alignNames(cells []cell, limit int) []cell {
+	longest := 0
+	for _, c := range cells {
+		if len(c) > 2 {
+			longest = max(longest, ansi.StringWidth(c[1].Text))
+		}
+	}
+	longest = min(longest, limit)
+	out := make([]cell, len(cells))
+	for i, c := range cells {
+		out[i] = slices.Clone(c)
+		if w := ansi.StringWidth(c[1].Text); len(c) > 2 && w < longest {
+			out[i][1].Text += strings.Repeat(" ", longest-w)
+		}
+	}
+	return out
 }
 
 func (m model) versionView() string {
