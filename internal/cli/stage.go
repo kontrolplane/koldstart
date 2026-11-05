@@ -158,29 +158,42 @@ func (s *stage) plan(ctx context.Context, upload, allowReplace bool) (*engine.En
 	return e, plan, nodes, nil
 }
 
-// apply applies the plan with progress on stderr, then records and prints the outputs. A
-// resource that exists already, outside koldstart, says how to take it over.
+// apply applies the plan with progress on stderr, then prints the outputs. A resource that
+// exists already, outside koldstart, says how to take it over.
 func (s *stage) apply(ctx context.Context, cmd *cobra.Command, e *engine.Engine, plan *engine.Plan, nodes []engine.Node) error {
-	store := engine.NewStore(s.backend, s.state, s.etag, whoIsDeploying())
-	e.OnEvent = progress(cmd.ErrOrStderr())
-	if plan.HasChanges() {
-		if err := e.Apply(ctx, plan, nodes, store); err != nil {
-			if exists, ok := errors.AsType[*cloudcontrol.ExistsError](err); ok {
-				resource := strings.TrimPrefix(exists.Node, "resource/")
-				return fmt.Errorf("%w\ntake it over with %s import %s <identifier>, or give it another name", err, cmd.Root().Name(), resource)
-			}
-			return fmt.Errorf("%w\nwhat was done is in the state: deploy again to finish", err)
-		}
+	outputs, err := s.applyPlan(ctx, e, plan, nodes, progress(cmd.ErrOrStderr()))
+	if exists, ok := errors.AsType[*cloudcontrol.ExistsError](err); ok {
+		resource := strings.TrimPrefix(exists.Node, "resource/")
+		return fmt.Errorf("%w\ntake it over with %s import %s <identifier>, or give it another name", err, cmd.Root().Name(), resource)
 	}
-	outputs, err := s.outputs(store.Snapshot())
 	if err != nil {
-		return err
-	}
-	if err := store.Update(ctx, func(st *state.State) { st.Outputs = outputs }); err != nil {
 		return err
 	}
 	printOutputs(cmd.OutOrStdout(), outputs)
 	return nil
+}
+
+// applyPlan applies the plan, telling onEvent as each node starts and finishes, then records
+// the outputs in the state and returns them.
+func (s *stage) applyPlan(ctx context.Context, e *engine.Engine, plan *engine.Plan, nodes []engine.Node, onEvent func(engine.Event)) (map[string]string, error) {
+	store := engine.NewStore(s.backend, s.state, s.etag, whoIsDeploying())
+	e.OnEvent = onEvent
+	if plan.HasChanges() {
+		if err := e.Apply(ctx, plan, nodes, store); err != nil {
+			if _, ok := errors.AsType[*cloudcontrol.ExistsError](err); ok {
+				return nil, err
+			}
+			return nil, fmt.Errorf("%w\nwhat was done is in the state: deploy again to finish", err)
+		}
+	}
+	outputs, err := s.outputs(store.Snapshot())
+	if err != nil {
+		return nil, err
+	}
+	if err := store.Update(ctx, func(st *state.State) { st.Outputs = outputs }); err != nil {
+		return nil, err
+	}
+	return outputs, nil
 }
 
 // confirm asks a question, and goes on when the answer is one of accepted, or y or yes when

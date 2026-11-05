@@ -36,9 +36,9 @@ func TestFieldChanges(t *testing.T) {
 		Before: map[string]any{"properties": map[string]any{"VisibilityTimeout": 30.0, "QueueName": "q"}},
 		After:  map[string]any{"properties": map[string]any{"VisibilityTimeout": 120.0, "QueueName": "q", "DelaySeconds": 5.0}},
 	}
-	got := strings.Join(fieldChanges(c), "; ")
+	got := strings.Join(FieldChanges(c), "; ")
 	if got != "properties.DelaySeconds: added; properties.VisibilityTimeout: 30 → 120" {
-		t.Errorf("fieldChanges = %q", got)
+		t.Errorf("FieldChanges = %q", got)
 	}
 }
 

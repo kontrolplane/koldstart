@@ -31,6 +31,15 @@ var verbs = map[engine.Action]string{
 	engine.Adopt:   "take over again",
 }
 
+// Symbol marks an action in a plan: + to create, ~ to update, -/+ to replace, - to delete.
+func Symbol(a engine.Action) string { return symbols[a] }
+
+// Verb says what an action does, as create or leave in place.
+func Verb(a engine.Action) string { return verbs[a] }
+
+// PastTense says what an action did, as created or left in place.
+func PastTense(a engine.Action) string { return pastTenses[a] }
+
 // printPlan writes what a plan does, one node a line, with the inputs that change under each
 // update.
 func printPlan(w io.Writer, s *stage, plan *engine.Plan) {
@@ -53,7 +62,7 @@ func printPlanTo(w io.Writer, app, stage, region, account string, plan *engine.P
 		}
 		_, _ = fmt.Fprintln(w, line)
 		if c.Action == engine.Update || c.Action == engine.Replace || c.Action == engine.Adopt {
-			for _, line := range fieldChanges(c) {
+			for _, line := range FieldChanges(c) {
 				_, _ = fmt.Fprintf(w, "        %s\n", line)
 			}
 		}
@@ -71,9 +80,9 @@ func printPlanTo(w io.Writer, app, stage, region, account string, plan *engine.P
 	}
 }
 
-// fieldChanges says how each changed input changes. The properties of a resource are listed one
+// FieldChanges says how each changed input changes. The properties of a resource are listed one
 // by one, as they are what the configuration sets.
-func fieldChanges(c engine.Change) []string {
+func FieldChanges(c engine.Change) []string {
 	var out []string
 	for _, f := range c.Fields {
 		before, isMapB := c.Before[f].(map[string]any)

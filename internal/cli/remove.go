@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"slices"
@@ -41,36 +42,55 @@ of the stage takes them over again.`,
 				return err
 			}
 			defer unlock()
-			e := s.engine()
-			plan, err := e.Plan(ctx, nil, s.state)
+			e, plan, err := s.planRemove(ctx)
 			if err != nil {
 				return err
 			}
-			e.OnEvent = progress(cmd.ErrOrStderr())
-			store := engine.NewStore(s.backend, s.state, s.etag, whoIsDeploying())
-			if err := e.Apply(ctx, plan, nil, store); err != nil {
-				return fmt.Errorf("%w\nwhat was removed is in the state: remove again to finish", err)
+			retained, err := s.applyRemove(ctx, e, plan, progress(cmd.ErrOrStderr()))
+			if err != nil {
+				return err
 			}
-			final := store.Snapshot()
-			if len(final.Retained) == 0 {
-				if err := s.backend.Delete(ctx, s.App, s.Stage); err != nil {
-					return err
-				}
+			if len(retained) == 0 {
 				_, err := fmt.Fprintf(out, "removed %s/%s\n", s.App, s.Stage)
 				return err
 			}
-			if err := store.Update(ctx, func(st *state.State) { st.Outputs = nil }); err != nil {
-				return err
-			}
 			_, _ = fmt.Fprintf(out, "removed %s/%s, and left in place:\n", s.App, s.Stage)
-			for _, id := range slices.Sorted(maps.Keys(final.Retained)) {
-				_, _ = fmt.Fprintf(out, "  %s  %s\n", id, final.Retained[id].PhysicalID)
+			for _, id := range slices.Sorted(maps.Keys(retained)) {
+				_, _ = fmt.Fprintf(out, "  %s  %s\n", id, retained[id].PhysicalID)
 			}
 			return nil
 		},
 	}
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "remove without asking")
 	return cmd
+}
+
+// planRemove plans deleting everything the stage's state lists.
+func (s *stage) planRemove(ctx context.Context) (*engine.Engine, *engine.Plan, error) {
+	e := s.engine()
+	plan, err := e.Plan(ctx, nil, s.state)
+	if err != nil {
+		return nil, nil, err
+	}
+	return e, plan, nil
+}
+
+// applyRemove applies a plan of planRemove, telling onEvent as each node starts and finishes. It
+// deletes the state when nothing is left, and returns what was left in place.
+func (s *stage) applyRemove(ctx context.Context, e *engine.Engine, plan *engine.Plan, onEvent func(engine.Event)) (map[string]*state.Resource, error) {
+	e.OnEvent = onEvent
+	store := engine.NewStore(s.backend, s.state, s.etag, whoIsDeploying())
+	if err := e.Apply(ctx, plan, nil, store); err != nil {
+		return nil, fmt.Errorf("%w\nwhat was removed is in the state: remove again to finish", err)
+	}
+	final := store.Snapshot()
+	if len(final.Retained) == 0 {
+		return nil, s.backend.Delete(ctx, s.App, s.Stage)
+	}
+	if err := store.Update(ctx, func(st *state.State) { st.Outputs = nil }); err != nil {
+		return nil, err
+	}
+	return final.Retained, nil
 }
 
 func unlockCommand(name string, opts *Options) *cobra.Command {
