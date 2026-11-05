@@ -14,13 +14,20 @@ The header shows the aws profile, account, region and state bucket in use, the p
 ## views
 
 - `stages`: every app and stage, with when it was last deployed, by whom, how many resources it has, and who holds its lock
-- `stage`: its functions, resources, outputs and the history of its state, in tabs
-- `function`: its configuration, environment and what invokes it; its logs, read every few seconds while following; and invoking it
-- `resource`: its id in aws, attributes, and the inputs it was last applied with
-- `history`: an earlier version of the state, and what it changed from the one before
-- `plan`: what a deploy or remove does, and the progress of each resource while it applies
+- `stage`, in tabs:
+  - functions, with their invocations, errors and p99 duration of the last hour
+  - resources, as a tree: each function with its role, log group, url, permissions, routes and events, each resource with the notifications of a bucket and the depth of a queue, and the http api with its domain and authorizers
+  - outputs
+  - history: the deploys, each the versions of the state it wrote; one shows what it changed from the deploy before, and each change opens for its full diff
+- `function`, in tabs:
+  - overview: its configuration; what lambda says of it now, its state, its last update, and code or configuration changed outside koldstart; sparklines of its invocations, errors, throttles, duration and concurrency in the last hour; its environment and what invokes it
+  - logs: the last half hour, followed with a live tail, or read again every few seconds where there is none; json and logfmt tinted so the message stands out; `/` filters the lines, and ↑ at the top reads the hour before
+  - invocations: the requests in the logs read, with their duration, billed duration, memory, cold start, and whether they failed or timed out; one opens with its lines of the log
+  - invoke: the events kept for it, and what the last invocation with each returned
+- `resource`: what koldstart applied, its id in aws, its attributes and inputs, and on a second tab its properties in aws now, from cloud control, with the ones changed outside koldstart
+- `plan`: what a deploy or remove does, and the progress of each resource while it applies; each change opens for its full diff of inputs, with secrets and refs shown by what they stand for
 
-The page on screen is read again every five seconds; `p` pauses that.
+The page on screen is read again every five seconds; `p` pauses that. The live data, metrics, lambda's own view of a function, a queue's depth and a resource's properties in aws, needs the permissions to read them; where it cannot be read, as on an emulator, the page says so and shows the rest.
 
 ## keybindings
 
@@ -30,9 +37,9 @@ The page on screen is read again every five seconds; `p` pauses that.
 - `↑`, `k` and `↓`, `j`: up and down
 - `g`, `G`: first and last row, top and bottom of the logs
 - `pgup`, `pgdn`: page up and down
-- `tab`, `shift+tab`: switch between functions, resources, outputs and history; on a function between its configuration, logs and invoke
-- `enter`: open
-- `/`: filter
+- `tab`, `shift+tab`: switch between functions, resources, outputs and history; on a function between its overview, logs, invocations and invoke; on a resource between what was applied and what is in aws
+- `enter`: open: a stage, a function, a resource, a deploy, an invocation, or a change's diff
+- `/`: filter a table, or the lines of the logs
 - `d`: plan a deploy of the stage, or on a function of its code
 - `ctrl+s`: apply the plan on screen
 - `ctrl+d`: remove the stage
