@@ -18,6 +18,12 @@ type Project struct {
 	Outputs   map[string]Value    `json:"outputs"`
 	Tags      map[string]string   `json:"tags"`
 	HTTP      *HTTP               `json:"http"`
+	WebSocket *WebSocket          `json:"websocket"`
+}
+
+// WebSocket is the stage's websocket api.
+type WebSocket struct {
+	RouteSelection string `json:"routeSelection"`
 }
 
 // The runtimes a function can have.
@@ -348,6 +354,9 @@ const (
 	EventTopic     = "topic"
 	EventStream    = "stream"
 	EventBucket    = "bucket"
+	EventRule      = "eventRule"
+	EventWebSocket = "webSocketRoute"
+	EventALB       = "loadBalancer"
 )
 
 // Event invokes a function. Type says which of the fields apply.
@@ -389,4 +398,37 @@ type Event struct {
 	Events []string `json:"events"`
 	Prefix string   `json:"prefix"`
 	Suffix string   `json:"suffix"`
+
+	// httpRoute
+	Throttling *Throttling `json:"throttling"`
+
+	// eventRule: the pattern, an object or a json string, and the bus
+	Pattern json.RawMessage `json:"pattern"`
+	Bus     Value           `json:"bus"`
+
+	// webSocketRoute
+	Route string `json:"route"`
+
+	// loadBalancer
+	Listener          Value    `json:"listener"`
+	Priority          int      `json:"priority"`
+	Paths             []string `json:"paths"`
+	Hosts             []string `json:"hosts"`
+	Methods           []string `json:"methods"`
+	MultiValueHeaders bool     `json:"multiValueHeaders"`
+}
+
+// PatternJSON is an event rule's pattern as the json string eventbridge takes, from an object or
+// a string of json.
+func (e Event) PatternJSON() (string, error) {
+	var s string
+	if err := json.Unmarshal(e.Pattern, &s); err == nil {
+		return s, nil
+	}
+	var v any
+	if err := json.Unmarshal(e.Pattern, &v); err != nil {
+		return "", err
+	}
+	data, err := json.Marshal(v)
+	return string(data), err
 }

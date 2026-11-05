@@ -210,6 +210,29 @@ func (v *validator) event(fn, where string, e Event) {
 		v.value(where+".topic", e.Topic)
 	case EventStream:
 		v.value(where+".stream", e.Stream)
+	case EventRule:
+		v.value(where+".bus", e.Bus)
+		if pattern, err := e.PatternJSON(); err != nil || pattern == "" || pattern == "{}" {
+			v.errorf("%s: the pattern is not an event pattern: give an object, or json", where)
+		}
+	case EventWebSocket:
+		key := "websocket " + e.Route
+		if other, ok := v.routes[key]; ok {
+			v.errorf("%s: the websocket route %s is also a route of %s", where, e.Route, other)
+		}
+		v.routes[key] = fn
+	case EventALB:
+		v.value(where+".listener", e.Listener)
+		if len(e.Paths)+len(e.Hosts)+len(e.Methods) == 0 {
+			v.errorf("%s: a load balancer rule needs paths, hosts or methods to match", where)
+		}
+		if e.Listener.Literal != "" {
+			key := fmt.Sprintf("listener %s %d", e.Listener.Literal, e.Priority)
+			if other, ok := v.routes[key]; ok {
+				v.errorf("%s: priority %d is also a rule of %s on that listener", where, e.Priority, other)
+			}
+			v.routes[key] = fn
+		}
 	case EventBucket:
 		v.value(where+".bucket", e.Bucket)
 		if e.Bucket.Ref != nil {

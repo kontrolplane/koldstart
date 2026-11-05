@@ -37,6 +37,9 @@ tags: Mapping<String, String>
 /// The stage's http api, which all `Events.HttpRoute`s share.
 http: Http
 
+/// The stage's websocket api, for the functions with a `kdst.WebSocketRoute`.
+websocket: WebSocket
+
 /// The name of a function or resource. Functions and resources share one namespace.
 typealias Name = String(matches(Regex(#"[A-Za-z][A-Za-z0-9-]{0,39}"#)))
 
@@ -204,6 +207,11 @@ class Http {
   authorizers: Mapping<String, Authorizer>
   /// The stage-wide request limit.
   throttling: Throttling?
+}
+
+class WebSocket {
+  /// What picks the route of a message: a field of its json body, by default `action`.
+  routeSelection: String = "$request.body.action"
 }
 
 /// Base class of `kdst.JwtAuthorizer` and `kdst.LambdaAuthorizer`.

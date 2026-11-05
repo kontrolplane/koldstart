@@ -46,6 +46,43 @@ class HttpRoute extends Project.Event {
   authorizer: String?
   /// For a jwt authorizer: the scopes the token must have.
   scopes: Listing<String>
+  /// This route's own request limit, in place of the stage-wide one.
+  throttling: Project.Throttling?
+}
+
+/// An eventbridge rule that sends the events matching its pattern to the function.
+class EventRule extends Project.Event {
+  fixed type: "eventRule" = "eventRule"
+  /// The event pattern, as an object or as json: `new { source { "orders" } }`.
+  pattern: Dynamic|Mapping<String, Any>|String
+  /// The event bus, by its name or arn.
+  bus: Project.Value = "default"
+  /// What the function gets in place of the event, as json.
+  input: String?
+  enabled: Boolean = true
+}
+
+/// A route of the stage's websocket api: `$connect`, `$disconnect`, `$default`, or a value of
+/// the route selection, such as `sendMessage`.
+class WebSocketRoute extends Project.Event {
+  fixed type: "webSocketRoute" = "webSocketRoute"
+  route: String(!isEmpty)
+}
+
+/// A rule of a load balancer's listener that forwards the requests it matches to the function.
+class LoadBalancer extends Project.Event {
+  fixed type: "loadBalancer" = "loadBalancer"
+  /// The listener's arn.
+  listener: Project.Value
+  /// Unique on the listener: lower numbers are matched first.
+  priority: Int(isBetween(1, 50000))
+  /// The paths, hosts and methods the rule matches; a request matches when it matches each
+  /// one given.
+  paths: Listing<String>
+  hosts: Listing<String>
+  methods: Listing<String>
+  /// Hand the function headers and query parameters as lists, for those that repeat.
+  multiValueHeaders: Boolean = false
 }
 
 /// An eventbridge scheduler schedule.
