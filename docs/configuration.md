@@ -46,8 +46,10 @@ functions {
 
 | property              | default   | description                                                                                       |
 | --------------------- | --------- | ------------------------------------------------------------------------------------------------- |
-| `runtime`             |           | `nodejs22.x` or `nodejs24.x` for javascript and typescript, `provided.al2023` for go               |
-| `handler`             |           | for node, the file and its export, `src/api.handler`; for go, the package to build, `./cmd/worker` |
+| `runtime`             |           | `nodejs22.x` or `nodejs24.x` for javascript and typescript, `provided.al2023` for go, `python3.12` or `python3.13` for python; none with an `image` |
+| `handler`             |           | for node and python, the file and its function, `src/api.handler`; for go, the package to build, `./cmd/worker`; none with an `image` |
+| `image`               |           | a container image to build and run instead, see [container images](#container-images)              |
+| `layers`              |           | lambda layers, by their version's arn, at most five; not for go or an image                         |
 | `memory`              | `1024`    | megabytes, from `128` to `10240`                                                                   |
 | `timeout`             | `6.s`     | a pkl duration, at most `15.min`                                                                   |
 | `architecture`        | `"arm64"` | `arm64` or `x86_64`                                                                                |
@@ -60,7 +62,7 @@ functions {
 | `link`                |           | resources the function uses, see [link](#link)                                                      |
 | `permissions`         |           | iam statements added to the function's role                                                         |
 | `vpc`                 |           | `subnetIds` and `securityGroupIds` to put the function in                                           |
-| `bundle`              |           | for node: `externals`, packages to leave out of the bundle, and `sourcemap`                         |
+| `bundle`              |           | for node: `externals`, packages to leave out of the bundle, and `sourcemap`; for python: `include`, what goes in the zip |
 | `typecheck`           | `false`   | for typescript: run `tsc --noEmit` before bundling, which needs node and typescript installed       |
 
 Each function gets a role and a log group of its own. The role may write to the log group, and has what `link`, `permissions`, its events and its runtime secrets add.
@@ -71,7 +73,22 @@ Typescript and javascript are bundled with the esbuild that is built into koldst
 
 Go is built with `CGO_ENABLED=0`, `-trimpath`, `-buildvcs=false` and no build id, for the architecture of the function, into a binary named `bootstrap`, which is what the `provided.al2023` runtime runs.
 
+Python goes in the zip as it is: the directory of the handler's module, `src` for `src/api.handler`, or the module alone when it is at the root, or what `bundle.include` names instead. Its dependencies come from `requirements.txt`, or from `pyproject.toml` through `uv export`, locked by `uv.lock` when there is one, and are installed with [uv](https://docs.astral.sh/uv/) for the platform lambda runs: manylinux wheels for the function's architecture, so a package with native code works however you build it. Pin the versions, so every build installs the same.
+
 Zips are deterministic: the same code gives the same bytes, on a laptop and in ci, so the hash of the zip tells koldstart whether a function's code changed. Go binaries also depend on the version of go that builds them, so pin it with a `toolchain` line in `go.mod`, such as `toolchain go1.27.3`; otherwise a laptop and ci with different versions upload different code.
+
+### container images
+
+```pkl
+["thumbnails"] {
+  image { dockerfile = "thumbnails/Dockerfile"; context = "thumbnails" }
+  memory = 2048
+}
+```
+
+A function with an `image` runs that instead of a runtime. koldstart builds it with docker for the function's architecture, from `context`, and pushes it to the ecr repository `koldstart/<app>` of the account and region, which it creates on the first deploy; `buildArgs` are passed as `--build-arg`, and `command`, `entryPoint` and `workingDirectory` set what lambda runs in place of the image's own. The image is tagged by a hash of what it is built from: every file of the context but what `.dockerignore` leaves out, the dockerfile, the build arguments and the platform. A deploy that changes none of them builds and pushes nothing, and leaves the function as it is.
+
+The repository keeps the images of every deploy, as lambda stops a function whose image is gone; images that lost their tag expire after a day. Build it from one of lambda's base images, such as `public.ecr.aws/lambda/python:3.12`, so it has the runtime client, which also lets `invoke --local` run it here with docker.
 
 ### link
 

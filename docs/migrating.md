@@ -27,6 +27,9 @@ koldstart does not read `serverless.yml` itself, and does not run serverless fra
 | `functions.<name>.handler`                                  | `handler`; for go, a placeholder package to build                    |
 | `functions.<name>.url`                                      | `url = new { auth = "none" }`, `"iam"` with `authorizer: aws_iam`, and its `cors` |
 | `functions.<name>.reservedConcurrency`, `ephemeralStorageSize` | `reservedConcurrency`, `ephemeralStorage`                        |
+| python runtimes, and a handler such as `src.handler.main`   | `python3.12` or `python3.13`, older ones as `python3.12`, and `src/handler.main` |
+| `functions.<name>.layers`                                   | `layers`, by their arns                                              |
+| `functions.<name>.image` of `provider.ecr.images`           | `image { context; dockerfile; buildArgs; command }`                  |
 | `events: httpApi`                                           | `kdst.HttpRoute`, `*` as `$default`, with its authorizer and scopes   |
 | `events: http`                                              | `kdst.HttpRoute` on the http api, with a note                         |
 | `events: schedule`                                          | `kdst.Schedule`, one for each rate, with `enabled` and `input`        |
@@ -67,7 +70,8 @@ A variable inside a longer string becomes pkl interpolation: `orders-${sls:stage
 - a condition on a value only known while deploying, such as a ref.
 - `${file()}` of javascript or typescript, which runs code, and the other variable sources, which become an `import`, a `read()` or a value of your own; a secret or an output inside a longer string.
 - `custom` and `plugins`. What refers to `custom` gets its value. Some plugins are no longer needed: koldstart bundles typescript itself, so `serverless-esbuild` and `serverless-plugin-typescript` can go, `serverless-offline` is `kdst offline`, and every function has its own role already.
-- runtimes other than node and go, `layers` and container image functions, which koldstart does not deploy yet: those functions are left out.
+- runtimes other than node, go and python, which koldstart does not deploy: those functions are left out; and a function of a prebuilt image, given by its uri, which koldstart does not take, as it builds images itself.
+- `layers` that `serverless.yml` builds, which koldstart does not build: publish them, and give functions their arns. A go function's layers, which go functions do not take.
 - events other than the ones above, such as `websocket`, `eventBridge` and `alb`.
 - resources of a `Custom::` type, and `DependsOn`, `Condition` and the other attributes of a resource besides `DeletionPolicy`.
 
