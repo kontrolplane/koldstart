@@ -34,6 +34,10 @@ const (
 	TypeMapping      = "koldstart::Lambda::EventSourceMapping"
 	TypeSubscription = "koldstart::SNS::Subscription"
 	TypeNotification = "koldstart::S3::BucketNotification"
+	TypeRule         = "koldstart::Events::Rule"
+	TypeTargetGroup  = "koldstart::ElasticLoadBalancingV2::TargetGroup"
+	TypeTargets      = "koldstart::ElasticLoadBalancingV2::Targets"
+	TypeListenerRule = "koldstart::ElasticLoadBalancingV2::ListenerRule"
 )
 
 // decodeInputs reads the request's inputs into v.

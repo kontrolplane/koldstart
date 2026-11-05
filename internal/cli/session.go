@@ -12,6 +12,8 @@ import (
 	awscloudcontrol "github.com/aws/aws-sdk-go-v2/service/cloudcontrol"
 	"github.com/aws/aws-sdk-go-v2/service/cloudformation"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
+	elb "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
+	"github.com/aws/aws-sdk-go-v2/service/eventbridge"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -130,6 +132,10 @@ func (s *session) engine(tags map[string]string) *engine.Engine {
 			awsp.TypeMapping:      awsp.Mapping{Client: s.Lambda},
 			awsp.TypeSubscription: awsp.Subscription{Client: sns.NewFromConfig(s.cfg)},
 			awsp.TypeNotification: awsp.Notification{Client: s.S3, Account: s.Account},
+			awsp.TypeRule:         awsp.Rule{Client: eventbridge.NewFromConfig(s.cfg)},
+			awsp.TypeTargetGroup:  awsp.TargetGroup{Client: elb.NewFromConfig(s.cfg)},
+			awsp.TypeTargets:      awsp.Targets{Client: elb.NewFromConfig(s.cfg)},
+			awsp.TypeListenerRule: awsp.ListenerRule{Client: elb.NewFromConfig(s.cfg)},
 		},
 		Fallback:    cloudcontrol.Provider{Client: s.CloudControl, Schemas: s.Schemas},
 		Secrets:     s.Secrets,

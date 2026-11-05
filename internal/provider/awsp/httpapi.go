@@ -13,11 +13,35 @@ import (
 	"github.com/kontrolplane/koldstart/internal/engine"
 )
 
-// HTTPAPIInputs are the inputs of the stage's http api, with its $default stage.
+// HTTPAPIInputs are the inputs of the stage's http api, with its $default stage, or of its
+// websocket api, with a stage of the stage's name. The fields of a websocket api are left out of
+// an http api's inputs, so one deployed before them keeps its hash.
 type HTTPAPIInputs struct {
 	Name       string      `json:"name"`
 	CORS       *CORS       `json:"cors"`
 	Throttling *Throttling `json:"throttling"`
+	// Protocol is WEBSOCKET for a websocket api, empty for an http api.
+	Protocol       string `json:"protocol,omitempty"`
+	RouteSelection string `json:"routeSelection,omitempty"`
+	Stage          string `json:"stage,omitempty"`
+}
+
+// protocolWebSocket is the protocol of a websocket api.
+const protocolWebSocket = "WEBSOCKET"
+
+func (in HTTPAPIInputs) protocol() types.ProtocolType {
+	if in.Protocol == protocolWebSocket {
+		return types.ProtocolTypeWebsocket
+	}
+	return types.ProtocolTypeHttp
+}
+
+// stage is the api's one stage: $default for an http api.
+func (in HTTPAPIInputs) stage() string {
+	if in.Stage == "" {
+		return defaultStage
+	}
+	return in.Stage
 }
 
 // Throttling is the stage-wide request limit of an http api.
@@ -55,8 +79,8 @@ func (in HTTPAPIInputs) routeSettings() *types.RouteSettings {
 	return &types.RouteSettings{ThrottlingRateLimit: &in.Throttling.Rate, ThrottlingBurstLimit: &in.Throttling.Burst}
 }
 
-func apiResult(id, endpoint string) engine.Result {
-	return engine.Result{PhysicalID: id, Attributes: map[string]string{"ApiId": id, "ApiEndpoint": endpoint}}
+func apiResult(id, endpoint, stage string) engine.Result {
+	return engine.Result{PhysicalID: id, Attributes: map[string]string{"ApiId": id, "ApiEndpoint": endpoint, "Stage": stage}}
 }
 
 // Create implements engine.Provider.
@@ -66,19 +90,20 @@ func (p HTTPAPI) Create(ctx context.Context, req engine.Request) (engine.Result,
 		return engine.Result{}, err
 	}
 	api, err := p.Client.CreateApi(ctx, &apigatewayv2.CreateApiInput{
-		Name: &in.Name, ProtocolType: types.ProtocolTypeHttp, CorsConfiguration: in.cors(), Tags: req.Tags,
+		Name: &in.Name, ProtocolType: in.protocol(), CorsConfiguration: in.cors(), Tags: req.Tags,
+		RouteSelectionExpression: optional(in.RouteSelection),
 	})
 	if err != nil {
-		return engine.Result{}, fmt.Errorf("creating the http api %s: %w", in.Name, err)
+		return engine.Result{}, fmt.Errorf("creating the api %s: %w", in.Name, err)
 	}
 	_, err = p.Client.CreateStage(ctx, &apigatewayv2.CreateStageInput{
-		ApiId: api.ApiId, StageName: aws.String(defaultStage), AutoDeploy: aws.Bool(true),
+		ApiId: api.ApiId, StageName: aws.String(in.stage()), AutoDeploy: aws.Bool(true),
 		DefaultRouteSettings: in.routeSettings(), Tags: req.Tags,
 	})
 	if err != nil {
-		return engine.Result{}, fmt.Errorf("creating the stage of the http api %s: %w", in.Name, err)
+		return engine.Result{}, fmt.Errorf("creating the stage of the api %s: %w", in.Name, err)
 	}
-	return apiResult(aws.ToString(api.ApiId), aws.ToString(api.ApiEndpoint)), nil
+	return apiResult(aws.ToString(api.ApiId), aws.ToString(api.ApiEndpoint), in.stage()), nil
 }
 
 // Read implements engine.Provider: by id, or after a crash by its name and tags.
@@ -95,8 +120,8 @@ func (p HTTPAPI) Read(ctx context.Context, req engine.Request) (engine.Result, b
 		}
 		for _, api := range out.Items {
 			if aws.ToString(api.ApiId) == req.PhysicalID ||
-				(aws.ToString(api.Name) == in.Name && ours(in.Name, api.Tags, req) == nil) {
-				return apiResult(aws.ToString(api.ApiId), aws.ToString(api.ApiEndpoint)), true, nil
+				(aws.ToString(api.Name) == in.Name && api.ProtocolType == in.protocol() && ours(in.Name, api.Tags, req) == nil) {
+				return apiResult(aws.ToString(api.ApiId), aws.ToString(api.ApiEndpoint), in.stage()), true, nil
 			}
 		}
 		if out.NextToken == nil {
@@ -113,20 +138,22 @@ func (p HTTPAPI) Update(ctx context.Context, req engine.Request) (engine.Result,
 		return engine.Result{}, err
 	}
 	id := req.PhysicalID
-	if in.CORS == nil {
+	if in.CORS == nil && in.protocol() == types.ProtocolTypeHttp {
 		_, err := p.Client.DeleteCorsConfiguration(ctx, &apigatewayv2.DeleteCorsConfigurationInput{ApiId: &id})
 		if err != nil && !awserr.Is(err, "NotFoundException") {
 			return engine.Result{}, fmt.Errorf("removing the cors of the http api %s: %w", in.Name, err)
 		}
 	}
-	api, err := p.Client.UpdateApi(ctx, &apigatewayv2.UpdateApiInput{ApiId: &id, Name: &in.Name, CorsConfiguration: in.cors()})
+	api, err := p.Client.UpdateApi(ctx, &apigatewayv2.UpdateApiInput{
+		ApiId: &id, Name: &in.Name, CorsConfiguration: in.cors(), RouteSelectionExpression: optional(in.RouteSelection),
+	})
 	if err != nil {
-		return engine.Result{}, fmt.Errorf("updating the http api %s: %w", in.Name, err)
+		return engine.Result{}, fmt.Errorf("updating the api %s: %w", in.Name, err)
 	}
-	_, err = p.Client.UpdateStage(ctx, &apigatewayv2.UpdateStageInput{ApiId: &id, StageName: aws.String(defaultStage), DefaultRouteSettings: in.routeSettings()})
+	_, err = p.Client.UpdateStage(ctx, &apigatewayv2.UpdateStageInput{ApiId: &id, StageName: aws.String(in.stage()), DefaultRouteSettings: in.routeSettings()})
 	if awserr.Is(err, "NotFoundException") {
 		_, err = p.Client.CreateStage(ctx, &apigatewayv2.CreateStageInput{
-			ApiId: &id, StageName: aws.String(defaultStage), AutoDeploy: aws.Bool(true), DefaultRouteSettings: in.routeSettings(), Tags: req.Tags,
+			ApiId: &id, StageName: aws.String(in.stage()), AutoDeploy: aws.Bool(true), DefaultRouteSettings: in.routeSettings(), Tags: req.Tags,
 		})
 	}
 	if err != nil {
@@ -136,7 +163,7 @@ func (p HTTPAPI) Update(ctx context.Context, req engine.Request) (engine.Result,
 	if _, err := p.Client.TagResource(ctx, &apigatewayv2.TagResourceInput{ResourceArn: &arn, Tags: req.Tags}); err != nil {
 		return engine.Result{}, fmt.Errorf("tagging the http api %s: %w", in.Name, err)
 	}
-	return apiResult(id, aws.ToString(api.ApiEndpoint)), nil
+	return apiResult(id, aws.ToString(api.ApiEndpoint), in.stage()), nil
 }
 
 // Delete implements engine.Provider.
@@ -148,13 +175,28 @@ func (p HTTPAPI) Delete(ctx context.Context, req engine.Request) error {
 	return nil
 }
 
-// Replaces implements engine.Provider: everything changes in place.
-func (HTTPAPI) Replaces(_, _ json.RawMessage) bool { return false }
+// Replaces implements engine.Provider: everything changes in place but the protocol, and a
+// websocket api's stage.
+func (HTTPAPI) Replaces(prior, desired json.RawMessage) bool {
+	a, b := decodeBoth[HTTPAPIInputs](prior, desired)
+	return a.protocol() != b.protocol() || a.stage() != b.stage()
+}
 
-// IntegrationInputs are the inputs of the integration of a function with the http api.
+// IntegrationInputs are the inputs of the integration of a function with the http api, by the
+// function's arn, or with the websocket api, by its invocation uri.
 type IntegrationInputs struct {
-	API      string `json:"api"`
-	Function string `json:"function"`
+	API       string `json:"api"`
+	Function  string `json:"function"`
+	WebSocket bool   `json:"webSocket,omitempty"`
+}
+
+// payloadFormat is the version of the event an http api hands its functions; a websocket api has
+// one version only, which is not set.
+func (in IntegrationInputs) payloadFormat() *string {
+	if in.WebSocket {
+		return nil
+	}
+	return aws.String("2.0")
 }
 
 // Integration is the provider of the proxy integrations that hand requests to functions.
@@ -174,7 +216,7 @@ func (p Integration) Create(ctx context.Context, req engine.Request) (engine.Res
 	}
 	out, err := p.Client.CreateIntegration(ctx, &apigatewayv2.CreateIntegrationInput{
 		ApiId: &in.API, IntegrationType: types.IntegrationTypeAwsProxy, IntegrationUri: &in.Function,
-		PayloadFormatVersion: aws.String("2.0"),
+		PayloadFormatVersion: in.payloadFormat(),
 	})
 	if err != nil {
 		return engine.Result{}, fmt.Errorf("integrating %s with the http api: %w", in.Function, err)
@@ -210,7 +252,7 @@ func (p Integration) Update(ctx context.Context, req engine.Request) (engine.Res
 		return engine.Result{}, err
 	}
 	_, err := p.Client.UpdateIntegration(ctx, &apigatewayv2.UpdateIntegrationInput{
-		ApiId: &in.API, IntegrationId: &req.PhysicalID, IntegrationUri: &in.Function, PayloadFormatVersion: aws.String("2.0"),
+		ApiId: &in.API, IntegrationId: &req.PhysicalID, IntegrationUri: &in.Function, PayloadFormatVersion: in.payloadFormat(),
 	})
 	if err != nil {
 		return engine.Result{}, fmt.Errorf("updating the integration of %s: %w", in.Function, err)
@@ -237,14 +279,47 @@ func (Integration) Replaces(prior, desired json.RawMessage) bool {
 	return a.API != b.API
 }
 
-// RouteInputs are the inputs of a route of the http api.
+// RouteInputs are the inputs of a route of the http api or the websocket api, with its own
+// request limit on the api's stage when it has one.
 type RouteInputs struct {
-	API               string   `json:"api"`
-	RouteKey          string   `json:"routeKey"`
-	Target            string   `json:"target"`
-	AuthorizationType string   `json:"authorizationType"`
-	Authorizer        string   `json:"authorizer"`
-	Scopes            []string `json:"scopes"`
+	API               string      `json:"api"`
+	RouteKey          string      `json:"routeKey"`
+	Target            string      `json:"target"`
+	AuthorizationType string      `json:"authorizationType"`
+	Authorizer        string      `json:"authorizer"`
+	Scopes            []string    `json:"scopes"`
+	Throttling        *Throttling `json:"throttling,omitempty"`
+	Stage             string      `json:"stage,omitempty"`
+}
+
+// stage is the stage the route's request limit is set on: $default for an http api.
+func (in RouteInputs) stage() string {
+	if in.Stage == "" {
+		return defaultStage
+	}
+	return in.Stage
+}
+
+// throttle sets the route's own request limit on the stage, or removes the one it had.
+func (p Route) throttle(ctx context.Context, in RouteInputs, prior *RouteInputs) error {
+	if in.Throttling == nil {
+		if prior == nil || prior.Throttling == nil {
+			return nil
+		}
+		_, err := p.Client.DeleteRouteSettings(ctx, &apigatewayv2.DeleteRouteSettingsInput{ApiId: &in.API, StageName: aws.String(in.stage()), RouteKey: &in.RouteKey})
+		if err != nil && !awserr.Is(err, "NotFoundException") {
+			return fmt.Errorf("removing the request limit of %s: %w", in.RouteKey, err)
+		}
+		return nil
+	}
+	_, err := p.Client.UpdateStage(ctx, &apigatewayv2.UpdateStageInput{
+		ApiId: &in.API, StageName: aws.String(in.stage()),
+		RouteSettings: map[string]types.RouteSettings{in.RouteKey: {ThrottlingRateLimit: &in.Throttling.Rate, ThrottlingBurstLimit: &in.Throttling.Burst}},
+	})
+	if err != nil {
+		return fmt.Errorf("setting the request limit of %s: %w", in.RouteKey, err)
+	}
+	return nil
 }
 
 // Route is the provider of the routes of the http api.
@@ -278,6 +353,9 @@ func (p Route) Create(ctx context.Context, req engine.Request) (engine.Result, e
 	}
 	if err != nil {
 		return engine.Result{}, fmt.Errorf("creating the route %s: %w", in.RouteKey, err)
+	}
+	if err := p.throttle(ctx, in, nil); err != nil {
+		return engine.Result{}, err
 	}
 	return routeResult(aws.ToString(out.RouteId)), nil
 }
@@ -316,6 +394,16 @@ func (p Route) Update(ctx context.Context, req engine.Request) (engine.Result, e
 	})
 	if err != nil {
 		return engine.Result{}, fmt.Errorf("updating the route %s: %w", in.RouteKey, err)
+	}
+	var prior *RouteInputs
+	if len(req.Prior) > 0 {
+		prior = &RouteInputs{}
+		if err := decodeInputs(req.Prior, prior); err != nil {
+			return engine.Result{}, err
+		}
+	}
+	if err := p.throttle(ctx, in, prior); err != nil {
+		return engine.Result{}, err
 	}
 	return routeResult(req.PhysicalID), nil
 }

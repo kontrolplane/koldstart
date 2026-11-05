@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -16,7 +17,12 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/apigatewayv2"
+	apigwtypes "github.com/aws/aws-sdk-go-v2/service/apigatewayv2/types"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	elb "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
+	elbtypes "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2/types"
+	"github.com/aws/aws-sdk-go-v2/service/eventbridge"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/lambda/types"
@@ -352,5 +358,167 @@ func TestLayersEmulator(t *testing.T) {
 	}
 	if got := layers(); len(got) != 0 {
 		t.Errorf("layers after taking them off: %v", got)
+	}
+}
+
+// emulatorFunction is the arn of a function the emulator does not have, which rules and target
+// groups take without checking.
+func emulatorFunction(name string) string {
+	return "arn:aws:lambda:" + awstest.Region + ":000000000000:function:" + name
+}
+
+// TestRuleEmulator creates, changes and deletes an eventbridge rule.
+func TestRuleEmulator(t *testing.T) {
+	cfg := awstest.Emulator(t)
+	ctx := context.Background()
+	name := awstest.Name("rule")
+	fn := emulatorFunction(name)
+
+	rules := awsp.Rule{Client: eventbridge.NewFromConfig(cfg)}
+	in := awsp.RuleInputs{Name: name, Bus: "default", Pattern: `{"source":["shop"]}`, Function: fn, Enabled: true}
+	ruleIn, _ := json.Marshal(in)
+	res, err := rules.Create(ctx, engine.Request{ID: "rule/x/0", Inputs: ruleIn})
+	if err != nil || !strings.Contains(res.Attributes["Arn"], name) {
+		t.Fatalf("Rule.Create = %+v, %v", res, err)
+	}
+	in.Enabled = false
+	changed, _ := json.Marshal(in)
+	if _, err := rules.Update(ctx, engine.Request{ID: "rule/x/0", PhysicalID: name, Inputs: changed, Prior: ruleIn}); err != nil {
+		t.Fatalf("Rule.Update: %v", err)
+	}
+	if _, found, err := rules.Read(ctx, engine.Request{Inputs: changed}); err != nil || !found {
+		t.Fatalf("Rule.Read = %v, %v", found, err)
+	}
+	if err := rules.Delete(ctx, engine.Request{PhysicalID: name, Prior: changed}); err != nil {
+		t.Fatalf("Rule.Delete: %v", err)
+	}
+}
+
+// TestWebSocketEmulator creates a websocket api, and a route limited on its own whose limit is
+// then taken off.
+func TestWebSocketEmulator(t *testing.T) {
+	cfg := awstest.Emulator(t)
+	ctx := context.Background()
+	name := awstest.Name("ws")
+
+	apigw := apigatewayv2.NewFromConfig(cfg)
+	apis := awsp.HTTPAPI{Client: apigw, Region: awstest.Region}
+	wsIn, _ := json.Marshal(awsp.HTTPAPIInputs{Name: name, Protocol: "WEBSOCKET", RouteSelection: "$request.body.action", Stage: "dev"})
+	ws, err := apis.Create(ctx, engine.Request{ID: "websocket", Inputs: wsIn})
+	if err != nil || ws.Attributes["Stage"] != "dev" {
+		t.Fatalf("websocket api = %+v, %v", ws, err)
+	}
+	t.Cleanup(func() { _ = apis.Delete(context.Background(), engine.Request{PhysicalID: ws.PhysicalID}) })
+	if out, err := apigw.GetApi(ctx, &apigatewayv2.GetApiInput{ApiId: &ws.PhysicalID}); err != nil || out.ProtocolType != "WEBSOCKET" {
+		t.Fatalf("GetApi = %+v, %v", out, err)
+	}
+	routes := awsp.Route{Client: apigw}
+	route := awsp.RouteInputs{API: ws.PhysicalID, RouteKey: "sendMessage", AuthorizationType: "NONE", Stage: "dev", Throttling: &awsp.Throttling{Rate: 5, Burst: 10}}
+	routeIn, _ := json.Marshal(route)
+	r, err := routes.Create(ctx, engine.Request{ID: "wsroute/sendMessage", Inputs: routeIn})
+	if err != nil {
+		t.Fatalf("Route.Create: %v", err)
+	}
+	settings := func() map[string]apigwtypes.RouteSettings {
+		t.Helper()
+		out, err := apigw.GetStage(ctx, &apigatewayv2.GetStageInput{ApiId: &ws.PhysicalID, StageName: aws.String("dev")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out.RouteSettings
+	}
+	if s, ok := settings()["sendMessage"]; !ok || aws.ToInt32(s.ThrottlingBurstLimit) != 10 {
+		t.Errorf("route settings after create: %+v", settings())
+	}
+	route.Throttling = nil
+	unlimited, _ := json.Marshal(route)
+	_, err = routes.Update(ctx, engine.Request{ID: "wsroute/sendMessage", PhysicalID: r.PhysicalID, Inputs: unlimited, Prior: routeIn})
+	switch {
+	case err != nil && strings.Contains(err.Error(), "UnknownOperation"):
+		t.Log("the emulator has no DeleteRouteSettings: removing a route's limit is not checked")
+	case err != nil:
+		t.Fatalf("Route.Update: %v", err)
+	default:
+		if _, ok := settings()["sendMessage"]; ok {
+			t.Errorf("the route's limit was not removed: %+v", settings())
+		}
+	}
+}
+
+// TestLoadBalancerEmulator creates, changes and deletes a target group, its registration and a
+// listener rule on a load balancer the test makes.
+func TestLoadBalancerEmulator(t *testing.T) {
+	cfg := awstest.Emulator(t)
+	ctx := context.Background()
+	name := awstest.Name("lb")
+	fn := emulatorFunction(name)
+
+	ec := ec2.NewFromConfig(cfg)
+	vpc, err := ec.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.9.0.0/16")})
+	if err != nil {
+		t.Fatalf("CreateVpc: %v", err)
+	}
+	subnets := make([]string, 0, 2)
+	for i, zone := range []string{"a", "b"} {
+		sub, err := ec.CreateSubnet(ctx, &ec2.CreateSubnetInput{VpcId: vpc.Vpc.VpcId, CidrBlock: aws.String(fmt.Sprintf("10.9.%d.0/24", i)), AvailabilityZone: aws.String(awstest.Region + zone)})
+		if err != nil {
+			t.Fatalf("CreateSubnet: %v", err)
+		}
+		subnets = append(subnets, aws.ToString(sub.Subnet.SubnetId))
+	}
+	lbs := elb.NewFromConfig(cfg)
+	lb, err := lbs.CreateLoadBalancer(ctx, &elb.CreateLoadBalancerInput{Name: aws.String(name), Subnets: subnets})
+	if err != nil {
+		t.Fatalf("CreateLoadBalancer: %v", err)
+	}
+	listener, err := lbs.CreateListener(ctx, &elb.CreateListenerInput{
+		LoadBalancerArn: lb.LoadBalancers[0].LoadBalancerArn, Protocol: elbtypes.ProtocolEnumHttp, Port: aws.Int32(80),
+		DefaultActions: []elbtypes.Action{{Type: elbtypes.ActionTypeEnumFixedResponse, FixedResponseConfig: &elbtypes.FixedResponseActionConfig{StatusCode: aws.String("404")}}},
+	})
+	if err != nil {
+		t.Fatalf("CreateListener: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = lbs.DeleteLoadBalancer(context.Background(), &elb.DeleteLoadBalancerInput{LoadBalancerArn: lb.LoadBalancers[0].LoadBalancerArn})
+	})
+
+	groups := awsp.TargetGroup{Client: lbs}
+	groupIn, _ := json.Marshal(awsp.TargetGroupInputs{Name: name})
+	group, err := groups.Create(ctx, engine.Request{ID: "targetgroup/x/0", Inputs: groupIn})
+	if err != nil {
+		t.Fatalf("TargetGroup.Create: %v", err)
+	}
+	targets := awsp.Targets{Client: lbs}
+	targetsIn, _ := json.Marshal(awsp.TargetsInputs{TargetGroup: group.PhysicalID, Function: fn})
+	if _, err := targets.Create(ctx, engine.Request{ID: "lbtarget/x/0", Inputs: targetsIn}); err != nil {
+		t.Fatalf("Targets.Create: %v", err)
+	}
+	if _, found, err := targets.Read(ctx, engine.Request{Inputs: targetsIn}); err != nil || !found {
+		t.Errorf("Targets.Read = %v, %v", found, err)
+	}
+	listenerRules := awsp.ListenerRule{Client: lbs}
+	ruleInputs := awsp.ListenerRuleInputs{Listener: aws.ToString(listener.Listeners[0].ListenerArn), Priority: 10, TargetGroup: group.PhysicalID, Paths: []string{"/orders/*"}}
+	lrIn, _ := json.Marshal(ruleInputs)
+	lr, err := listenerRules.Create(ctx, engine.Request{ID: "lbrule/x/0", Inputs: lrIn})
+	if err != nil {
+		t.Fatalf("ListenerRule.Create: %v", err)
+	}
+	ruleInputs.Priority, ruleInputs.Paths = 20, []string{"/carts/*"}
+	moved, _ := json.Marshal(ruleInputs)
+	if _, err := listenerRules.Update(ctx, engine.Request{ID: "lbrule/x/0", PhysicalID: lr.PhysicalID, Inputs: moved, Prior: lrIn}); err != nil {
+		t.Fatalf("ListenerRule.Update: %v", err)
+	}
+	described, err := lbs.DescribeRules(ctx, &elb.DescribeRulesInput{RuleArns: []string{lr.PhysicalID}})
+	if err != nil || len(described.Rules) != 1 || aws.ToString(described.Rules[0].Priority) != "20" {
+		t.Errorf("the rule after update: %+v, %v", described, err)
+	}
+	if err := listenerRules.Delete(ctx, engine.Request{PhysicalID: lr.PhysicalID}); err != nil {
+		t.Fatalf("ListenerRule.Delete: %v", err)
+	}
+	if err := targets.Delete(ctx, engine.Request{Prior: targetsIn}); err != nil {
+		t.Fatalf("Targets.Delete: %v", err)
+	}
+	if err := groups.Delete(ctx, engine.Request{PhysicalID: group.PhysicalID}); err != nil {
+		t.Fatalf("TargetGroup.Delete: %v", err)
 	}
 }
