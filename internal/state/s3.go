@@ -363,7 +363,7 @@ func isNotFound(err error) bool {
 	var noKey *types.NoSuchKey
 	var notFound *types.NotFound
 	code := errorCode(err)
-	return errors.As(err, &noKey) || errors.As(err, &notFound) || code == "NoSuchKey" || code == "NotFound"
+	return errors.As(err, &noKey) || errors.As(err, &notFound) || code == "NoSuchKey" || code == "NotFound" || code == "NoSuchBucket"
 }
 
 // isPreconditionFailed is a conditional write that lost: the object exists, or changed. A

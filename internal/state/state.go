@@ -43,6 +43,9 @@ type Resource struct {
 	Inputs json.RawMessage `json:"inputs,omitempty"`
 	// Hash is the hash of the inputs it was last applied with, secrets included.
 	Hash string `json:"hash"`
+	// SecretsHash is the hash of the values of its secrets alone, which tells a provider whether
+	// they changed, as the inputs hold only references to them.
+	SecretsHash string `json:"secretsHash,omitempty"`
 	// Attributes are what ref() reads, such as Arn.
 	Attributes map[string]string `json:"attributes,omitempty"`
 	// Dependencies are the ids it was applied after, so it is deleted before them.

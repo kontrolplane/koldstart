@@ -370,6 +370,14 @@ func TestSecrets(t *testing.T) {
 	if err != nil || plan.HasChanges() {
 		t.Fatalf("the same secret: %v, %v", actions(plan), err)
 	}
+	nodes[0].Inputs["memory"] = 256
+	if _, err := h.deploy(nodes); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.fake.LastPrior["env"].(map[string]any)["KEY"]; got != "one" {
+		t.Errorf("with the secret unchanged, the prior inputs hold %v, want its value", got)
+	}
+
 	secrets["ssm:/orders/key:"] = "two"
 	plan, err = h.deploy(nodes)
 	if err != nil || actions(plan)["function/api"] != Update {
@@ -377,6 +385,16 @@ func TestSecrets(t *testing.T) {
 	}
 	if got := h.fake.Resources()["api"].Inputs["env"].(map[string]any)["KEY"]; got != "two" {
 		t.Errorf("the provider got %v, want the new value", got)
+	}
+	if got := h.fake.LastPrior["env"].(map[string]any)["KEY"]; got != changedMarker {
+		t.Errorf("with the secret changed, the prior inputs hold %q, want the changed marker", got)
+	}
+
+	missing := []Node{{ID: "function/other", Type: fakeType, Name: "other", Inputs: map[string]any{
+		"env": map[string]any{"KEY": SecretValue(config.Secret{Source: "ssm", Name: "/missing"})},
+	}}}
+	if _, err := h.engine.Plan(context.Background(), missing, state.New("orders", "dev", "eu-west-1", "")); err == nil {
+		t.Error("planning a new node with a missing secret: want an error")
 	}
 }
 

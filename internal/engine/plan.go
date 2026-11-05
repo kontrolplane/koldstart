@@ -188,6 +188,10 @@ func (e *Engine) planNode(ctx context.Context, n Node, st *state.State, unknownN
 		return Change{}, err
 	}
 	c := Change{ID: n.ID, Type: n.Type, After: after.(map[string]any)}
+	withSecrets, err := e.resolveSecrets(ctx, after)
+	if err != nil {
+		return Change{}, err
+	}
 
 	prior, adopt := st.Resources[n.ID], false
 	if prior == nil && st.Retained != nil && st.Retained[n.ID] != nil {
@@ -215,10 +219,6 @@ func (e *Engine) planNode(ctx context.Context, n Node, st *state.State, unknownN
 	}
 
 	if !hasUnknown(after) {
-		withSecrets, err := e.resolveSecrets(ctx, after)
-		if err != nil {
-			return Change{}, err
-		}
 		hash, err := hashOf(n.Type, withSecrets)
 		if err != nil {
 			return Change{}, err

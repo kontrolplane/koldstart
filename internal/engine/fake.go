@@ -27,6 +27,8 @@ type Fake struct {
 	// Fail makes the call named, such as create:function/api, fail before it goes through.
 	Fail    map[string]error
 	mutated int
+	// LastPrior are the prior inputs of the last update, as the provider was given them.
+	LastPrior map[string]any
 }
 
 // FakeResource is one resource Fake holds.
@@ -127,6 +129,7 @@ func (f *Fake) Update(_ context.Context, req Request) (Result, error) {
 	if !ok {
 		return Result{}, fmt.Errorf("update of %s, which does not exist", req.PhysicalID)
 	}
+	f.LastPrior = decodeInputs(req.Prior)
 	err := f.mutate("update", req.ID, func() {
 		r.Inputs = decodeInputs(req.Inputs)
 		r.Tags = req.Tags

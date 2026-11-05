@@ -162,6 +162,10 @@ func (e *Engine) applyNode(ctx context.Context, n Node, c Change, store *Store) 
 	if err != nil {
 		return err
 	}
+	secretsHash, err := e.secretsHash(ctx, resolved)
+	if err != nil {
+		return fmt.Errorf("%s: %w", n.ID, err)
+	}
 	recorded, err := json.Marshal(resolved)
 	if err != nil {
 		return err
@@ -184,22 +188,9 @@ func (e *Engine) applyNode(ctx context.Context, n Node, c Change, store *Store) 
 		e.event(Event{ID: n.ID, Action: action, Done: true, Err: err, Duration: time.Since(start)})
 	}()
 
-	startedAt := time.Now().UTC()
-	req := Request{ID: n.ID, Name: n.Name, Inputs: desired, Tags: e.tags(n.ID, snap.App, snap.Stage)}
-	if prior != nil {
-		req.PhysicalID, req.Prior, req.Attributes = prior.PhysicalID, prior.Inputs, prior.Attributes
-		if prior.Pending != nil {
-			req.Token = prior.Pending.Token
-			startedAt = prior.Pending.StartedAt
-		}
-	}
-	req.ClientToken = clientToken(snap.App, snap.Stage, n.ID, startedAt)
-	req.Progress = func(token string) error {
-		return store.Update(ctx, func(st *state.State) {
-			if r := st.Resources[n.ID]; r != nil && r.Pending != nil {
-				r.Pending.Token = token
-			}
-		})
+	req, startedAt, err := e.request(ctx, n, snap, prior, desired, secretsHash, store)
+	if err != nil {
+		return fmt.Errorf("%s: %w", n.ID, err)
 	}
 
 	if err := store.Update(ctx, func(st *state.State) {
@@ -239,6 +230,7 @@ func (e *Engine) applyNode(ctx context.Context, n Node, c Change, store *Store) 
 			PhysicalID:     res.PhysicalID,
 			Inputs:         recorded,
 			Hash:           hash,
+			SecretsHash:    secretsHash,
 			Attributes:     res.Attributes,
 			Dependencies:   n.Deps(),
 			DeletionPolicy: policy,
@@ -273,6 +265,34 @@ func (e *Engine) decide(p Provider, c Change, prior *state.Resource, hash string
 	default:
 		return Update, nil
 	}
+}
+
+// request is what the provider is asked for one node, and when the operation started: now, or
+// when a crashed deploy started it, which keeps its client token the same.
+func (e *Engine) request(ctx context.Context, n Node, snap *state.State, prior *state.Resource, desired json.RawMessage, secretsHash string, store *Store) (Request, time.Time, error) {
+	startedAt := time.Now().UTC()
+	req := Request{ID: n.ID, Name: n.Name, Inputs: desired, Tags: e.tags(n.ID, snap.App, snap.Stage)}
+	if prior != nil {
+		var err error
+		req.PhysicalID, req.Attributes = prior.PhysicalID, prior.Attributes
+		req.Prior, err = e.priorWithSecrets(ctx, prior, secretsHash)
+		if err != nil {
+			return Request{}, startedAt, err
+		}
+		if prior.Pending != nil {
+			req.Token = prior.Pending.Token
+			startedAt = prior.Pending.StartedAt
+		}
+	}
+	req.ClientToken = clientToken(snap.App, snap.Stage, n.ID, startedAt)
+	req.Progress = func(token string) error {
+		return store.Update(ctx, func(st *state.State) {
+			if r := st.Resources[n.ID]; r != nil && r.Pending != nil {
+				r.Pending.Token = token
+			}
+		})
+	}
+	return req, startedAt, nil
 }
 
 // call runs the provider for action. A create of something that exists, and an operation a
@@ -405,6 +425,70 @@ func (e *Engine) deleteNode(ctx context.Context, c Change, store *Store) (err er
 		return fmt.Errorf("%s: %w", c.ID, err)
 	}
 	return store.Update(ctx, func(st *state.State) { delete(st.Resources, c.ID) })
+}
+
+// changedMarker stands, in the inputs a provider is given as the prior ones, for a secret or a
+// stage output whose value changed: it differs from any real value, so the provider sends the
+// field again.
+const changedMarker = "\x00koldstart: changed secret\x00"
+
+// isExternal reports whether v is a value the state holds a reference to rather than the value:
+// a secret, or an output of another stage.
+func isExternal(v any) bool {
+	_, secret := asSecret(v)
+	_, _, _, output := asOutput(v)
+	return secret || output
+}
+
+// secretsHash is the hash of the values of the secrets and stage outputs in v, in a stable order,
+// or "" when there are none.
+func (e *Engine) secretsHash(ctx context.Context, v any) (string, error) {
+	var values []string
+	var errs []error
+	walk(v, func(x any) bool {
+		if !isExternal(x) {
+			return false
+		}
+		val, err := e.resolveSecrets(ctx, x)
+		if err != nil {
+			errs = append(errs, err)
+			return true
+		}
+		values = append(values, fmt.Sprint(val))
+		return true
+	})
+	if err := errors.Join(errs...); err != nil || values == nil {
+		return "", err
+	}
+	return hashOf("secrets", values)
+}
+
+// priorWithSecrets returns the inputs a resource was last applied with as a provider compares
+// them: each secret its current value when no secret changed since, so only real changes are
+// sent, and changedMarker when one did.
+func (e *Engine) priorWithSecrets(ctx context.Context, prior *state.Resource, current string) (json.RawMessage, error) {
+	if len(prior.Inputs) == 0 {
+		return prior.Inputs, nil
+	}
+	var v any
+	if err := json.Unmarshal(prior.Inputs, &v); err != nil {
+		return nil, err
+	}
+	changed := prior.SecretsHash != current
+	out, err := transform(v, func(x any) (any, bool, error) {
+		if !isExternal(x) {
+			return nil, false, nil
+		}
+		if changed {
+			return changedMarker, true, nil
+		}
+		val, err := e.resolveSecrets(ctx, x)
+		return val, true, err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(out)
 }
 
 // clientToken is the idempotency token of an operation on a node, the same for every try of it
