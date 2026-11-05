@@ -38,7 +38,7 @@ func (s *stage) checkResources(ctx context.Context) error {
 			continue
 		}
 		if !schema.Provisionable {
-			errs = append(errs, fmt.Errorf("resources[%s]: cloud control cannot create %s", name, typ))
+			errs = append(errs, fmt.Errorf("resources[%s]: cloud control cannot create %s: use a type it can, or create it outside koldstart and refer to it by name", name, typ))
 			continue
 		}
 		if problems := schema.Check(s.Resources[name].Properties); len(problems) > 0 {

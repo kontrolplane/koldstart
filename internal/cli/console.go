@@ -285,7 +285,7 @@ func (c *Console) Version(ctx context.Context, ref StageRef, id string) (*state.
 		return nil, err
 	}
 	if rb.backend == nil {
-		return nil, fmt.Errorf("no state bucket in %s", ref.Region)
+		return nil, fmt.Errorf("no state bucket in %s: nothing is deployed there yet", ref.Region)
 	}
 	return rb.backend.ReadVersion(ctx, ref.App, ref.Stage, id)
 }
@@ -353,7 +353,7 @@ func (c *Console) stored(ctx context.Context, ref StageRef) (*stage, error) {
 		return nil, err
 	}
 	if rb.backend == nil {
-		return nil, fmt.Errorf("no state bucket in %s", ref.Region)
+		return nil, fmt.Errorf("no state bucket in %s: nothing is deployed there yet", ref.Region)
 	}
 	p := &project{Project: &config.Project{App: ref.App, Stage: ref.Stage, Region: ref.Region}}
 	s := &stage{project: p, sess: rb.sess, backend: rb.backend, exists: true}

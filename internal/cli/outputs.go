@@ -76,7 +76,7 @@ func (s *stage) outputValue(st *state.State, v config.Value) (string, error) {
 	case v.Ref != nil:
 		r := st.Resources[desired.NodeID(s.Project, v.Ref.Resource)]
 		if r == nil {
-			return "", fmt.Errorf("%s does not exist", v.Ref.Resource)
+			return "", fmt.Errorf("%s is not deployed: deploy the stage", v.Ref.Resource)
 		}
 		return r.Attributes[v.Ref.Attribute], nil
 	case v.Join != nil:
