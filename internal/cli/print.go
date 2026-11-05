@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -61,8 +62,8 @@ func printPlanTo(w io.Writer, app, stage, region, account string, plan *engine.P
 		}
 		_, _ = fmt.Fprintln(w, line)
 		if c.Action == engine.Update || c.Action == engine.Replace || c.Action == engine.Adopt {
-			for _, f := range c.Fields {
-				_, _ = fmt.Fprintf(w, "        %s: %s\n", f, describeChange(c.Before[f], c.After[f]))
+			for _, line := range fieldChanges(c) {
+				_, _ = fmt.Fprintf(w, "        %s\n", line)
 			}
 		}
 	}
@@ -77,6 +78,33 @@ func printPlanTo(w io.Writer, app, stage, region, account string, plan *engine.P
 	if plan.OnlyCode() {
 		_, _ = fmt.Fprintln(w, "only code changes: the functions' code is replaced in place")
 	}
+}
+
+// fieldChanges says how each changed input changes. The properties of a resource are listed one
+// by one, as they are what the configuration sets.
+func fieldChanges(c engine.Change) []string {
+	var out []string
+	for _, f := range c.Fields {
+		before, isMapB := c.Before[f].(map[string]any)
+		after, isMapA := c.After[f].(map[string]any)
+		if f != "properties" || !isMapB || !isMapA {
+			out = append(out, f+": "+describeChange(c.Before[f], c.After[f]))
+			continue
+		}
+		keys := map[string]bool{}
+		for k := range before {
+			keys[k] = true
+		}
+		for k := range after {
+			keys[k] = true
+		}
+		for _, k := range slices.Sorted(maps.Keys(keys)) {
+			if !reflect.DeepEqual(before[k], after[k]) {
+				out = append(out, f+"."+k+": "+describeChange(before[k], after[k]))
+			}
+		}
+	}
+	return out
 }
 
 // describeChange says how an input changes: before and after for short values, less for the rest.

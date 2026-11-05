@@ -147,6 +147,9 @@ anything in aws. It reads secrets, to tell whether they changed.`,
 			if err != nil {
 				return err
 			}
+			if err := s.checkTypes(ctx); err != nil {
+				return err
+			}
 			archives, err := s.buildAll(ctx, nil, false)
 			if err != nil {
 				return err
@@ -189,6 +192,9 @@ is written to the state as it is made: a deploy that fails or is stopped is fini
 				return err
 			}
 			defer unlock()
+			if err := s.checkTypes(ctx); err != nil {
+				return err
+			}
 			archives, err := s.buildAll(ctx, nil, true)
 			if err != nil {
 				return err

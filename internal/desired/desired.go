@@ -225,9 +225,6 @@ func (b *builder) resource(name string, r config.Resource) engine.Node {
 	if policy == "" && Stateful(r.Type) {
 		policy = engine.Retain
 	}
-	if policy == "delete" {
-		policy = ""
-	}
 	return engine.Node{
 		ID: ResourceID(name), Type: r.Type, DeletionPolicy: policy,
 		Inputs: map[string]any{"type": r.Type, "properties": props},

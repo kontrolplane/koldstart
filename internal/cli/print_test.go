@@ -30,6 +30,18 @@ func TestDescribeChange(t *testing.T) {
 	}
 }
 
+// TestFieldChanges checks the properties of a resource are listed one by one.
+func TestFieldChanges(t *testing.T) {
+	c := engine.Change{Fields: []string{"properties"},
+		Before: map[string]any{"properties": map[string]any{"VisibilityTimeout": 30.0, "QueueName": "q"}},
+		After:  map[string]any{"properties": map[string]any{"VisibilityTimeout": 120.0, "QueueName": "q", "DelaySeconds": 5.0}},
+	}
+	got := strings.Join(fieldChanges(c), "; ")
+	if got != "properties.DelaySeconds: added; properties.VisibilityTimeout: 30 → 120" {
+		t.Errorf("fieldChanges = %q", got)
+	}
+}
+
 // TestPrintPlan checks each action is marked, updates list their fields, and the summary counts.
 func TestPrintPlan(t *testing.T) {
 	plan := &engine.Plan{Changes: []engine.Change{

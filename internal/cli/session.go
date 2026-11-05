@@ -11,6 +11,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/apigatewayv2"
+	awscloudcontrol "github.com/aws/aws-sdk-go-v2/service/cloudcontrol"
+	"github.com/aws/aws-sdk-go-v2/service/cloudformation"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
@@ -21,6 +23,7 @@ import (
 
 	"github.com/kontrolplane/koldstart/internal/engine"
 	"github.com/kontrolplane/koldstart/internal/provider/awsp"
+	"github.com/kontrolplane/koldstart/internal/provider/cloudcontrol"
 	"github.com/kontrolplane/koldstart/internal/state"
 )
 
@@ -32,6 +35,9 @@ type session struct {
 	S3      *s3.Client
 	Lambda  *lambda.Client
 	Logs    *cloudwatchlogs.Client
+	// CloudControl applies resources, with the schemas of their types.
+	CloudControl *awscloudcontrol.Client
+	Schemas      *cloudcontrol.Registry
 }
 
 // awsConfig loads the shared aws config for the global flags, in region, or in the profile's
@@ -72,8 +78,10 @@ func openSession(ctx context.Context, opts *Options, region string) (*session, e
 		S3: s3.NewFromConfig(cfg, func(o *s3.Options) {
 			o.UsePathStyle = os.Getenv("AWS_ENDPOINT_URL") != "" || os.Getenv("AWS_ENDPOINT_URL_S3") != ""
 		}),
-		Lambda: lambda.NewFromConfig(cfg),
-		Logs:   cloudwatchlogs.NewFromConfig(cfg),
+		Lambda:       lambda.NewFromConfig(cfg),
+		Logs:         cloudwatchlogs.NewFromConfig(cfg),
+		CloudControl: awscloudcontrol.NewFromConfig(cfg),
+		Schemas:      &cloudcontrol.Registry{Client: cloudformation.NewFromConfig(cfg)},
 	}, nil
 }
 
@@ -97,6 +105,7 @@ func (s *session) engine(tags map[string]string) *engine.Engine {
 			awsp.TypeSubscription: awsp.Subscription{Client: sns.NewFromConfig(s.cfg)},
 			awsp.TypeNotification: awsp.Notification{Client: s.S3, Account: s.Account},
 		},
+		Fallback:    cloudcontrol.Provider{Client: s.CloudControl, Schemas: s.Schemas},
 		Concurrency: 8,
 		Tags:        tags,
 	}

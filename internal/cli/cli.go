@@ -96,6 +96,7 @@ func Root(name string) *cobra.Command {
 	root.AddCommand(removeCommand(name, opts))
 	root.AddCommand(unlockCommand(name, opts))
 	root.AddCommand(outputsCommand(name, opts))
+	root.AddCommand(importCommand(name, opts))
 
 	return root
 }
