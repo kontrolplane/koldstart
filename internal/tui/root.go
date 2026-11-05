@@ -510,7 +510,7 @@ func (m model) shortHelp() [][2]string {
 	if m.error != "" || m.showHelp {
 		return [][2]string{{"any key", "close"}}
 	}
-	if m.loading {
+	if m.loading && m.page != planPage {
 		if m.page == overviewPage {
 			return [][2]string{hint(k.Help), hint(k.Quit, "quit")}
 		}

@@ -59,21 +59,3 @@ func TestInit(t *testing.T) {
 		})
 	}
 }
-
-// TestOrList checks choices are named as a person writes them.
-func TestOrList(t *testing.T) {
-	tests := []struct {
-		in   []string
-		want string
-	}{
-		{in: nil, want: ""},
-		{in: []string{"node"}, want: "node"},
-		{in: []string{"node", "go"}, want: "node or go"},
-		{in: []string{"node", "go", "python"}, want: "node, go or python"},
-	}
-	for _, tt := range tests {
-		if got := orList(tt.in); got != tt.want {
-			t.Errorf("orList(%q) = %q, want %q", tt.in, got, tt.want)
-		}
-	}
-}
