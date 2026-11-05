@@ -42,6 +42,12 @@ func navFake(t *testing.T) *fakeBackend {
 	return f
 }
 
+// navSnapshot is what a page is left with: the page, what it draws, its filter and where it is.
+func navSnapshot(m model) string {
+	meta, _ := m.frameMeta()
+	return strings.Join([]string{formatInt(int(m.page)), ansi.Strip(meta), m.position(), ansi.Strip(m.pageView())}, "\n")
+}
+
 // navFoot is the bottom edge of the frame on screen, where the position is set.
 func navFoot(m model) string {
 	for _, line := range slices.Backward(strings.Split(screen(m), "\n")) {
@@ -50,6 +56,212 @@ func navFoot(m model) string {
 		}
 	}
 	return ""
+}
+
+// navTop is the top edge of the frame on screen, where the breadcrumb is set.
+func navTop(m model) string {
+	for line := range strings.SplitSeq(screen(m), "\n") {
+		if strings.Contains(line, "╭") {
+			return line
+		}
+	}
+	return ""
+}
+
+// TestNavBack checks q and esc go back from every page and dialog to the page it was opened from,
+// with its cursor, tab, filter and scroll as they were left.
+func TestNavBack(t *testing.T) {
+	tests := []struct {
+		name string
+		// reach is pressed from the project's stage to get to the page left, prep there to move on
+		// it, and into to open the page gone back from.
+		reach, prep, into []string
+		inside            page
+		escOnly           bool
+	}{
+		{name: "overview from a stage", reach: []string{"q"}, prep: []string{"/", "o", "r", "d", "enter", "j"}, into: []string{"enter"}, inside: stagePage},
+		{name: "stage from a function", prep: []string{"j"}, into: []string{"enter"}, inside: functionPage},
+		{name: "stage resources from a function", prep: []string{"tab"}, into: []string{"enter"}, inside: functionPage},
+		{name: "stage from a resource", prep: []string{"tab", "G"}, into: []string{"enter"}, inside: resourcePage},
+		{name: "function from an invocation", reach: []string{"enter"}, prep: []string{"tab", "tab", "j"}, into: []string{"enter"}, inside: invocationPage},
+		{name: "function logs from a plan", reach: []string{"enter"}, prep: []string{"tab", "/", "l", "i", "n", "e", "enter", "k", "k"}, into: []string{"d"}, inside: planPage},
+		{name: "function overview from a plan", reach: []string{"enter"}, prep: []string{"j", "j"}, into: []string{"d"}, inside: planPage},
+		{name: "history from a version", prep: []string{"shift+tab", "j"}, into: []string{"enter"}, inside: versionPage},
+		{name: "version from a diff", reach: []string{"shift+tab", "j", "enter"}, prep: []string{"j", "j"}, into: []string{"enter"}, inside: diffPage},
+		{name: "plan from a diff", reach: []string{"d"}, prep: []string{"j"}, into: []string{"enter"}, inside: diffPage},
+		{name: "stage from a plan", prep: []string{"tab", "j"}, into: []string{"d"}, inside: planPage},
+		{name: "overview from a plan", reach: []string{"q"}, prep: []string{"j", "k"}, into: []string{"d"}, inside: planPage},
+		{name: "stage from the unlock dialog", prep: []string{"tab", "j"}, into: []string{"ctrl+x"}, inside: unlockPage},
+		{name: "overview from the unlock dialog", reach: []string{"q"}, into: []string{"ctrl+x"}, inside: unlockPage},
+		{name: "stage from the remove dialog", prep: []string{"tab", "j"}, into: []string{"ctrl+d"}, inside: removePage, escOnly: true},
+		{name: "overview from the remove dialog", reach: []string{"q"}, prep: []string{"j"}, into: []string{"ctrl+d"}, inside: removePage, escOnly: true},
+	}
+	for _, tt := range tests {
+		for _, back := range []string{"q", "esc"} {
+			if back == "q" && tt.escOnly {
+				continue
+			}
+			t.Run(tt.name+" by "+back, func(t *testing.T) {
+				m := pressKeys(t, started(t, navFake(t)), tt.reach...)
+				m = pressKeys(t, m, tt.prep...)
+				left := navSnapshot(m)
+				m = pressKeys(t, m, tt.into...)
+				if m.page != tt.inside {
+					t.Fatalf("page %v after %v, want %v", m.page, tt.into, tt.inside)
+				}
+				m = pressKeys(t, m, back)
+				if got := navSnapshot(m); got != left {
+					t.Errorf("came back to\n%s\nwant\n%s", got, left)
+				}
+			})
+		}
+	}
+}
+
+// TestNavRunLocalBack checks the dialog before running a function of prod here goes back to the
+// function as it was, on q, esc and n.
+func TestNavRunLocalBack(t *testing.T) {
+	for _, back := range []string{"q", "esc", "n"} {
+		t.Run(back, func(t *testing.T) {
+			m := started(t, navFake(t))
+			m, cmd := m.openStage(ordersProd)
+			m = pressKeys(t, settle(t, m, cmd), "enter", "tab", "tab", "tab")
+			left := navSnapshot(m)
+			m = pressKeys(t, m, "I")
+			if m.page != runLocalPage {
+				t.Fatalf("page %v, want the dialog", m.page)
+			}
+			if m = pressKeys(t, m, back); navSnapshot(m) != left {
+				t.Errorf("came back to\n%s\nwant\n%s", navSnapshot(m), left)
+			}
+		})
+	}
+}
+
+// TestNavBackToTheStageLeft checks leaving the stage opened on start puts the overview's cursor
+// on it.
+func TestNavBackToTheStageLeft(t *testing.T) {
+	m := pressKeys(t, started(t, navFake(t)), "q")
+	if s, ok := m.selectedStage(); !ok || s.StageRef != ordersDev {
+		t.Errorf("the cursor is on %v, want %v", s.StageRef, ordersDev)
+	}
+}
+
+// TestNavFilter checks the filter works alike on the overview, every tab of a stage and the
+// logs: letters typed into it do nothing else, backspace empties it, the frame shows it while it
+// is typed or holds text, enter keeps it and esc clears it.
+func TestNavFilter(t *testing.T) {
+	tests := []struct {
+		name  string
+		reach []string
+		rows  func(m model) int
+	}{
+		{name: "overview", reach: []string{"q"}, rows: func(m model) int { return len(m.state.overview.shown) }},
+		{name: "functions", rows: func(m model) int { return len(m.state.stage.functions) }},
+		{name: "resources", reach: []string{"tab"}, rows: func(m model) int { return len(m.state.stage.resources) }},
+		{name: "outputs", reach: []string{"tab", "tab"}, rows: func(m model) int { return len(m.state.stage.outputs) }},
+		{name: "history", reach: []string{"shift+tab"}, rows: func(m model) int { return len(m.state.stage.shownDeploys) }},
+		{name: "logs", reach: []string{"enter", "tab"}, rows: func(m model) int { return len(navAllRows(m)) }},
+	}
+	const typed = "dqrpfiIecyn?xjkgG"
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := navFake(t)
+			m := pressKeys(t, started(t, f), tt.reach...)
+			page, all := m.page, tt.rows(m)
+			m = pressKeys(t, m, "/")
+			if !m.typing() || !strings.Contains(navTop(m), "filter") {
+				t.Fatalf("/: typing %t, top %q", m.typing(), navTop(m))
+			}
+			for _, r := range typed {
+				var cmd tea.Cmd
+				m, cmd = update(t, m, tea.KeyPressMsg{Code: r, Text: string(r)})
+				if quits(cmd) {
+					t.Fatalf("%q quit", r)
+				}
+			}
+			if m.page != page || m.showHelp || m.paused || len(f.deploys)+len(f.invokes)+f.local+len(f.unlocks) != 0 || m.status != "" {
+				t.Fatalf("a letter did something: page %v, help %t, paused %t, status %q", m.page, m.showHelp, m.paused, m.status)
+			}
+			if got := m.pageFilter().text; got != typed {
+				t.Errorf("filter %q, want %q", got, typed)
+			}
+			if !strings.Contains(navTop(m), "filter "+typed[:8]) {
+				t.Errorf("the frame does not show the filter: %q", navTop(m))
+			}
+			for range typed {
+				m = pressKeys(t, m, "backspace")
+			}
+			if !m.typing() || m.pageFilter().text != "" || tt.rows(m) != all {
+				t.Fatalf("backspace to empty: typing %t, filter %q, %d rows of %d", m.typing(), m.pageFilter().text, tt.rows(m), all)
+			}
+			m = pressKeys(t, m, "z", "enter")
+			if m.typing() || m.pageFilter().text != "z" || !strings.Contains(navTop(m), "filter z") {
+				t.Fatalf("enter: typing %t, filter %q, top %q", m.typing(), m.pageFilter().text, navTop(m))
+			}
+			m = pressKeys(t, m, "/", "esc")
+			if m.typing() || m.pageFilter().text != "" || strings.Contains(navTop(m), "filter") || tt.rows(m) != all || m.page != page {
+				t.Errorf("esc: typing %t, filter %q, %d rows of %d, page %v", m.typing(), m.pageFilter().text, tt.rows(m), all, m.page)
+			}
+		})
+	}
+}
+
+// navAllRows is every drawn row of the logs the filter keeps.
+func navAllRows(m model) []logRow {
+	rows, _ := m.lastRows(1 << 30)
+	return rows
+}
+
+// navPages are the interface on every page, by name, with its first loads in.
+func navPages(t *testing.T) map[string]model {
+	t.Helper()
+	m := started(t, navFake(t))
+	fn := pressKeys(t, m, "enter")
+	prod, cmd := m.openStage(ordersProd)
+	prod = settle(t, prod, cmd)
+	return map[string]model{
+		"overview":    pressKeys(t, m, "q"),
+		"stage":       m,
+		"function":    fn,
+		"logs":        pressKeys(t, fn, "tab"),
+		"invocations": pressKeys(t, fn, "tab", "tab"),
+		"invoke":      pressKeys(t, fn, "shift+tab"),
+		"invocation":  pressKeys(t, fn, "tab", "tab", "enter"),
+		"resource":    pressKeys(t, m, "tab", "G", "enter"),
+		"version":     pressKeys(t, m, "shift+tab", "enter"),
+		"diff":        pressKeys(t, m, "d", "enter"),
+		"plan":        pressKeys(t, m, "d"),
+		"unlock":      pressKeys(t, m, "ctrl+x"),
+		"run here":    pressKeys(t, prod, "enter", "I"),
+	}
+}
+
+// TestNavHelp checks ? opens the key reference on every page, any key closes it and leaves the
+// page as it was, and ctrl+c still quits while it is open. On the remove dialog ? is typed.
+func TestNavHelp(t *testing.T) {
+	for name, m := range navPages(t) {
+		t.Run(name, func(t *testing.T) {
+			left := navSnapshot(m)
+			open := pressKeys(t, m, "?")
+			if !open.showHelp || !strings.Contains(screen(open), "everywhere") {
+				t.Fatalf("? did not open the help:\n%s", screen(open))
+			}
+			if _, cmd := update(t, open, press("ctrl+c")); !quits(cmd) {
+				t.Error("ctrl+c with the help open does not quit")
+			}
+			for _, k := range []string{"x", "q", "esc", "enter", "j"} {
+				closed := pressKeys(t, open, k)
+				if closed.showHelp || navSnapshot(closed) != left {
+					t.Errorf("%s: help %t, page\n%s\nwant\n%s", k, closed.showHelp, navSnapshot(closed), left)
+				}
+			}
+		})
+	}
+	m := pressKeys(t, started(t, navFake(t)), "ctrl+d", "?")
+	if m.showHelp || m.page != removePage || !strings.Contains(m.state.remove.confirm.input.Value(), "?") {
+		t.Errorf("? on the remove dialog: help %t, page %v, typed %q", m.showHelp, m.page, m.state.remove.confirm.input.Value())
+	}
 }
 
 // TestNavPosition checks every page that scrolls says in the frame's foot which lines are in
@@ -186,40 +398,6 @@ func TestNavPickHighlight(t *testing.T) {
 				t.Errorf("the foot does not say which change is chosen: %q", navFoot(m))
 			}
 		})
-	}
-}
-
-// navTop is the top edge of the frame on screen, where the breadcrumb is set.
-func navTop(m model) string {
-	for line := range strings.SplitSeq(screen(m), "\n") {
-		if strings.Contains(line, "╭") {
-			return line
-		}
-	}
-	return ""
-}
-
-// navPages are the interface on every page, by name, with its first loads in.
-func navPages(t *testing.T) map[string]model {
-	t.Helper()
-	m := started(t, navFake(t))
-	fn := pressKeys(t, m, "enter")
-	prod, cmd := m.openStage(ordersProd)
-	prod = settle(t, prod, cmd)
-	return map[string]model{
-		"overview":    pressKeys(t, m, "q"),
-		"stage":       m,
-		"function":    fn,
-		"logs":        pressKeys(t, fn, "tab"),
-		"invocations": pressKeys(t, fn, "tab", "tab"),
-		"invoke":      pressKeys(t, fn, "shift+tab"),
-		"invocation":  pressKeys(t, fn, "tab", "tab", "enter"),
-		"resource":    pressKeys(t, m, "tab", "G", "enter"),
-		"version":     pressKeys(t, m, "shift+tab", "enter"),
-		"diff":        pressKeys(t, m, "d", "enter"),
-		"plan":        pressKeys(t, m, "d"),
-		"unlock":      pressKeys(t, m, "ctrl+x"),
-		"run here":    pressKeys(t, prod, "enter", "I"),
 	}
 }
 

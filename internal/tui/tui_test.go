@@ -174,7 +174,7 @@ func TestDeploy(t *testing.T) {
 // TestDeployOnlyTheProject checks a stage of another app than the project here is not planned.
 func TestDeployOnlyTheProject(t *testing.T) {
 	m := pressKeys(t, started(t, newFake(t)), "q")
-	m = pressKeys(t, m, "enter")
+	m = pressKeys(t, m, "g", "enter")
 	if m.state.stage.ref != billingDev {
 		t.Fatalf("opened %v, want billing/dev", m.state.stage.ref)
 	}
