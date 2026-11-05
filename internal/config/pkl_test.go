@@ -69,6 +69,22 @@ func TestSchema(t *testing.T) {
 	}
 }
 
+// TestStageFile checks a stage's own file, which amends the main one, changes what it sets and
+// keeps the rest.
+func TestStageFile(t *testing.T) {
+	ev := evaluator(t)
+	p, err := config.Load(context.Background(), ev, filepath.Join("testdata", "orders", "koldstart.prod.pkl"), "prod")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if p.Region != "us-east-1" || p.Functions["api"].Memory != 2048 || p.Functions["api"].Handler != "src/api.handler" || len(p.Functions) != 2 {
+		t.Errorf("the prod file gave region %s, api %+v, %d functions", p.Region, p.Functions["api"], len(p.Functions))
+	}
+	if p.Functions["api"].Environment["PAYMENTS_URL"].Output.Stage != "prod" {
+		t.Errorf("the stage did not reach the main file: %+v", p.Functions["api"].Environment["PAYMENTS_URL"])
+	}
+}
+
 // TestSchemaRefuses checks the schema reports mistakes, pointing at the line.
 func TestSchemaRefuses(t *testing.T) {
 	ev := evaluator(t)

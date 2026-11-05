@@ -17,6 +17,7 @@ import (
 	"github.com/kontrolplane/koldstart/internal/build"
 	"github.com/kontrolplane/koldstart/internal/desired"
 	"github.com/kontrolplane/koldstart/internal/engine"
+	"github.com/kontrolplane/koldstart/internal/resolve"
 	"github.com/kontrolplane/koldstart/internal/state"
 )
 
@@ -49,6 +50,13 @@ func openStage(ctx context.Context, opts *Options, create bool) (*stage, error) 
 	}
 	s := &stage{project: p, sess: sess, backend: b, exists: exists}
 	return s, s.read(ctx)
+}
+
+// engine returns the engine for the stage, reading the outputs of other stages from its bucket.
+func (s *stage) engine() *engine.Engine {
+	e := s.sess.engine(s.Tags)
+	e.Outputs = &resolve.Outputs{Backend: s.backend}
+	return e
 }
 
 func (s *stage) read(ctx context.Context) error {
@@ -158,7 +166,7 @@ anything in aws. It reads secrets, to tell whether they changed.`,
 			if err != nil {
 				return err
 			}
-			e := s.sess.engine(s.Tags)
+			e := s.engine()
 			e.AllowReplace = allowReplace
 			plan, err := e.Plan(ctx, nodes, s.state)
 			if err != nil {
@@ -203,7 +211,7 @@ is written to the state as it is made: a deploy that fails or is stopped is fini
 			if err != nil {
 				return err
 			}
-			e := s.sess.engine(s.Tags)
+			e := s.engine()
 			e.AllowReplace = allowReplace
 			plan, err := e.Plan(ctx, nodes, s.state)
 			if err != nil {
@@ -338,7 +346,7 @@ the function's configuration changed too: run deploy for that.`,
 			if err != nil {
 				return err
 			}
-			e := s.sess.engine(s.Tags)
+			e := s.engine()
 			plan, err := e.Plan(ctx, nodes, s.state)
 			if err != nil {
 				return err
@@ -413,7 +421,7 @@ of the stage takes them over again.`,
 				return err
 			}
 			defer unlock()
-			e := s.sess.engine(s.Tags)
+			e := s.engine()
 			plan, err := e.Plan(ctx, nil, s.state)
 			if err != nil {
 				return err

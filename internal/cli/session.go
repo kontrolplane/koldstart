@@ -18,12 +18,15 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/scheduler"
+	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/aws/aws-sdk-go-v2/service/sns"
+	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 
 	"github.com/kontrolplane/koldstart/internal/engine"
 	"github.com/kontrolplane/koldstart/internal/provider/awsp"
 	"github.com/kontrolplane/koldstart/internal/provider/cloudcontrol"
+	"github.com/kontrolplane/koldstart/internal/resolve"
 	"github.com/kontrolplane/koldstart/internal/state"
 )
 
@@ -38,6 +41,8 @@ type session struct {
 	// CloudControl applies resources, with the schemas of their types.
 	CloudControl *awscloudcontrol.Client
 	Schemas      *cloudcontrol.Registry
+	// Secrets reads ssm parameters and secrets manager secrets, each once per run.
+	Secrets *resolve.Secrets
 }
 
 // awsConfig loads the shared aws config for the global flags, in region, or in the profile's
@@ -82,6 +87,7 @@ func openSession(ctx context.Context, opts *Options, region string) (*session, e
 		Logs:         cloudwatchlogs.NewFromConfig(cfg),
 		CloudControl: awscloudcontrol.NewFromConfig(cfg),
 		Schemas:      &cloudcontrol.Registry{Client: cloudformation.NewFromConfig(cfg)},
+		Secrets:      &resolve.Secrets{SSM: ssm.NewFromConfig(cfg), SecretsManager: secretsmanager.NewFromConfig(cfg)},
 	}, nil
 }
 
@@ -106,6 +112,7 @@ func (s *session) engine(tags map[string]string) *engine.Engine {
 			awsp.TypeNotification: awsp.Notification{Client: s.S3, Account: s.Account},
 		},
 		Fallback:    cloudcontrol.Provider{Client: s.CloudControl, Schemas: s.Schemas},
+		Secrets:     s.Secrets,
 		Concurrency: 8,
 		Tags:        tags,
 	}

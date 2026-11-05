@@ -204,6 +204,38 @@ func TestEvents(t *testing.T) {
 	}
 }
 
+// TestRuntimeSecrets checks a secret the function reads itself is allowed on its role, and a field
+// of it is named in a variable beside it.
+func TestRuntimeSecrets(t *testing.T) {
+	p := project(t)
+	api := p.Functions["api"]
+	api.Environment["DB_PASSWORD"] = config.Value{Secret: &config.Secret{Source: config.SourceSecretsManager, Name: "db", Key: "password", AtRuntime: true}}
+	api.Environment["TOKEN"] = config.Value{Secret: &config.Secret{Source: config.SourceSSM, Name: "/orders/token", AtRuntime: true}}
+	p.Functions["api"] = api
+	nodes, err := Build(p, target())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := byID(nodes)
+	policy := js(t, got["role/api"].Inputs["policy"])
+	for _, want := range []string{
+		`"arn:aws:secretsmanager:eu-west-1:123456789012:secret:db-??????"`,
+		`"arn:aws:ssm:eu-west-1:123456789012:parameter/orders/token"`,
+		`"secretsmanager:GetSecretValue"`, `"ssm:GetParameter"`,
+	} {
+		if !strings.Contains(policy, want) {
+			t.Errorf("the policy lacks %s: %s", want, policy)
+		}
+	}
+	if strings.Contains(policy, "/orders/api-key") {
+		t.Errorf("a secret read while deploying is granted to the function: %s", policy)
+	}
+	env := got["function/api"].Inputs["environment"].(map[string]any)
+	if env["DB_PASSWORD_KEY"] != "password" || env["TOKEN_KEY"] != nil {
+		t.Errorf("env = %v, want DB_PASSWORD_KEY alone", env)
+	}
+}
+
 // TestBuildRefuses checks a link to a type link does not know, and a function that was not built.
 func TestBuildRefuses(t *testing.T) {
 	p := project(t)

@@ -149,7 +149,13 @@ func (b *builder) function(name string, fn config.Function) ([]engine.Node, erro
 	}
 
 	for _, key := range slices.Sorted(maps.Keys(fn.Environment)) {
-		env[key] = b.value(fn.Environment[key])
+		v := fn.Environment[key]
+		env[key] = b.value(v)
+		if s := v.Secret; s != nil && s.AtRuntime && s.Key != "" {
+			if _, set := fn.Environment[key+"_KEY"]; !set {
+				env[key+"_KEY"] = s.Key
+			}
+		}
 	}
 	if fn.IsNode() && fn.Bundle.Sourcemap {
 		env["NODE_OPTIONS"] = "--enable-source-maps"

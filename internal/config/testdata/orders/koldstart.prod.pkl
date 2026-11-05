@@ -1,0 +1,9 @@
+amends "koldstart.pkl"
+
+region = "us-east-1"
+
+functions {
+  ["api"] {
+    memory = 2048
+  }
+}

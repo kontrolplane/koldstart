@@ -87,6 +87,10 @@ func fieldChanges(c engine.Change) []string {
 	for _, f := range c.Fields {
 		before, isMapB := c.Before[f].(map[string]any)
 		after, isMapA := c.After[f].(map[string]any)
+		if f == "(a secret)" {
+			out = append(out, "a secret or another stage's output changed")
+			continue
+		}
 		if f != "properties" || !isMapB || !isMapA {
 			out = append(out, f+": "+describeChange(c.Before[f], c.After[f]))
 			continue

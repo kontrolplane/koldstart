@@ -110,6 +110,34 @@ func trust(service string, conditions map[string]any) map[string]any {
 	return policy(s)
 }
 
+// runtimeSecrets are what a function's role needs to read the secrets it reads itself, those
+// with readAtRuntime. Parameters encrypted with a key of your own also need kms:Decrypt on it,
+// through permissions.
+func (b *builder) runtimeSecrets(fn config.Function) []any {
+	var out []any
+	for _, key := range slices.Sorted(maps.Keys(fn.Environment)) {
+		s := fn.Environment[key].Secret
+		if s == nil || !s.AtRuntime {
+			continue
+		}
+		switch s.Source {
+		case config.SourceSSM:
+			arn := s.Name
+			if !strings.HasPrefix(arn, "arn:") {
+				arn = b.arnPrefix("ssm") + "parameter/" + strings.TrimPrefix(s.Name, "/")
+			}
+			out = append(out, statement("Allow", []string{"ssm:GetParameter", "ssm:GetParameters"}, []any{arn}))
+		case config.SourceSecretsManager:
+			arn := s.Name
+			if !strings.HasPrefix(arn, "arn:") {
+				arn = b.arnPrefix("secretsmanager") + "secret:" + s.Name + "-??????"
+			}
+			out = append(out, statement("Allow", []string{"secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"}, []any{arn}))
+		}
+	}
+	return out
+}
+
 // permissions returns the role's inline policy, its managed policies, and the environment
 // variables link adds. An ssm parameter's arn is not an attribute, so it is built from its name.
 func (b *builder) permissions(name string, fn config.Function) (map[string]any, []string, map[string]any, error) {
@@ -123,6 +151,7 @@ func (b *builder) permissions(name string, fn config.Function) (map[string]any, 
 	}
 
 	statements = append(statements, b.sourceStatements(fn)...)
+	statements = append(statements, b.runtimeSecrets(fn)...)
 
 	env := map[string]any{}
 	for _, target := range slices.Sorted(maps.Keys(fn.Link)) {
