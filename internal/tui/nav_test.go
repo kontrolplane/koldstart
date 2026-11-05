@@ -69,12 +69,12 @@ func navTop(m model) string {
 }
 
 // TestNavBack checks q and esc go back from every page and dialog to the page it was opened from,
-// with its cursor, tab, filter and scroll as they were left.
+// with its cursor, tab, filter and scroll as they were left. Each case presses reach from the
+// project's stage to get to the page left, prep there to move on it, and into to open the page
+// gone back from.
 func TestNavBack(t *testing.T) {
 	tests := []struct {
-		name string
-		// reach is pressed from the project's stage to get to the page left, prep there to move on
-		// it, and into to open the page gone back from.
+		name              string
 		reach, prep, into []string
 		inside            page
 		escOnly           bool
