@@ -1,0 +1,8 @@
+provider.stage: koldstart deploys to dev by default: pass --stage prod, or set KOLDSTART_STAGE
+functions.api: nodejs20.x is deprecated on lambda: it runs on nodejs22.x now
+functions.api.permissions: the statements of provider.iam are on every function: narrow them
+functions.worker: nodejs20.x is deprecated on lambda: it runs on nodejs22.x now
+functions.worker.permissions: the statements of provider.iam are on every function: narrow them
+custom: custom is not converted; what refers to it with ${self:custom...} got its value: tableName
+plugins.serverless-esbuild: koldstart bundles typescript with esbuild itself: it can go
+plugins.serverless-offline: kdst offline serves the http routes on this machine

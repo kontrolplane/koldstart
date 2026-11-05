@@ -1,0 +1,66 @@
+// Converted from serverless.yml by kdst migrate. Look for TODO: what it could not convert.
+amends "package://github.com/kontrolplane/koldstart/releases/download/v0.1.0/koldstart@0.1.0#/Project.pkl"
+
+import "package://github.com/kontrolplane/koldstart/releases/download/v0.1.0/koldstart@0.1.0#/kdst.pkl"
+
+app = "legacy"
+region = "eu-central-1"
+
+functions {
+  // TODO: scraper runs on python3.12, which koldstart does not build yet.
+  // TODO: image is a container image function, which koldstart does not deploy yet.
+  ["worker"] {
+    runtime = "provided.al2023"
+    // TODO: the package to build, such as ./cmd/worker; serverless.yml had "bootstrap".
+    handler = "./cmd/worker"
+    environment {
+      ["REGION"] = module.region
+      ["BUCKET"] = "\(module.app)-\(kdst.stage)-files"
+      // TODO: ${file(./config.json):key} has no equivalent: an import, a read() or a value of your own
+      // was: ${file(./config.json):key}
+      ["SHARED"] = kdst.stageOutput("shared", "prod", "QueueUrl")
+      ["LOG_LEVEL"] = read?("env:LOG_LEVEL") ?? "info"
+    }
+    // TODO: layers has no equivalent in koldstart yet. was: ['arn:aws:lambda:eu-central-1:123456789012:layer:tools:1']
+  }
+  ["old-api"] {
+    runtime = "nodejs22.x"
+    handler = "src/api.handler"
+    reservedConcurrency = 5
+    environment {
+      ["REGION"] = module.region
+      ["BUCKET"] = "\(module.app)-\(kdst.stage)-files"
+      // TODO: ${file(./config.json):key} has no equivalent: an import, a read() or a value of your own
+      // was: ${file(./config.json):key}
+      ["SHARED"] = kdst.stageOutput("shared", "prod", "QueueUrl")
+      ["LOG_LEVEL"] = read?("env:LOG_LEVEL") ?? "info"
+      // TODO: Fn::Sub has no equivalent: write it as a pkl expression
+      // was: !Sub arn:aws:sns:${AWS::Region}:${AWS::AccountId}:alerts
+    }
+  }
+}
+
+resources {
+  ["Files"] {
+    type = "AWS::S3::Bucket"
+    deletionPolicy = "retain"
+    properties {
+      BucketName = "\(module.app)-\(kdst.stage)-files"
+      Tags {
+        new {
+          Key = "aws:cloudformation:custom"
+          Value = "yes"
+        }
+      }
+    }
+    // TODO: DependsOn has no equivalent. was: Seeder
+  }
+  // TODO: Custom::Seed is not an aws type cloud control creates
+  // was: {Type: 'Custom::Seed', Properties: {ServiceToken: !GetAtt SeedLambdaFunction.Arn}}
+}
+
+outputs {
+  ["FilesArn"] = kdst.ref("Files", "Arn")
+  // TODO: Fn::Join has no equivalent: write it as a pkl expression
+  // was: !Join ["-", [a, b]]
+}
