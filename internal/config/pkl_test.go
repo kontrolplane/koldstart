@@ -100,7 +100,7 @@ func TestSchemaRefuses(t *testing.T) {
 		want string
 	}{
 		{name: "memory out of range", body: `functions { ["api"] { runtime = "nodejs22.x"; handler = "src/api.handler"; memory = 64 } }`, want: "isBetween(128, 10240)"},
-		{name: "unknown runtime", body: `functions { ["api"] { runtime = "python3.13"; handler = "x.y" } }`, want: "python3.13"},
+		{name: "unknown runtime", body: `functions { ["api"] { runtime = "ruby3.3"; handler = "x.y" } }`, want: "ruby3.3"},
 		{name: "misspelled property", body: `functions { ["api"] { runtime = "nodejs22.x"; handlr = "x.y" } }`, want: "handlr"},
 		{name: "url without auth", body: `functions { ["api"] { runtime = "nodejs22.x"; handler = "x.y"; url = new {} } }`, want: "auth"},
 		{name: "stage set", body: `stage = "prod"`, want: "fixed"},

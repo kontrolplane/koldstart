@@ -25,6 +25,8 @@ const (
 	RuntimeNode22 = "nodejs22.x"
 	RuntimeNode24 = "nodejs24.x"
 	RuntimeGo     = "provided.al2023"
+	RuntimePy312  = "python3.12"
+	RuntimePy313  = "python3.13"
 )
 
 // The architectures a function can have.
@@ -54,6 +56,28 @@ type Function struct {
 	VPC          *VPC              `json:"vpc"`
 	Bundle       Bundle            `json:"bundle"`
 	Typecheck    bool              `json:"typecheck"`
+	Image        *Image            `json:"image"`
+	Layers       []Value           `json:"layers"`
+}
+
+// Image is a container image a function runs instead of a runtime.
+type Image struct {
+	Dockerfile       string            `json:"dockerfile"`
+	Context          string            `json:"context"`
+	BuildArgs        map[string]string `json:"buildArgs"`
+	Command          []string          `json:"command"`
+	EntryPoint       []string          `json:"entryPoint"`
+	WorkingDirectory string            `json:"workingDirectory"`
+}
+
+// IsPython reports whether the function runs on a python runtime.
+func (f Function) IsPython() bool {
+	return f.Runtime == RuntimePy312 || f.Runtime == RuntimePy313
+}
+
+// IsImage reports whether the function is a container image.
+func (f Function) IsImage() bool {
+	return f.Image != nil
 }
 
 // IsNode reports whether the function runs on a node runtime.
@@ -101,6 +125,7 @@ type VPC struct {
 type Bundle struct {
 	External  []string `json:"externals"`
 	Sourcemap bool     `json:"sourcemap"`
+	Include   []string `json:"include"`
 }
 
 // HTTP is the stage's http api.

@@ -171,6 +171,22 @@ func (v *validator) function(name string, fn Function) {
 	for i, e := range fn.Events {
 		v.event(name, fmt.Sprintf("%s.events[%d]", where, i), e)
 	}
+	for i, l := range fn.Layers {
+		v.value(fmt.Sprintf("%s.layers[%d]", where, i), l)
+	}
+	switch {
+	case fn.IsImage() && (fn.Runtime != "" || fn.Handler != ""):
+		v.errorf("%s: a function with an image has no runtime or handler: the image says what it runs", where)
+	case fn.IsImage() && len(fn.Layers) > 0:
+		v.errorf("%s: a function with an image has no layers: put what they hold in the image", where)
+	case !fn.IsImage() && (fn.Runtime == "" || fn.Handler == ""):
+		v.errorf("%s: a function needs a runtime and a handler, or an image", where)
+	case fn.IsGo() && len(fn.Layers) > 0:
+		v.errorf("%s: a go function has no layers: build what they hold into the binary", where)
+	}
+	if len(fn.Bundle.Include) > 0 && !fn.IsPython() {
+		v.errorf("%s.bundle.include: only python functions take it", where)
+	}
 }
 
 func (v *validator) event(fn, where string, e Event) {

@@ -86,12 +86,20 @@ class StageOutput {
 }
 
 class Function {
-  /// `nodejs22.x` or `nodejs24.x` for javascript and typescript, `provided.al2023` for go.
-  runtime: "nodejs22.x"|"nodejs24.x"|"provided.al2023"
+  /// `nodejs22.x` or `nodejs24.x` for javascript and typescript, `provided.al2023` for go,
+  /// `python3.12` or `python3.13` for python. A function with an `image` has none.
+  runtime: ("nodejs22.x"|"nodejs24.x"|"provided.al2023"|"python3.12"|"python3.13")?
 
-  /// For node, the file and its export, `src/api.handler`. For go, the package to build,
-  /// `./cmd/worker`.
-  handler: String(!isEmpty)
+  /// For node and python, the file and its function, `src/api.handler`. For go, the package to
+  /// build, `./cmd/worker`. A function with an `image` has none.
+  handler: String(!isEmpty)?
+
+  /// A container image to build and run instead of a runtime: its dockerfile and the directory
+  /// it is built in.
+  image: Image?
+
+  /// Lambda layers, by their version's arn, for the runtimes that take them.
+  layers: Listing<Value>(length <= 5)
 
   /// Memory in megabytes.
   memory: Int(isBetween(128, 10240)) = 1024
@@ -166,6 +174,24 @@ class Bundle {
   externals: Listing<String>
   /// Ship a source map, and turn on `--enable-source-maps`.
   sourcemap: Boolean = false
+  /// For python: the files and directories to put in the zip, next to the dependencies. The
+  /// directory of the handler's module by default, or the module alone when it is at the root.
+  include: Listing<String>
+}
+
+/// A container image, built with docker for the function's architecture and pushed to an ecr
+/// repository koldstart makes for the app.
+class Image {
+  /// The dockerfile, relative to the project.
+  dockerfile: String = "Dockerfile"
+  /// The directory the image is built in, relative to the project.
+  context: String = "."
+  /// Build arguments, as `--build-arg`.
+  buildArgs: Mapping<String, String>
+  /// What the image runs, in place of its CMD, ENTRYPOINT and WORKDIR.
+  command: Listing<String>
+  entryPoint: Listing<String>
+  workingDirectory: String?
 }
 
 class Http {
