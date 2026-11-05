@@ -11,6 +11,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/kontrolplane/koldstart/internal/tui/keys"
 	"github.com/kontrolplane/koldstart/internal/tui/styles"
 )
 
@@ -67,13 +68,7 @@ func (m model) refresh() (model, tea.Cmd) {
 		}
 		return m, cmd
 	case functionPage:
-		m, cmd := m.loadStage()
-		if m.state.function.tab == logsTab {
-			var logs tea.Cmd
-			m, logs = m.refreshLogs()
-			cmd = tea.Batch(cmd, logs)
-		}
-		return m, cmd
+		return m.refreshFunction()
 	}
 	return m, nil
 }
@@ -120,6 +115,16 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		return m.applyVersion(msg)
 	case logsLoadedMsg:
 		return m.applyLogs(msg)
+	case tailMsg:
+		return m.applyTail(msg)
+	case functionLiveMsg:
+		return m.applyFunctionLive(msg)
+	case metricsLoadedMsg:
+		return m.applyMetrics(msg)
+	case queuesLoadedMsg:
+		return m.applyQueues(msg)
+	case liveLoadedMsg:
+		return m.applyLive(msg)
 	case invokedMsg:
 		return m.applyInvoked(msg)
 	case planLoadedMsg:
@@ -199,6 +204,10 @@ func (m model) keyPress(msg tea.KeyPressMsg) (model, tea.Cmd) {
 		return m.removeUpdate(msg)
 	case runLocalPage:
 		return m.runLocalUpdate(msg)
+	case diffPage:
+		return m.diffUpdate(msg)
+	case invocationPage:
+		return m.invocationUpdate(msg)
 	}
 	return m, nil
 }
@@ -287,6 +296,10 @@ func (m model) view(p page) string {
 		return m.removeView()
 	case runLocalPage:
 		return m.runLocalView()
+	case diffPage:
+		return m.diffView()
+	case invocationPage:
+		return m.invocationView()
 	}
 	return ""
 }
@@ -348,6 +361,10 @@ func (m model) breadcrumb() []styles.Span {
 		trail = []string{crumbStages, m.state.plan.ref.String(), m.planWhat()}
 	case unlockPage:
 		trail = []string{crumbStages, m.state.unlock.ref.String(), m.keys.Unlock.Help().Desc}
+	case diffPage:
+		trail = []string{crumbStages, ref, "diff", m.state.diff.title}
+	case invocationPage:
+		trail = []string{crumbStages, ref, m.state.function.name, functionTabs[invocationsTab], shortSHA(m.state.invocation.req.id)}
 	}
 	var spans []styles.Span
 	for i, t := range trail {
@@ -374,17 +391,28 @@ func (m model) frameMeta() (string, string) {
 	case stagePage:
 		s := &m.state.stage
 		filter, t = s.filter.text, &s.tables[s.tab]
+	case functionPage:
+		f := &m.state.function
+		switch f.tab {
+		case logsTab:
+			filter = f.logs.filter.text
+		case invocationsTab:
+			t = &f.invocations
+		}
 	}
 	var meta string
 	if filter != "" {
 		meta = styles.Render(styles.S("filter ", styles.ToneFaint), styles.S(filter, styles.ToneText))
 	}
 	var foot []string
-	if m.page == functionPage && m.state.function.tab == logsTab {
-		if m.state.function.follow {
-			foot = append(foot, styles.Render(styles.S("● ", styles.ToneAccent), styles.S("following", styles.ToneMuted)))
-		} else {
+	if f := m.state.function; m.page == functionPage && f.tab == logsTab {
+		switch {
+		case !f.logs.follow:
 			foot = append(foot, styles.Faint("follow off"))
+		case f.logs.tailing:
+			foot = append(foot, styles.Render(styles.S("● ", styles.ToneSuccess), styles.S("live tail", styles.ToneMuted)))
+		default:
+			foot = append(foot, styles.Render(styles.S("● ", styles.ToneAccent), styles.S("following, read every "+refreshEvery.String(), styles.ToneMuted)))
 		}
 	}
 	if t != nil && t.position() != "" {
@@ -419,6 +447,8 @@ func (m model) footer() string {
 		left = m.state.overview.filter.view(width, m.keys)
 	case m.page == stagePage && m.state.stage.filter.active:
 		left = m.state.stage.filter.view(width, m.keys)
+	case m.page == functionPage && m.state.function.tab == logsTab && m.state.function.logs.filter.active:
+		left = m.state.function.logs.filter.view(width, m.keys)
 	default:
 		left = fitHints(width, m.shortHelp()...)
 	}
@@ -453,11 +483,17 @@ func hint(b key.Binding, desc ...string) [2]string {
 }
 
 // scrollHint stands for the keys that scroll a page.
-var scrollHint = [2]string{"↑/↓", "scroll"}
+var (
+	scrollHint = [2]string{upDown, "scroll"}
+	chooseHint = [2]string{upDown, "choose"}
+)
+
+// upDown names the arrow keys that move up and down.
+const upDown = "↑/↓"
 
 func (m model) confirmHints() [][2]string {
 	k := m.keys
-	return [][2]string{{"y/n", "yes/no"}, {"←/→", "choose"}, hint(k.View, "confirm"), hint(k.Back, "cancel")}
+	return [][2]string{{"y/n", "yes/no"}, {"←/→", chooseHint[1]}, hint(k.View, "confirm"), hint(k.Back, "cancel")}
 }
 
 // shortHelp is the hints the footer shows for the page.
@@ -473,22 +509,31 @@ func (m model) shortHelp() [][2]string {
 		return [][2]string{hint(k.View), hint(k.NextTab), hint(k.Deploy), hint(k.Remove), hint(k.Unlock), hint(k.Filter), hint(k.Copy), hint(k.Help), hint(k.Quit)}
 	case functionPage:
 		var h [][2]string
-		if m.state.function.tab == logsTab {
-			h = append(h, hint(k.Follow))
+		switch m.state.function.tab {
+		case logsTab:
+			h = append(h, hint(k.Follow), hint(k.Filter), [2]string{"↑ at top", "older"})
+		case invocationsTab:
+			h = append(h, hint(k.View, "open"))
+		case invokeTab:
+			h = append(h, hint(k.EditEvent))
 		}
-		h = append(h, hint(k.NextTab), hint(k.Invoke), hint(k.RunLocal), hint(k.EditEvent), hint(k.Deploy, "plan its code"))
+		h = append(h, hint(k.NextTab), hint(k.Invoke), hint(k.RunLocal), hint(k.Deploy, "plan its code"))
 		return append(h, hint(k.Copy), hint(k.Help), hint(k.Quit))
-	case resourcePage, versionPage:
-		return [][2]string{scrollHint, hint(k.Copy), hint(k.Help), hint(k.Quit)}
+	case resourcePage:
+		return [][2]string{hint(k.NextTab, "applied / in aws"), scrollHint, hint(k.Refresh), hint(k.Copy), hint(k.Help), hint(k.Quit)}
+	case versionPage:
+		return [][2]string{hint(k.View, "diff"), chooseHint, hint(k.Copy), hint(k.Help), hint(k.Quit)}
+	case diffPage, invocationPage:
+		return [][2]string{scrollHint, hint(k.Help), hint(k.Quit)}
 	case planPage:
 		p := m.state.plan
 		switch {
 		case p.applying:
 			return [][2]string{scrollHint, hint(k.ForceQuit, "stop and quit")}
 		case p.done || p.plan == nil:
-			return [][2]string{scrollHint, hint(k.Help), hint(k.Quit)}
+			return [][2]string{hint(k.View, "diff"), chooseHint, hint(k.Help), hint(k.Quit)}
 		}
-		return [][2]string{hint(k.Apply, m.planWhat()), scrollHint, hint(k.Help), hint(k.Quit)}
+		return [][2]string{hint(k.Apply, m.planWhat()), hint(k.View, "diff"), chooseHint, hint(k.Help), hint(k.Quit)}
 	case removePage:
 		return [][2]string{hint(k.View, "remove"), hint(k.Back, "cancel")}
 	case unlockPage, runLocalPage:
@@ -502,9 +547,9 @@ var helpSections = []struct {
 	title string
 	rows  [][2]string
 }{
-	{"move", [][2]string{{"↑/k ↓/j", "up / down"}, {"g / G", "first / last"}, {"pgup/pgdn", "page"}, {"enter", "open"}, {"tab/⇧tab", "next / previous tab"}, {"/", "filter"}, {"q", "back, quit on stages"}, {"esc", "back, clear, cancel"}, {"ctrl+c", "quit"}}},
-	{"stage", [][2]string{{"d", "plan a deploy"}, {"ctrl+s", "apply the plan"}, {"ctrl+d", "remove the stage"}, {"ctrl+x", "release a lock"}, {"c", "copy"}, {"r / p", "refresh / pause"}}},
-	{"function", [][2]string{{"i", "invoke in aws"}, {"shift+i", "run on this machine"}, {"e", "edit the event"}, {"d", "plan its code"}, {"f", "follow the logs"}}},
+	{"move", [][2]string{{"↑/k ↓/j", "up / down"}, {"g / G", "first / last"}, {"pgup/pgdn", "page"}, {keys.Keys.View.Help().Key, "open"}, {"tab/⇧tab", "next / previous tab"}, {"/", "filter"}, {"q", "back, quit on stages"}, {"esc", "back, clear, cancel"}, {"ctrl+c", "quit"}}},
+	{"stage", [][2]string{{"d", "plan a deploy"}, {"ctrl+s", "apply the plan"}, {keys.Keys.View.Help().Key, "a change's diff"}, {"ctrl+d", "remove the stage"}, {"ctrl+x", "release a lock"}, {"c", "copy"}, {"r / p", "refresh / pause"}}},
+	{"function", [][2]string{{"i", "invoke in aws"}, {"shift+i", "run on this machine"}, {"e", "edit the event"}, {"d", "plan its code"}, {"f", "follow the logs"}, {"/", "filter the logs"}, {"↑ at top", "older logs"}, {keys.Keys.View.Help().Key, "an invocation"}}},
 }
 
 // helpView draws the key reference in a card, as roomy as the content area allows.

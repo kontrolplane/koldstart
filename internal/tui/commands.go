@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"time"
 
@@ -40,9 +41,52 @@ type versionLoadedMsg struct {
 type logsLoadedMsg struct {
 	gen    int
 	events []cli.LogEvent
-	// appended says the events follow the ones on screen, rather than replace them.
-	appended bool
-	err      error
+	// how says where the lines go: after the ones on screen, before them, or in their place.
+	how  logsHow
+	from time.Time
+	err  error
+}
+
+// logsHow is where a read of the logs goes.
+type logsHow int
+
+const (
+	logsReplace logsHow = iota
+	logsAppend
+	logsPrepend
+)
+
+// tailMsg is lines a live tail of the logs sent, or its end with why. More follow on the channel
+// until it ends.
+type tailMsg struct {
+	gen   int
+	lines []cli.LogEvent
+	ended bool
+	err   error
+	ch    <-chan tea.Msg
+}
+
+type functionLiveMsg struct {
+	gen  int
+	live cli.FunctionState
+	err  error
+}
+
+type metricsLoadedMsg struct {
+	gen     int
+	metrics map[string]cli.Metrics
+	err     error
+}
+
+type queuesLoadedMsg struct {
+	gen    int
+	depths map[string]cli.QueueDepth
+}
+
+type liveLoadedMsg struct {
+	gen   int
+	props map[string]any
+	err   error
 }
 
 type invokedMsg struct {
@@ -147,18 +191,125 @@ func (m model) loadVersion(id, previous string) (model, tea.Cmd) {
 	}
 }
 
-// loadLogs reads the function's logs since a time, appended to the ones on screen or in their
-// place.
-func (m model) loadLogs(since time.Time, appended bool) (model, tea.Cmd) {
+// loadLogs reads the function's logs from since until until, a zero until meaning now, for how
+// they go with the ones on screen.
+func (m model) loadLogs(since, until time.Time, how logsHow) (model, tea.Cmd) {
 	gen := m.next()
 	f := &m.state.function
-	f.logsGen = gen
+	if how == logsPrepend {
+		f.logs.olderGen, f.logs.loadingOlder = gen, true
+	} else {
+		f.logs.gen = gen
+	}
 	ref, group := m.state.stage.ref, f.logGroup
 	ctx, cancel := m.withTimeout(loadTimeout)
 	return m, func() tea.Msg {
 		defer cancel()
-		events, err := m.b.Logs(ctx, ref, group, since)
-		return logsLoadedMsg{gen: gen, events: events, appended: appended, err: err}
+		events, err := m.b.LogsBetween(ctx, ref, group, since, until, "")
+		return logsLoadedMsg{gen: gen, events: events, how: how, from: since, err: err}
+	}
+}
+
+// startTail follows the function's logs with a live tail, until the function is left or
+// following stops, its lines sent on a channel the returned command reads from.
+func (m model) startTail() (model, tea.Cmd) {
+	f := &m.state.function
+	if f.logGroupARN == "" || f.logs.tailing || f.logs.noTail {
+		return m, nil
+	}
+	gen := m.next()
+	ctx, cancel := context.WithCancel(m.ctx)
+	ch := make(chan tea.Msg, 64)
+	f.logs.tailGen, f.logs.tailing, f.logs.stopTail = gen, true, cancel
+	ref, arn := m.state.stage.ref, f.logGroupARN
+	go func() {
+		defer close(ch)
+		err := m.b.Tail(ctx, ref, arn, func(lines []cli.LogEvent) {
+			select {
+			case ch <- tailMsg{gen: gen, lines: lines, ch: ch}:
+			case <-ctx.Done():
+			}
+		})
+		ch <- tailMsg{gen: gen, ended: true, err: err, ch: ch}
+	}()
+	return m, waitFor(ch)
+}
+
+// stopTail ends the live tail of the logs, if one runs.
+func (m model) stopTail() model {
+	l := &m.state.function.logs
+	if l.stopTail != nil {
+		l.stopTail()
+	}
+	l.tailing, l.stopTail = false, nil
+	return m
+}
+
+func (m model) loadFunctionLive() (model, tea.Cmd) {
+	gen := m.next()
+	f := &m.state.function
+	f.liveGen = gen
+	ref, name := m.state.stage.ref, f.lambdaName
+	ctx, cancel := m.withTimeout(loadTimeout)
+	return m, func() tea.Msg {
+		defer cancel()
+		live, err := m.b.Function(ctx, ref, name)
+		return functionLiveMsg{gen: gen, live: live, err: err}
+	}
+}
+
+// loadMetrics reads the metrics of the stage's functions, by their names in lambda.
+func (m model) loadMetrics() (model, tea.Cmd) {
+	s := &m.state.stage
+	names := s.lambdaNames()
+	if len(names) == 0 {
+		return m, nil
+	}
+	gen := m.next()
+	s.metricsGen = gen
+	ref := s.ref
+	ctx, cancel := m.withTimeout(loadTimeout)
+	return m, func() tea.Msg {
+		defer cancel()
+		metrics, err := m.b.Metrics(ctx, ref, names)
+		return metricsLoadedMsg{gen: gen, metrics: metrics, err: err}
+	}
+}
+
+// loadQueues reads how many messages each queue of the stage holds, by its id in the state.
+func (m model) loadQueues() (model, tea.Cmd) {
+	s := &m.state.stage
+	queues := s.queueURLs()
+	if len(queues) == 0 {
+		return m, nil
+	}
+	gen := m.next()
+	s.queuesGen = gen
+	ref := s.ref
+	ctx, cancel := m.withTimeout(loadTimeout)
+	return m, func() tea.Msg {
+		defer cancel()
+		depths := map[string]cli.QueueDepth{}
+		for id, url := range queues {
+			if d, err := m.b.Queue(ctx, ref, url); err == nil {
+				depths[id] = d
+			}
+		}
+		return queuesLoadedMsg{gen: gen, depths: depths}
+	}
+}
+
+// loadLive reads the resource on screen as cloud control sees it now.
+func (m model) loadLive() (model, tea.Cmd) {
+	gen := m.next()
+	r := &m.state.resource
+	r.liveGen = gen
+	ref, typ, id := m.state.stage.ref, r.res.res.Type, r.res.res.PhysicalID
+	ctx, cancel := m.withTimeout(loadTimeout)
+	return m, func() tea.Msg {
+		defer cancel()
+		props, err := m.b.Live(ctx, ref, typ, id)
+		return liveLoadedMsg{gen: gen, props: props, err: err}
 	}
 }
 

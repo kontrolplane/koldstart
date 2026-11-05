@@ -20,23 +20,26 @@ import (
 type versionState struct {
 	gen     int
 	version state.ObjectVersion
+	writes  int
 	loaded  bool
 	current *state.State
 	before  *state.State
 	scroll  int
+	cursor  int
 }
 
-// openVersion reads the version at i of the stage's history, newest first, and the one before.
+// openVersion reads the deploy at i of the stage's history, newest first: the last version it
+// wrote, and the last one before it, to tell what it changed.
 func (m model) openVersion(i int) (model, tea.Cmd) {
-	h := m.state.stage.history
-	m.state.version = versionState{version: h[i]}
+	d := deploys(m.state.stage.history)
+	m.state.version = versionState{version: d[i][0], writes: len(d[i])}
 	previous := ""
-	if i+1 < len(h) {
-		previous = h[i+1].ID
+	if i+1 < len(d) {
+		previous = d[i+1][0].ID
 	}
 	m = m.switchPage(versionPage)
-	m.loading, m.loadingMsg = true, "reading the version…"
-	return m.loadVersion(h[i].ID, previous)
+	m.loading, m.loadingMsg = true, "reading the deploy…"
+	return m.loadVersion(d[i][0].ID, previous)
 }
 
 func (m model) applyVersion(msg versionLoadedMsg) (model, tea.Cmd) {
@@ -63,13 +66,39 @@ func (m model) versionUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Copy):
 		return m.copy(v.version.ID)
 	}
-	v.scroll = scrollBy(msg, m.keys, v.scroll, contentHeight)
+	changes := stateChanges(v.before, v.current)
+	if key.Matches(msg, m.keys.View) && v.cursor < len(changes) {
+		c := changes[v.cursor]
+		return m.openDiff(c.id, "changed in this deploy", inputsOf(v.before, c.id), inputsOf(v.current, c.id))
+	}
+	lines, rows := m.versionLines()
+	if cursor, ok := moveCursor(msg, m.keys, v.cursor, len(rows), contentHeight); ok {
+		v.cursor = cursor
+		_, v.scroll = selectable(lines, rows, v.cursor, v.scroll, contentHeight)
+	}
 	return m, nil
+}
+
+// inputsOf are the inputs a resource had in a version of the state, or nil when it had none.
+func inputsOf(st *state.State, id string) any {
+	if st == nil || st.Resources[id] == nil {
+		return nil
+	}
+	var v any
+	_ = json.Unmarshal(st.Resources[id].Inputs, &v)
+	return v
+}
+
+// stateChange is a resource that changed between two versions of a state, and the line that says
+// how.
+type stateChange struct {
+	id   string
+	line cell
 }
 
 // stateChanges lists what changed between two versions of a state, a line for each resource:
 // added, removed, or the inputs that changed.
-func stateChanges(before, after *state.State) []cell {
+func stateChanges(before, after *state.State) []stateChange {
 	if before == nil {
 		before = &state.State{}
 	}
@@ -80,13 +109,16 @@ func stateChanges(before, after *state.State) []cell {
 	for id := range after.Resources {
 		ids[id] = true
 	}
-	var lines []cell
+	if after == nil {
+		return nil
+	}
+	var lines []stateChange
 	line := func(symbol string, tone styles.Tone, id, detail string) {
 		c := cell{styles.S(symbol+" ", tone), styles.S(id, styles.ToneText)}
 		if detail != "" {
 			c = append(c, styles.S("  "+detail, styles.ToneMuted))
 		}
-		lines = append(lines, c)
+		lines = append(lines, stateChange{id: id, line: c})
 	}
 	for _, id := range slices.Sorted(maps.Keys(ids)) {
 		b, a := before.Resources[id], after.Resources[id]
@@ -109,36 +141,43 @@ func stateChanges(before, after *state.State) []cell {
 	return lines
 }
 
-func (m model) versionLines() []string {
+// versionLines are the lines of the version, with the index of the line of each change.
+func (m model) versionLines() ([]string, []int) {
 	v := m.state.version
-	width := contentWidth - 4
+	width := contentWidth - 6
 	if !v.loaded || v.current == nil {
-		return nil
+		return nil, nil
 	}
 	cur := v.current
 	lines := []string{
-		styles.SectionHeader("version "+v.version.ID, width),
+		styles.SectionHeader("deploy of "+formatTime(v.version.LastModified), width),
 		row("saved", text(formatTime(v.version.LastModified)+", "+formatAgo(v.version.LastModified), styles.ToneBody), width),
+		row("version", text(v.version.ID, styles.ToneFaint), width),
 		row("deployed by", text(orDash(cur.DeployedBy), styles.ToneBody), width),
 		row("serial", text(formatInt(int(cur.Serial)), styles.ToneBody), width),
 		row("resources", text(formatInt(len(cur.Resources)), styles.ToneBody), width),
+		row("writes", text(plural(v.writes, "write")+" of the state, the last shown", styles.ToneMuted), width),
 		"",
 	}
-	title := "changed from the version before"
+	title := "changed from the deploy before"
 	if v.before == nil {
-		title = "the first version"
+		title = "the first deploy"
 	}
 	lines = append(lines, styles.SectionHeader(title, width))
 	changes := stateChanges(v.before, cur)
+	var rows []int
 	for _, c := range changes {
-		lines = append(lines, renderCell(c, column{width: width}, nil))
+		rows = append(rows, len(lines))
+		lines = append(lines, renderCell(c.line, column{width: width}, nil))
 	}
 	if len(changes) == 0 {
 		lines = append(lines, styles.Faint("no resource changed: only the outputs or the record of the deploy"))
 	}
-	return lines
+	return lines, rows
 }
 
 func (m model) versionView() string {
-	return indent(scrolled(m.versionLines(), m.state.version.scroll, contentHeight))
+	lines, rows := m.versionLines()
+	view, _ := selectable(lines, rows, m.state.version.cursor, m.state.version.scroll, contentHeight)
+	return view
 }

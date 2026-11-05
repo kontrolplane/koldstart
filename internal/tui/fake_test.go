@@ -30,8 +30,15 @@ type fakeBackend struct {
 	locks   map[cli.StageRef]*state.LockInfo
 	history []state.ObjectVersion
 	logs    []cli.LogEvent
+	older   []cli.LogEvent
+	tail    []cli.LogEvent
 	result  cli.Invocation
-	plan    *engine.Plan
+	live    map[string]any
+	// function is what lambda says of a function, metricsErr the error metrics fail with.
+	function   cli.FunctionState
+	metricsErr error
+	olderReads int
+	plan       *engine.Plan
 	// replan is the plan Deploy and Remove find instead of the one shown, once.
 	replan *engine.Plan
 	err    error
@@ -86,7 +93,8 @@ func testState(ref cli.StageRef) *state.State {
 	})
 	st.Resources["function/api"] = &state.Resource{Type: awsp.TypeFunction, PhysicalID: ref.App + "-" + ref.Stage + "-api", Inputs: in,
 		Attributes: map[string]string{"Arn": "arn:aws:lambda:eu-west-1:123456789012:function:" + ref.App + "-" + ref.Stage + "-api"}}
-	st.Resources["loggroup/api"] = &state.Resource{Type: awsp.TypeLogGroup, PhysicalID: "/aws/lambda/" + ref.App + "-" + ref.Stage + "-api"}
+	st.Resources["loggroup/api"] = &state.Resource{Type: awsp.TypeLogGroup, PhysicalID: "/aws/lambda/" + ref.App + "-" + ref.Stage + "-api",
+		Attributes: map[string]string{"Arn": "arn:aws:logs:eu-west-1:123456789012:log-group:/aws/lambda/" + ref.App + "-" + ref.Stage + "-api:*"}}
 	st.Resources["role/api"] = &state.Resource{Type: awsp.TypeRole, PhysicalID: ref.App + "-" + ref.Stage + "-api"}
 	st.Resources["resource/table"] = &state.Resource{Type: "AWS::DynamoDB::Table", PhysicalID: "orders-" + ref.Stage, DeletionPolicy: "retain",
 		Inputs: json.RawMessage(`{"properties":{"BillingMode":"PAY_PER_REQUEST"}}`), Attributes: map[string]string{"Arn": "arn:aws:dynamodb:table"}}
@@ -136,8 +144,62 @@ func (f *fakeBackend) Version(_ context.Context, ref cli.StageRef, id string) (*
 	return st, f.err
 }
 
-func (f *fakeBackend) Logs(context.Context, cli.StageRef, string, time.Time) ([]cli.LogEvent, error) {
-	return f.logs, f.err
+func (f *fakeBackend) LogsBetween(_ context.Context, _ cli.StageRef, _ string, since, until time.Time, _ string) ([]cli.LogEvent, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !until.IsZero() {
+		f.olderReads++
+		return f.older, f.err
+	}
+	var out []cli.LogEvent
+	for _, e := range f.logs {
+		if !e.Time.Before(since) {
+			out = append(out, e)
+		}
+	}
+	return out, f.err
+}
+
+func (f *fakeBackend) Tail(ctx context.Context, _ cli.StageRef, _ string, fn func([]cli.LogEvent)) error {
+	if f.tail == nil {
+		return cli.ErrNoLiveTail
+	}
+	fn(f.tail)
+	<-ctx.Done()
+	return nil
+}
+
+func (f *fakeBackend) Live(_ context.Context, _ cli.StageRef, typ, _ string) (map[string]any, error) {
+	if f.live == nil {
+		return nil, cli.ErrNotLive
+	}
+	return f.live, nil
+}
+
+func (f *fakeBackend) Function(context.Context, cli.StageRef, string) (cli.FunctionState, error) {
+	return f.function, f.err
+}
+
+func (f *fakeBackend) Queue(context.Context, cli.StageRef, string) (cli.QueueDepth, error) {
+	return cli.QueueDepth{Visible: 12, InFlight: 3}, nil
+}
+
+func (f *fakeBackend) Metrics(_ context.Context, _ cli.StageRef, names []string) (map[string]cli.Metrics, error) {
+	if f.metricsErr != nil {
+		return nil, f.metricsErr
+	}
+	out := map[string]cli.Metrics{}
+	for _, name := range names {
+		series := func(v float64) []float64 {
+			s := make([]float64, 60)
+			for i := range s {
+				s[i] = v * float64(i%7)
+			}
+			return s
+		}
+		out[name] = cli.Metrics{Invocations: series(10), Errors: series(0.5), Throttles: series(0), Duration: series(12), DurationP99: series(40), Concurrency: series(1)}
+	}
+	return out, nil
 }
 
 func (f *fakeBackend) Invoke(_ context.Context, _ cli.StageRef, function string, payload []byte) (cli.Invocation, error) {

@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	lambdatypes "github.com/aws/aws-sdk-go-v2/service/lambda/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -78,12 +77,6 @@ type Identity struct {
 	Caller  string
 	Region  string
 	Bucket  string
-}
-
-// LogEvent is one line of a function's logs.
-type LogEvent struct {
-	Time    time.Time
-	Message string
 }
 
 // Invocation is what a function returned.
@@ -295,26 +288,6 @@ func (c *Console) Version(ctx context.Context, ref StageRef, id string) (*state.
 		return nil, fmt.Errorf("no state bucket in %s", ref.Region)
 	}
 	return rb.backend.ReadVersion(ctx, ref.App, ref.Stage, id)
-}
-
-// Logs reads a log group's events since a time, the newest maxLogEvents of them.
-func (c *Console) Logs(ctx context.Context, ref StageRef, group string, since time.Time) ([]LogEvent, error) {
-	var out []LogEvent
-	in := &cloudwatchlogs.FilterLogEventsInput{LogGroupName: &group, StartTime: aws.Int64(since.UnixMilli())}
-	p := cloudwatchlogs.NewFilterLogEventsPaginator(c.sess.in(ref.Region).Logs, in)
-	for p.HasMorePages() {
-		page, err := p.NextPage(ctx)
-		if err != nil {
-			return out, fmt.Errorf("reading the logs of %s: %w", group, err)
-		}
-		for _, e := range page.Events {
-			out = append(out, LogEvent{Time: time.UnixMilli(aws.ToInt64(e.Timestamp)), Message: strings.TrimRight(aws.ToString(e.Message), "\n")})
-		}
-		if len(out) > maxLogEvents {
-			out = slices.Delete(out, 0, len(out)-maxLogEvents)
-		}
-	}
-	return out, nil
 }
 
 // Invoke invokes a deployed function, by its name in lambda, and returns what it returned with

@@ -25,6 +25,7 @@ type planState struct {
 	done     bool
 	progress map[string]nodeProgress
 	scroll   int
+	cursor   int
 }
 
 // nodeProgress is how far applying a node got.
@@ -148,9 +149,34 @@ func (m model) planUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 			return m.startApply()
 		}
 		return m, nil
+	case key.Matches(msg, m.keys.View):
+		if changes := m.planChanges(); p.cursor < len(changes) {
+			c := changes[p.cursor]
+			return m.openDiff(c.ID, cli.Verb(c.Action)+" "+shortType(c.Type), c.Before, c.After)
+		}
+		return m, nil
 	}
-	p.scroll = scrollBy(msg, m.keys, p.scroll, contentHeight)
+	lines, rows := m.planLines()
+	if cursor, ok := moveCursor(msg, m.keys, p.cursor, len(rows), contentHeight); ok {
+		p.cursor = cursor
+		_, p.scroll = selectable(lines, rows, p.cursor, p.scroll, contentHeight)
+	}
 	return m, nil
+}
+
+// planChanges are the changes of the plan that do something, as the page lists them.
+func (m model) planChanges() []engine.Change {
+	p := m.state.plan
+	if p.plan == nil {
+		return nil
+	}
+	var out []engine.Change
+	for _, c := range p.plan.Changes {
+		if c.Action != engine.NoOp {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // The two kinds of plan.
@@ -204,11 +230,12 @@ var actionTones = map[engine.Action]styles.Tone{
 	engine.Adopt:   styles.ToneInfo,
 }
 
-func (m model) planLines() []string {
+// planLines are the lines of the plan, with the index of the line of each change.
+func (m model) planLines() ([]string, []int) {
 	p := m.state.plan
-	width := contentWidth - 4
+	width := contentWidth - 6
 	if p.plan == nil {
-		return nil
+		return nil, nil
 	}
 	title := "deploy of " + p.ref.String()
 	switch {
@@ -226,10 +253,9 @@ func (m model) planLines() []string {
 		" " + styles.Render(styles.S(summary, styles.ToneBody)),
 		"",
 	}
-	for _, c := range p.plan.Changes {
-		if c.Action == engine.NoOp {
-			continue
-		}
+	var rows []int
+	for _, c := range m.planChanges() {
+		rows = append(rows, len(lines))
 		head := cell{
 			styles.S(fmt.Sprintf(" %-4s", cli.Symbol(c.Action)), actionTones[c.Action]),
 			styles.S(c.ID, styles.ToneText),
@@ -245,7 +271,7 @@ func (m model) planLines() []string {
 			}
 		}
 	}
-	return lines
+	return lines, rows
 }
 
 // progressCell says how far a node got while applying.
@@ -268,5 +294,7 @@ func (m model) progressCell(c engine.Change) cell {
 }
 
 func (m model) planView() string {
-	return indent(scrolled(m.planLines(), m.state.plan.scroll, contentHeight))
+	lines, rows := m.planLines()
+	view, _ := selectable(lines, rows, m.state.plan.cursor, m.state.plan.scroll, contentHeight)
+	return view
 }
