@@ -246,6 +246,26 @@ func (e *Engine) planNode(ctx context.Context, n Node, st *state.State, unknownN
 	return c, nil
 }
 
+// Resolve returns v with its refs resolved against st, and its secrets and outputs of other
+// stages read, as a function gets them when it is deployed. A ref to something st does not hold
+// is an error that names it.
+func (e *Engine) Resolve(ctx context.Context, v any, st *state.State) (any, error) {
+	n, err := normalise(v)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range refs(n) {
+		if st.Resources[r.Node] == nil {
+			return nil, fmt.Errorf("it refers to %s, which stage %s has not deployed", r.Node, st.Stage)
+		}
+	}
+	resolved, err := resolveRefs(n, st, nil)
+	if err != nil {
+		return nil, err
+	}
+	return e.resolveSecrets(ctx, resolved)
+}
+
 // resolveRefs replaces the refs in v with the attributes the state holds, or with unknown for
 // nodes in unknownNodes, which are created or replaced before.
 func resolveRefs(v any, st *state.State, unknownNodes map[string]bool) (any, error) {
