@@ -1,7 +1,7 @@
 # terminal interface
 
 > [!NOTE]
-> This describes the design in [#1](https://github.com/kontrolplane/koldstart/issues/1). Nothing here is implemented yet.
+> This is the design of `kdst ui` in [#1](https://github.com/kontrolplane/koldstart/issues/1), which comes after `migrate`. It is not built yet.
 
 `kdst ui` opens a terminal interface for everything koldstart has deployed. It finds apps and stages by reading the state buckets in the accounts and regions your profiles reach, so it works from any directory and needs no configuration file. Opened in a project directory, it starts on that project's app.
 

@@ -9,18 +9,19 @@ stage: String = read?("prop:stage") ?? "dev"
 
 /// An attribute of a function or resource of this project, such as its arn, once it exists.
 /// The attributes are the ones CloudFormation's `Fn::GetAtt` returns for the type.
-function ref(of: String, attr: String): Project.Ref = new { resource = of; attribute = attr }
+function ref(resourceName: String, attributeName: String): Project.Ref =
+  new { resource = resourceName; attribute = attributeName }
 
 /// A parameter of ssm parameter store, read while deploying.
-function ssm(parameter: String): Project.Secret = new { source = "ssm"; name = parameter }
+function ssm(parameterName: String): Project.Secret = new { source = "ssm"; name = parameterName }
 
 /// A secret of secrets manager, read while deploying. `.field("key")` takes one key of a json
 /// secret.
-function secretsmanager(secret: String): Project.Secret = new { source = "secretsmanager"; name = secret }
+function secretsmanager(secretName: String): Project.Secret = new { source = "secretsmanager"; name = secretName }
 
 /// An output of another app's stage, read from its state while deploying.
-function stageOutput(ofApp: String, ofStage: String, named: String): Project.StageOutput =
-  new { app = ofApp; stage = ofStage; output = named }
+function stageOutput(appName: String, stageName: String, outputName: String): Project.StageOutput =
+  new { app = appName; stage = stageName; output = outputName }
 
 /// A route on the stage's http api.
 class HttpRoute extends Project.Event {
