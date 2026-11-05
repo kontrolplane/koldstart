@@ -138,7 +138,7 @@ func (s *stage) nodes(archives map[string]build.Archive) ([]engine.Node, error) 
 
 // plan builds every function, uploading the zips when upload is set, and plans the stage.
 func (s *stage) plan(ctx context.Context, upload, allowReplace bool) (*engine.Engine, *engine.Plan, []engine.Node, error) {
-	if err := s.checkTypes(ctx); err != nil {
+	if err := s.checkResources(ctx); err != nil {
 		return nil, nil, nil, err
 	}
 	archives, err := s.buildAll(ctx, nil, upload)
