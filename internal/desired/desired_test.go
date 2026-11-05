@@ -306,3 +306,33 @@ func TestTriggers(t *testing.T) {
 		})
 	}
 }
+
+// TestGroup checks every node of a stage with events falls under the function or resource it
+// belongs to, or the http api.
+func TestGroup(t *testing.T) {
+	p := project(t)
+	worker := p.Functions["worker"]
+	worker.Events = append(worker.Events,
+		config.Event{Type: config.EventSchedule, Expression: "rate(5 minutes)"},
+		config.Event{Type: config.EventBucket, Bucket: config.Value{Ref: &config.Ref{Resource: "orders"}}},
+	)
+	p.Functions["worker"] = worker
+	nodes, err := Build(p, target())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range nodes {
+		kind, name := Group(n.ID, n.Deps())
+		switch {
+		case kind == GroupFunction && p.Functions[name].Runtime == "":
+			t.Errorf("%s belongs to %q, which is not a function", n.ID, name)
+		case kind == GroupResource && p.Resources[name].Type == "":
+			t.Errorf("%s belongs to %q, which is not a resource", n.ID, name)
+		case kind == "":
+			t.Errorf("%s belongs to nothing", n.ID)
+		}
+	}
+	if kind, name := Group("route/GET /orders/{id}", []string{"httpapi", "integration/api"}); kind != GroupFunction || name != "api" {
+		t.Errorf("a route belongs to %s %q, want the function api", kind, name)
+	}
+}
