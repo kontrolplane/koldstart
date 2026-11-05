@@ -44,3 +44,25 @@ updates:
       interval: weekly
     commit-message:
       prefix: chore(deps)
+
+  - package-ecosystem: gomod
+    directory: /examples/full-featured
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: chore(examples)
+    groups:
+      example:
+        patterns:
+          - "*"
+
+  - package-ecosystem: npm
+    directory: /examples/full-featured
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: chore(examples)
+    groups:
+      example:
+        patterns:
+          - "*"
