@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -223,6 +224,95 @@ func TestQuitStopsApply(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("the apply did not end once its context was cancelled")
+	}
+}
+
+// liveSignalWriter collects what is written, and closes wrote on the first write.
+type liveSignalWriter struct {
+	mu    sync.Mutex
+	b     strings.Builder
+	once  sync.Once
+	wrote chan struct{}
+}
+
+func (w *liveSignalWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.once.Do(func() { close(w.wrote) })
+	return w.b.Write(p)
+}
+
+// TestStopSaysWhatItWaitsFor checks quitting with a deploy running says it is stopping the
+// deploy before it waits for it, as the screen is gone by then, and that it stopped after.
+func TestStopSaysWhatItWaitsFor(t *testing.T) {
+	ops := &operations{running: map[string]bool{}}
+	w := &liveSignalWriter{wrote: make(chan struct{})}
+	ctx, cancel := context.WithCancel(t.Context())
+	ops.start("the deploy of orders/dev")
+	finished := make(chan bool, 1)
+	go func() {
+		defer ops.done("the deploy of orders/dev")
+		<-ctx.Done()
+		select {
+		case <-w.wrote:
+			finished <- true
+		case <-time.After(5 * time.Second):
+			finished <- false
+		}
+	}()
+	ops.stop(w, cancel)
+	if !<-finished {
+		t.Error("nothing was said before waiting for the deploy")
+	}
+	got := w.b.String()
+	stopping, stopped := strings.Index(got, "stopping the deploy of orders/dev"), strings.Index(got, "stopped the deploy of orders/dev")
+	if stopping < 0 || stopped < stopping {
+		t.Errorf("stop said:\n%s", got)
+	}
+}
+
+// livePanicBackend is a fake whose deploy and live tail panic, as a bug in a provider would.
+type livePanicBackend struct {
+	*fakeBackend
+}
+
+func (b livePanicBackend) Deploy(_ context.Context, _ cli.StageRef, _ string, _ *engine.Plan, onEvent func(engine.Event)) (*engine.Plan, bool, error) {
+	onEvent(engine.Event{ID: "function/api", Action: engine.Update})
+	panic("boom")
+}
+
+func (b livePanicBackend) Tail(context.Context, cli.StageRef, string, func([]cli.LogEvent)) error {
+	panic("boom")
+}
+
+// TestApplyPanics checks a panic in a deploy ends the deploy with an error on screen, rather
+// than the program with the terminal left raw, and the operation is no longer running.
+func TestApplyPanics(t *testing.T) {
+	f := newFake(t)
+	m := newModel(t.Context(), livePanicBackend{f})
+	m, _ = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = settle(t, m, m.Init())
+	m = pressKeys(t, m, "d", "ctrl+s")
+	m.ops.Wait()
+	if m.state.plan.applying || !strings.Contains(m.error, "failed: a bug in koldstart stopped it (boom)") {
+		t.Errorf("after the panic: applying %v, error %q", m.state.plan.applying, m.error)
+	}
+	if names := m.ops.names(); len(names) != 0 {
+		t.Errorf("operations still running: %v", names)
+	}
+}
+
+// TestTailPanics checks a panic in the live tail ends it with an error in the footer, and the
+// logs are read on each refresh instead.
+func TestTailPanics(t *testing.T) {
+	f := newFake(t)
+	m := newModel(t.Context(), livePanicBackend{f})
+	m, _ = update(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = settle(t, m, m.Init())
+	m = pressKeys(t, m, "enter")
+	l := m.state.function.logs
+	if m.page != functionPage || l.tailing || !l.noTail || !strings.Contains(m.status, "a bug in koldstart stopped it (boom)") {
+		t.Errorf("after the panic: page %v, tailing %v, noTail %v, status %q", m.page, l.tailing, l.noTail, m.status)
 	}
 }
 

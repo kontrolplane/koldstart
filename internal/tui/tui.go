@@ -6,6 +6,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"io"
 	"maps"
 	"os"
 	"slices"
@@ -88,16 +89,25 @@ func Run(ctx context.Context, c *cli.Console, theme string) error {
 	defer cancel()
 	m := newModel(ctx, c)
 	_, err := tea.NewProgram(m, tea.WithContext(ctx)).Run()
-	stopped := m.ops.names()
-	cancel()
-	m.ops.Wait()
-	for _, name := range stopped {
-		_, _ = fmt.Fprintf(os.Stderr, "stopped %s: what was done is in the state, run it again to finish\n", name)
-	}
+	m.ops.stop(os.Stderr, cancel)
 	if err != nil {
 		return fmt.Errorf("running the terminal interface: %w", err)
 	}
 	return nil
+}
+
+// stop cancels the operations still running and waits for them, saying on w what it waits for
+// first, as the calls in flight can take a while to answer once the interface is gone.
+func (o *operations) stop(w io.Writer, cancel context.CancelFunc) {
+	stopped := o.names()
+	cancel()
+	for _, name := range stopped {
+		_, _ = fmt.Fprintf(w, "stopping %s: waiting for the calls to aws in flight, then releasing its lock…\n", name)
+	}
+	o.Wait()
+	for _, name := range stopped {
+		_, _ = fmt.Fprintf(w, "stopped %s: what was done is in the state, run it again to finish\n", name)
+	}
 }
 
 // useTheme picks the palette: dark and light paint their own background, and auto starts from

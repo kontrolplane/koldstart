@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
+	"runtime/debug"
 	"slices"
 	"sync"
 	"time"
@@ -100,7 +102,7 @@ func (e *Engine) run(todo []func() error) error {
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			if err := fn(); err != nil {
+			if err := protect(fn); err != nil {
 				mu.Lock()
 				errs = append(errs, err)
 				mu.Unlock()
@@ -109,6 +111,18 @@ func (e *Engine) run(todo []func() error) error {
 	}
 	wg.Wait()
 	return errors.Join(errs...)
+}
+
+// protect calls fn, turning a panic in it into its error, so a bug in a provider fails its node
+// rather than end the program: the deploy then still records what it did and releases its lock.
+func protect(fn func() error) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("panic", "value", fmt.Sprint(r), "stack", string(debug.Stack()))
+			err = fmt.Errorf("a bug in koldstart stopped it (%v): run again with --debug and report what debug.log says", r)
+		}
+	}()
+	return fn()
 }
 
 func (e *Engine) event(ev Event) {

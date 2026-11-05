@@ -358,6 +358,25 @@ func TestFailureKeepsWhatWasDone(t *testing.T) {
 	}
 }
 
+// TestPanicFailsTheNode checks a panic while a node is applied fails the deploy with an error,
+// rather than end the program, and keeps what was done before it.
+func TestPanicFailsTheNode(t *testing.T) {
+	h := newHarness(t)
+	h.engine.OnEvent = func(ev Event) {
+		if ev.ID == "function/api" && !ev.Done {
+			panic("boom")
+		}
+	}
+	_, err := h.deploy(uniqueNames(stack(256)))
+	if err == nil || !strings.Contains(err.Error(), "a bug in koldstart stopped it (boom)") {
+		t.Fatalf("deploy = %v, want the panic as its error", err)
+	}
+	st, _ := h.read()
+	if st.Resources["role/api"] == nil {
+		t.Errorf("the role was not recorded: %v", slices.Sorted(maps.Keys(st.Resources)))
+	}
+}
+
 // TestFencing checks a deploy whose state was written by another one in between stops.
 func TestFencing(t *testing.T) {
 	h := newHarness(t)

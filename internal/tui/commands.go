@@ -3,6 +3,9 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
+	"runtime/debug"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -235,10 +238,34 @@ func (m model) startTail() (model, tea.Cmd) {
 	go func() {
 		defer close(ch)
 		defer cancel()
-		err := m.b.Tail(ctx, ref, arn, func(lines []cli.LogEvent) { send(tailMsg{gen: gen, lines: lines, ch: ch}) })
-		send(tailMsg{gen: gen, ended: true, err: err, ch: ch})
+		var err error
+		defer func() {
+			if r := recover(); r != nil {
+				err = recovered("the live tail of the logs", r)
+			}
+			send(tailMsg{gen: gen, ended: true, err: err, ch: ch})
+		}()
+		err = m.b.Tail(ctx, ref, arn, func(lines []cli.LogEvent) { send(tailMsg{gen: gen, lines: lines, ch: ch}) })
 	}()
 	return m, waitFor(ch)
+}
+
+// panicError is a panic in a goroutine of the interface, turned into the error of what it was
+// doing.
+type panicError struct {
+	value any
+}
+
+func (e *panicError) Error() string {
+	return fmt.Sprintf("a bug in koldstart stopped it (%v): run %s ui --debug and report what debug.log says", e.value, binary)
+}
+
+// recovered turns a panic in a goroutine the interface started into an error, logging its stack.
+// Bubble Tea restores the terminal after a panic only in its own goroutines: one in a deploy or a
+// tail would end the program with the terminal still raw and the stage's lock held.
+func recovered(what string, value any) error {
+	slog.Error("panic", "in", what, "value", fmt.Sprint(value), "stack", string(debug.Stack()))
+	return &panicError{value: value}
 }
 
 // stopTail ends the live tail of the logs, if one runs.
@@ -390,6 +417,11 @@ func (m model) apply() tea.Cmd {
 	go func() {
 		defer m.ops.done(name)
 		defer close(ch)
+		defer func() {
+			if r := recover(); r != nil {
+				send(appliedMsg{err: recovered(name, r)})
+			}
+		}()
 		onEvent := func(ev engine.Event) { send(progressMsg{event: ev, ch: ch}) }
 		var msg appliedMsg
 		if p.remove {

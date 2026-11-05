@@ -173,8 +173,8 @@ func appendNew(have, lines []cli.LogEvent) []cli.LogEvent {
 	return out
 }
 
-// applyTail adds what the live tail sent. Where no live tail can run, as on an emulator, the logs
-// are read again on every refresh instead.
+// applyTail adds what the live tail sent. Where no live tail can run, as on an emulator, or it
+// stopped on a bug, the logs are read again on every refresh instead.
 func (m model) applyTail(msg tailMsg) (model, tea.Cmd) {
 	l := &m.state.function.logs
 	if msg.gen != l.tailGen {
@@ -182,6 +182,10 @@ func (m model) applyTail(msg tailMsg) (model, tea.Cmd) {
 	}
 	if msg.ended {
 		l.tailing, l.stopTail = false, nil
+		if _, bug := errors.AsType[*panicError](msg.err); bug {
+			l.noTail = true
+			return m.setStatus("the live tail of the logs failed: "+msg.err.Error(), styles.ToneDanger)
+		}
 		if errors.Is(msg.err, cli.ErrNoLiveTail) {
 			l.noTail = true
 		}
