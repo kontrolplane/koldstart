@@ -145,9 +145,11 @@ func (p *progress) event(ev engine.Event) {
 		p.draw()
 		return
 	}
+	started := false
 	for i, r := range p.running {
 		if r.id == ev.ID {
 			p.running = append(p.running[:i], p.running[i+1:]...)
+			started = true
 			break
 		}
 	}
@@ -160,7 +162,11 @@ func (p *progress) event(ev engine.Event) {
 		_, _ = fmt.Fprintf(&p.buf, "  %s %s  %s %s\n", p.colour.paint(sgrYellow, "✗"), id, verbs[ev.Action], p.colour.paint(sgrFaint, "stopped after "+took))
 	case ev.Err != nil:
 		p.failed++
-		_, _ = fmt.Fprintf(&p.buf, "  %s %s  %s %s\n", p.colour.paint(sgrRed, "✗"), id, verbs[ev.Action], p.colour.paint(sgrRed, "failed after "+took))
+		failed := "failed after " + took
+		if !started {
+			failed = "failed before it started"
+		}
+		_, _ = fmt.Fprintf(&p.buf, "  %s %s  %s %s\n", p.colour.paint(sgrRed, "✗"), id, verbs[ev.Action], p.colour.paint(sgrRed, failed))
 	default:
 		p.done[ev.Action]++
 		_, _ = fmt.Fprintf(&p.buf, "  %s %s  %s %s\n", p.colour.paint(sgrGreen, "✓"), id, pastTenses[ev.Action], p.colour.paint(sgrFaint, "in "+took))

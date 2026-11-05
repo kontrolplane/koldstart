@@ -74,7 +74,7 @@ func TestProgressLines(t *testing.T) {
 				{ID: "url/api", Action: engine.Create, Done: true, Err: errors.New("resource/orders has no attribute Arn")},
 			},
 			unstarted: "url/api",
-			want:      []string{"  ✓ resource/orders  created in 8ms", "  ✗ url/api          create failed after 0ms"},
+			want:      []string{"  ✓ resource/orders  created in 8ms", "  ✗ url/api          create failed before it started"},
 			summary:   "1 created, 1 failed, 1 not started",
 		},
 		{
@@ -182,8 +182,8 @@ func TestProgressStatusLine(t *testing.T) {
 }
 
 // TestEndProgress checks the end of an apply says what it did on stdout, or on stderr how far a
-// failed or stopped one got, and that a stopped one says to run it again rather than listing the
-// calls ctrl+c cut short.
+// failed or stopped one got, that several failures are listed one a line, and that a stopped one
+// says to run it again rather than listing the calls ctrl+c cut short.
 func TestEndProgress(t *testing.T) {
 	stopped, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -200,6 +200,8 @@ func TestEndProgress(t *testing.T) {
 		{name: "no changes", plan: &engine.Plan{}},
 		{name: "failed", plan: testPlan, err: applyFailed(context.Background(), errors.New("url/api: denied"), "deploy"),
 			stderr: "\nfailed after 0ms: 1 created\n", wantErr: "url/api: denied\nwhat was done is in the state: deploy again to finish"},
+		{name: "several failed", plan: testPlan, err: applyFailed(context.Background(), errors.Join(errors.New("role/api: denied"), errors.New("role/worker: denied\nby a policy")), "deploy"),
+			stderr: "\nfailed after 0ms: 1 created\n", wantErr: "2 changes failed:\n  role/api: denied\n  role/worker: denied\n  by a policy\nwhat was done is in the state: deploy again to finish"},
 		{name: "stopped", plan: testPlan, err: applyFailed(stopped, errors.New("url/api: context canceled"), "remove"),
 			stderr: "\nstopped after 0ms: 1 created\n", wantErr: "stopped: what was done is in the state, remove again to finish", wantNotErr: "url/api"},
 	}
@@ -399,6 +401,32 @@ func TestUnlockHint(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("unlockHint for %v = %q, want %q", tt.args, got, tt.want)
 		}
+	}
+}
+
+// TestListed checks several errors are listed one a line under how many there are, one is left
+// as it is, and either can still be told apart by what it wraps.
+func TestListed(t *testing.T) {
+	denied := errors.New("denied")
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "one", err: fmt.Errorf("role/api: %w", denied), want: "role/api: denied"},
+		{name: "several", err: errors.Join(fmt.Errorf("role/api: %w", denied), errors.New("role/worker: throttled")),
+			want: "2 changes cannot be planned:\n  role/api: denied\n  role/worker: throttled"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := listed(tt.err, "changes cannot be planned")
+			if err.Error() != tt.want {
+				t.Errorf("listed =\n%s\nwant\n%s", err, tt.want)
+			}
+			if !errors.Is(err, denied) {
+				t.Errorf("listed = %v, which no longer wraps %v", err, denied)
+			}
+		})
 	}
 }
 

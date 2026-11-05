@@ -179,7 +179,7 @@ func (s *stage) plan(ctx context.Context, upload bool, opts planOptions) (*engin
 	e.AllowReplace, e.Refresh = opts.AllowReplace, opts.Refresh
 	plan, err := e.Plan(ctx, nodes, s.state)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, listed(err, "changes cannot be planned")
 	}
 	return e, plan, nodes, nil
 }
@@ -236,7 +236,36 @@ func applyFailed(ctx context.Context, err error, again string) error {
 	if ctx.Err() != nil {
 		return fmt.Errorf("%w: what was done is in the state, %s again to finish", errStopped, again)
 	}
-	return fmt.Errorf("%w\nwhat was done is in the state: %s again to finish", err, again)
+	return fmt.Errorf("%w\nwhat was done is in the state: %s again to finish", listed(err, "changes failed"), again)
+}
+
+// errorList is errors of several changes at once, one a line under how many there are and what
+// went wrong with them.
+type errorList struct {
+	what string
+	errs []error
+}
+
+func (e *errorList) Error() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d %s:", len(e.errs), e.what)
+	for _, err := range e.errs {
+		b.WriteString("\n  " + strings.ReplaceAll(err.Error(), "\n", "\n  "))
+	}
+	return b.String()
+}
+
+func (e *errorList) Unwrap() []error {
+	return e.errs
+}
+
+// listed lists the errors err joins, under how many there are and what, such as changes failed,
+// or returns err as it is when it is one.
+func listed(err error, what string) error {
+	if joined, ok := err.(interface{ Unwrap() []error }); ok && len(joined.Unwrap()) > 1 {
+		return &errorList{what: what, errs: joined.Unwrap()}
+	}
+	return err
 }
 
 // applyPlan applies the plan, telling onEvent as each node starts and finishes, then records
