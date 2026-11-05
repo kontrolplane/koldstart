@@ -58,6 +58,8 @@ func (m model) applyVersion(msg versionLoadedMsg) (model, tea.Cmd) {
 	return m, nil
 }
 
+// versionUpdate handles a key on the version page: ↑ and ↓ choose a change and enter opens its
+// diff, or they scroll when the deploy changed no resource.
 func (m model) versionUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 	v := &m.state.version
 	switch {
@@ -69,9 +71,13 @@ func (m model) versionUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 	changes := stateChanges(v.before, v.current)
 	if key.Matches(msg, m.keys.View) && v.cursor < len(changes) {
 		c := changes[v.cursor]
-		return m.openDiff(c.id, "changed in this deploy", inputsOf(v.before, c.id), inputsOf(v.current, c.id))
+		return m.openDiff(c.id, c.verb+" in this deploy", inputsOf(v.before, c.id), inputsOf(v.current, c.id))
 	}
 	lines, rows := m.versionLines()
+	if len(rows) == 0 {
+		v.scroll = min(scrollBy(msg, m.keys, v.scroll, contentHeight), max(0, len(lines)-contentHeight))
+		return m, nil
+	}
 	if cursor, ok := moveCursor(msg, m.keys, v.cursor, len(rows), contentHeight); ok {
 		v.cursor = cursor
 		_, v.scroll = selectable(lines, rows, v.cursor, v.scroll, contentHeight)
@@ -89,16 +95,20 @@ func inputsOf(st *state.State, id string) any {
 	return v
 }
 
-// stateChange is a resource that changed between two versions of a state, and the line that says
-// how.
+// stateChange is a resource that changed between two versions of a state, what happened to it,
+// and the line that says how.
 type stateChange struct {
 	id   string
+	verb string
 	line cell
 }
 
 // stateChanges lists what changed between two versions of a state, a line for each resource:
 // added, removed, or the inputs that changed.
 func stateChanges(before, after *state.State) []stateChange {
+	if after == nil {
+		return nil
+	}
 	if before == nil {
 		before = &state.State{}
 	}
@@ -109,24 +119,21 @@ func stateChanges(before, after *state.State) []stateChange {
 	for id := range after.Resources {
 		ids[id] = true
 	}
-	if after == nil {
-		return nil
-	}
 	var lines []stateChange
-	line := func(symbol string, tone styles.Tone, id, detail string) {
+	line := func(symbol, verb string, tone styles.Tone, id, detail string) {
 		c := cell{styles.S(symbol+" ", tone), styles.S(id, styles.ToneText)}
 		if detail != "" {
 			c = append(c, styles.S("  "+detail, styles.ToneMuted))
 		}
-		lines = append(lines, stateChange{id: id, line: c})
+		lines = append(lines, stateChange{id: id, verb: verb, line: c})
 	}
 	for _, id := range slices.Sorted(maps.Keys(ids)) {
 		b, a := before.Resources[id], after.Resources[id]
 		switch {
 		case b == nil:
-			line("+", styles.ToneSuccess, id, a.PhysicalID)
+			line("+", "added", styles.ToneSuccess, id, a.PhysicalID)
 		case a == nil:
-			line("-", styles.ToneDanger, id, b.PhysicalID)
+			line("-", "removed", styles.ToneDanger, id, b.PhysicalID)
 		case !bytes.Equal(b.Inputs, a.Inputs) || b.SecretsHash != a.SecretsHash:
 			var bi, ai map[string]any
 			_ = json.Unmarshal(b.Inputs, &bi)
@@ -135,10 +142,40 @@ func stateChanges(before, after *state.State) []stateChange {
 			if b.SecretsHash != a.SecretsHash {
 				changed = append(changed, "a secret")
 			}
-			line("~", styles.ToneWarning, id, strings.Join(changed, ", "))
+			line("~", "changed", styles.ToneWarning, id, strings.Join(changed, ", "))
 		}
 	}
 	return lines
+}
+
+// outputChanges are the lines of the outputs that changed between two versions of a state:
+// added with their value, removed, or changed from one value to another.
+func outputChanges(before, after *state.State) []cell {
+	var was map[string]string
+	if before != nil {
+		was = before.Outputs
+	}
+	names := map[string]bool{}
+	for k := range was {
+		names[k] = true
+	}
+	for k := range after.Outputs {
+		names[k] = true
+	}
+	var out []cell
+	for _, k := range slices.Sorted(maps.Keys(names)) {
+		b, inBefore := was[k]
+		a, inAfter := after.Outputs[k]
+		switch {
+		case !inBefore:
+			out = append(out, cell{styles.S("+ ", styles.ToneSuccess), styles.S(k, styles.ToneText), styles.S("  "+a, styles.ToneMuted)})
+		case !inAfter:
+			out = append(out, cell{styles.S("- ", styles.ToneDanger), styles.S(k, styles.ToneText), styles.S("  "+b, styles.ToneMuted)})
+		case a != b:
+			out = append(out, cell{styles.S("~ ", styles.ToneWarning), styles.S(k, styles.ToneText), styles.S("  "+b, styles.ToneMuted), styles.S("  →  ", styles.ToneFaint), styles.S(a, styles.ToneBody)})
+		}
+	}
+	return out
 }
 
 // versionLines are the lines of the version, with the index of the line of each change.
@@ -151,7 +188,7 @@ func (m model) versionLines() ([]string, []int) {
 	cur := v.current
 	lines := []string{
 		styles.SectionHeader("deploy of "+formatTime(v.version.LastModified), width),
-		row("saved", text(formatTime(v.version.LastModified)+", "+formatAgo(v.version.LastModified), styles.ToneBody), width),
+		row("saved", text(formatAgo(v.version.LastModified), styles.ToneBody), width),
 		row("version", text(v.version.ID, styles.ToneFaint), width),
 		row("deployed by", text(orDash(cur.DeployedBy), styles.ToneBody), width),
 		row("serial", text(formatInt(int(cur.Serial)), styles.ToneBody), width),
@@ -159,19 +196,33 @@ func (m model) versionLines() ([]string, []int) {
 		row("writes", text(plural(v.writes, "write")+" of the state, the last shown", styles.ToneMuted), width),
 		"",
 	}
+	changes := stateChanges(v.before, cur)
+	outputs := outputChanges(v.before, cur)
 	title := "changed from the deploy before"
 	if v.before == nil {
 		title = "the first deploy"
 	}
+	if len(changes) > 0 {
+		title += " · " + plural(len(changes), "resource")
+	}
 	lines = append(lines, styles.SectionHeader(title, width))
-	changes := stateChanges(v.before, cur)
 	var rows []int
 	for _, c := range changes {
 		rows = append(rows, len(lines))
 		lines = append(lines, renderCell(c.line, column{width: width}, nil))
 	}
 	if len(changes) == 0 {
-		lines = append(lines, styles.Faint("no resource changed: only the outputs or the record of the deploy"))
+		empty := "no resource or output changed: the deploy found everything as configured"
+		if len(outputs) > 0 {
+			empty = "no resource changed"
+		}
+		lines = append(lines, styles.Faint(empty))
+	}
+	if len(outputs) > 0 {
+		lines = append(lines, "", styles.SectionHeader("outputs · "+plural(len(outputs), "change"), width))
+		for _, c := range outputs {
+			lines = append(lines, renderCell(c, column{width: width}, nil))
+		}
 	}
 	return lines, rows
 }
