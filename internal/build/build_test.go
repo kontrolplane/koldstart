@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -213,5 +214,115 @@ func TestGoReproducible(t *testing.T) {
 	}
 	if hashes[0] != hashes[1] {
 		t.Errorf("the same code in two directories gives %s and %s", hashes[0], hashes[1])
+	}
+}
+
+// TestPythonSources checks a python function's zip holds the directory of its handler's module,
+// or what bundle.include names, without caches, and is the same when built again.
+func TestPythonSources(t *testing.T) {
+	root := t.TempDir()
+	for name, data := range map[string]string{
+		"src/api.py":                      "def handler(event, context):\n    return {}\n",
+		"src/lib/orders.py":               "X = 1\n",
+		"src/__pycache__/api.cpython.pyc": "cached",
+		"tools/seed.py":                   "print('seed')\n",
+		"app.py":                          "def handler(event, context):\n    return 1\n",
+	} {
+		p := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tests := []struct {
+		name    string
+		handler string
+		include []string
+		want    []string
+	}{
+		{name: "the handler's directory", handler: "src/api.handler", want: []string{"src/api.py", "src/lib/orders.py"}},
+		{name: "a module at the root", handler: "app.handler", want: []string{"app.py"}},
+		{name: "include", handler: "src/api.handler", include: []string{"src/api.py", "tools"}, want: []string{"src/api.py", "tools/seed.py"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fn := config.Function{Runtime: config.RuntimePy312, Handler: tt.handler, Architecture: config.ArchARM64, Bundle: config.Bundle{Include: tt.include}}
+			b := Builder{Root: root, Stage: "dev"}
+			files, err := b.Files(context.Background(), "api", fn, LambdaTarget(fn.Architecture))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var names []string
+			for _, f := range files {
+				names = append(names, f.Name)
+			}
+			if !slices.Equal(names, tt.want) {
+				t.Errorf("files %v, want %v", names, tt.want)
+			}
+			a, err := b.Build(context.Background(), "api", fn)
+			if err != nil {
+				t.Fatal(err)
+			}
+			again, err := b.Build(context.Background(), "api", fn)
+			if err != nil || again.SHA256 != a.SHA256 {
+				t.Errorf("built again: %s, %v; want %s", again.SHA256, err, a.SHA256)
+			}
+		})
+	}
+	if _, err := (Builder{Root: root}).Files(context.Background(), "x", config.Function{Runtime: config.RuntimePy313, Handler: "src/missing.handler"}, LambdaTarget("arm64")); err == nil {
+		t.Error("a handler with no module: want an error")
+	}
+}
+
+// TestImageHash checks an image's hash is the same for the same context, changes with a file, a
+// build argument or the platform, and leaves out what .dockerignore names.
+func TestImageHash(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, map[string]string{
+		"Dockerfile":    "FROM public.ecr.aws/lambda/python:3.12\nCOPY app.py .\n",
+		"app.py":        "def handler(e, c): return 1\n",
+		".dockerignore": "notes\n**/*.log\n",
+		"notes/a.md":    "a",
+		"sub/x.log":     "x",
+	})
+	fn := config.Function{Image: &config.Image{Dockerfile: "Dockerfile", Context: "."}, Architecture: config.ArchARM64}
+	b := Builder{Root: root, Stage: "dev"}
+	hash := func(fn config.Function, target Target) string {
+		t.Helper()
+		h, err := b.imageHash(fn, target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return h
+	}
+	arm := LambdaTarget(config.ArchARM64)
+	first := hash(fn, arm)
+	if hash(fn, arm) != first {
+		t.Fatal("the same context hashes differently")
+	}
+	write(t, root, map[string]string{"notes/b.md": "b", "sub/y.log": "y"})
+	if hash(fn, arm) != first {
+		t.Error("a file .dockerignore leaves out changed the hash")
+	}
+	if hash(fn, LambdaTarget(config.ArchX8664)) == first {
+		t.Error("another platform hashes the same")
+	}
+	withArg := fn
+	withArg.Image = &config.Image{Dockerfile: "Dockerfile", Context: ".", BuildArgs: map[string]string{"V": "1"}}
+	if hash(withArg, arm) == first {
+		t.Error("a build argument does not change the hash")
+	}
+	write(t, root, map[string]string{"app.py": "def handler(e, c): return 2\n"})
+	if hash(fn, arm) == first {
+		t.Error("a change of the code does not change the hash")
+	}
+	arc, err := b.Build(context.Background(), "img", fn)
+	if err != nil || !arc.Image || arc.Path != "" {
+		t.Errorf("Build of an image = %+v, %v", arc, err)
+	}
+	if got := ImageTag("dev", "img", strings.Repeat("ab", 32)); got != "dev-img-"+strings.Repeat("ab", 16) {
+		t.Errorf("ImageTag = %s", got)
 	}
 }
