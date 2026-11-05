@@ -23,8 +23,12 @@ type Node struct {
 	DeletionPolicy string
 }
 
-// Retain is the deletion policy of a resource left in place.
-const Retain = "retain"
+// The deletion policies: retain leaves a resource in place, delete deletes it even when it was
+// imported, and none is the type's default.
+const (
+	Retain       = "retain"
+	DeletePolicy = "delete"
+)
 
 // Deps returns the nodes this one is applied after, sorted.
 func (n Node) Deps() []string {

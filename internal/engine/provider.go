@@ -26,6 +26,9 @@ type Request struct {
 	Tags map[string]string
 	// Token is the request token of an operation a crashed deploy started.
 	Token string
+	// ClientToken is the same for every try of one operation, so a provider whose api takes an
+	// idempotency token makes the resource once however often a crashed deploy retries.
+	ClientToken string
 	// Progress records a request token before waiting on it, so a deploy that dies while
 	// waiting can find the operation again.
 	Progress func(token string) error

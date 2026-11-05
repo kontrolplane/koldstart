@@ -154,16 +154,24 @@ func TestUpdateReplaceAndRetain(t *testing.T) {
 		t.Fatalf("replacing a retained resource = %v, want an error naming --allow-replace", err)
 	}
 	h.engine.AllowReplace = true
+	if _, err := h.deploy(nodes); err == nil || !strings.Contains(err.Error(), "give the new one another name") {
+		t.Fatalf("replacing a retained resource under its own name = %v", err)
+	}
+	nodes[2].Name = "resource/orders-v2"
 	plan, err = h.deploy(nodes)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := actions(plan)
-	if got["resource/orders"] != Replace {
-		t.Errorf("key change: %v, want resource/orders replaced", got)
+	if got := actions(plan); got["resource/orders"] != Replace {
+		t.Errorf("after the failed replace: %v, want the pending replace finished", got)
 	}
-	if h.fake.Resources()["resource/orders"].Inputs["key"] != "pk" {
-		t.Error("the replacement does not have the new key")
+	fake := h.fake.Resources()
+	if fake["resource/orders-v2"].Inputs["key"] != "pk" || fake["resource/orders"].Inputs["key"] != "id" {
+		t.Errorf("want the new table with pk and the old one kept with id: %v", fake)
+	}
+	st, _ := h.read()
+	if st.Retained["resource/orders~resource/orders"] == nil || st.Resources["resource/orders"].PhysicalID != "resource/orders-v2" {
+		t.Errorf("state after the replace: resources %v, retained %v", st.Resources["resource/orders"], st.Retained)
 	}
 }
 
@@ -213,11 +221,15 @@ func TestDeleteOrderAndRetain(t *testing.T) {
 // makes fewer calls than the crash point, every point is covered. Each step deploys before
 // first, without crashing, then after, which crashes and runs again.
 func TestCrashAnywhereConverges(t *testing.T) {
+	replaced := uniqueNames(stack(256))
+	replaced[1].Inputs["logGroup"] = "elsewhere"
 	steps := []struct {
-		name   string
-		before []Node
-		after  []Node
+		name        string
+		before      []Node
+		after       []Node
+		replaceKeys []string
 	}{
+		{name: "replace", before: uniqueNames(stack(256)), after: replaced, replaceKeys: []string{"logGroup"}},
 		{name: "first deploy", after: uniqueNames(stack(256))},
 		{name: "update", before: uniqueNames(stack(256)), after: uniqueNames(stack(1024))},
 		{name: "remove", before: uniqueNames(stack(256)), after: nil},
@@ -226,6 +238,7 @@ func TestCrashAnywhereConverges(t *testing.T) {
 	for _, step := range steps {
 		for crash := 1; ; crash++ {
 			h := newHarness(t)
+			h.fake.ReplaceKeys = step.replaceKeys
 			if step.before != nil {
 				if _, err := h.deploy(step.before); err != nil {
 					t.Fatal(err)

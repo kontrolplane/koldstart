@@ -205,8 +205,11 @@ func (e *Engine) planNode(ctx context.Context, n Node, st *state.State, unknownN
 		return c, nil
 	case prior.Pending != nil:
 		c.Action, c.Resume = Update, true
-		if prior.Pending.Operation == string(Create) {
+		switch prior.Pending.Operation {
+		case string(Create):
 			c.Action = Create
+		case string(Replace):
+			c.Action = Replace
 		}
 		return c, nil
 	}

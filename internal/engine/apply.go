@@ -2,6 +2,8 @@ package engine
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -169,22 +171,12 @@ func (e *Engine) applyNode(ctx context.Context, n Node, c Change, store *Store) 
 	if prior == nil && snap.Retained != nil {
 		prior = snap.Retained[n.ID]
 	}
-	action := c.Action
-	switch {
-	case prior == nil:
-		action = Create
-	case prior.Pending != nil:
-		action = Update
-	case c.Action == Adopt:
-	case prior.Hash == hash:
+	action, err := e.decide(p, c, prior, hash, recorded)
+	if err != nil {
+		return fmt.Errorf("%s: %w", n.ID, err)
+	}
+	if action == NoOp {
 		return nil
-	case p.Replaces(prior.Inputs, recorded):
-		if prior.DeletionPolicy == Retain && !e.AllowReplace {
-			return fmt.Errorf("%s: the change needs a new resource, and the old one is retained: pass --allow-replace", n.ID)
-		}
-		action = Replace
-	default:
-		action = Update
 	}
 
 	e.event(Event{ID: n.ID, Action: action})
@@ -192,13 +184,16 @@ func (e *Engine) applyNode(ctx context.Context, n Node, c Change, store *Store) 
 		e.event(Event{ID: n.ID, Action: action, Done: true, Err: err, Duration: time.Since(start)})
 	}()
 
+	startedAt := time.Now().UTC()
 	req := Request{ID: n.ID, Name: n.Name, Inputs: desired, Tags: e.tags(n.ID, snap.App, snap.Stage)}
 	if prior != nil {
 		req.PhysicalID, req.Prior, req.Attributes = prior.PhysicalID, prior.Inputs, prior.Attributes
 		if prior.Pending != nil {
 			req.Token = prior.Pending.Token
+			startedAt = prior.Pending.StartedAt
 		}
 	}
+	req.ClientToken = clientToken(snap.App, snap.Stage, n.ID, startedAt)
 	req.Progress = func(token string) error {
 		return store.Update(ctx, func(st *state.State) {
 			if r := st.Resources[n.ID]; r != nil && r.Pending != nil {
@@ -212,7 +207,7 @@ func (e *Engine) applyNode(ctx context.Context, n Node, c Change, store *Store) 
 		if prior != nil {
 			r = cloneResource(prior)
 		}
-		r.Pending = &state.Pending{Operation: string(action), StartedAt: time.Now().UTC(), Token: req.Token}
+		r.Pending = &state.Pending{Operation: string(action), StartedAt: startedAt, Token: req.Token}
 		st.Resources[n.ID] = r
 		if st.Retained != nil {
 			delete(st.Retained, n.ID)
@@ -225,7 +220,20 @@ func (e *Engine) applyNode(ctx context.Context, n Node, c Change, store *Store) 
 	if err != nil {
 		return fmt.Errorf("%s: %w", n.ID, err)
 	}
+	policy := n.DeletionPolicy
+	imported := prior != nil && prior.Imported && action != Replace
+	if policy == "" && imported {
+		policy = Retain
+	}
 	if err := store.Update(ctx, func(st *state.State) {
+		if action == Replace && prior.DeletionPolicy == Retain {
+			if st.Retained == nil {
+				st.Retained = map[string]*state.Resource{}
+			}
+			old := cloneResource(prior)
+			old.Pending, old.Dependencies = nil, nil
+			st.Retained[n.ID+"~"+prior.PhysicalID] = old
+		}
 		st.Resources[n.ID] = &state.Resource{
 			Type:           n.Type,
 			PhysicalID:     res.PhysicalID,
@@ -233,12 +241,38 @@ func (e *Engine) applyNode(ctx context.Context, n Node, c Change, store *Store) 
 			Hash:           hash,
 			Attributes:     res.Attributes,
 			Dependencies:   n.Deps(),
-			DeletionPolicy: n.DeletionPolicy,
+			DeletionPolicy: policy,
+			Imported:       imported,
 		}
 	}); err != nil {
 		return fmt.Errorf("%s: recording it: %w", n.ID, err)
 	}
 	return nil
+}
+
+// decide is what to do to a node now that its inputs are known: what was planned, unless the
+// inputs came out the same after all, or a replacement turns out to be needed. A pending
+// operation of a crashed deploy is finished.
+func (e *Engine) decide(p Provider, c Change, prior *state.Resource, hash string, recorded json.RawMessage) (Action, error) {
+	switch {
+	case prior == nil:
+		return Create, nil
+	case prior.Pending != nil && prior.Pending.Operation == string(Replace):
+		return Replace, nil
+	case prior.Pending != nil:
+		return Update, nil
+	case c.Action == Adopt:
+		return Adopt, nil
+	case prior.Hash == hash:
+		return NoOp, nil
+	case p.Replaces(prior.Inputs, recorded):
+		if prior.DeletionPolicy == Retain && !e.AllowReplace {
+			return "", errors.New("the change needs a new resource, and the old one is retained: pass --allow-replace")
+		}
+		return Replace, nil
+	default:
+		return Update, nil
+	}
 }
 
 // call runs the provider for action. A create of something that exists, and an operation a
@@ -252,11 +286,21 @@ func (e *Engine) call(ctx context.Context, p Provider, action Action, prior *sta
 		}
 		return e.adopt(ctx, p, req)
 	case Replace:
-		if err := p.Delete(ctx, req); err != nil {
-			return Result{}, fmt.Errorf("deleting the old one: %w", err)
+		retained := prior.DeletionPolicy == Retain
+		if !retained {
+			if err := p.Delete(ctx, req); err != nil {
+				return Result{}, fmt.Errorf("deleting the old one: %w", err)
+			}
 		}
 		req.PhysicalID, req.Prior, req.Attributes = "", nil, nil
-		return p.Create(ctx, req)
+		res, err := p.Create(ctx, req)
+		switch {
+		case retained && errors.Is(err, ErrExists):
+			return Result{}, errors.New("the old one is retained and has the name the new one needs: give the new one another name, or set deletionPolicy = \"delete\" to replace it")
+		case errors.Is(err, ErrExists):
+			return e.adopt(ctx, p, req)
+		}
+		return res, err
 	default:
 		if prior != nil && prior.Pending != nil {
 			return e.adopt(ctx, p, req)
@@ -361,6 +405,13 @@ func (e *Engine) deleteNode(ctx context.Context, c Change, store *Store) (err er
 		return fmt.Errorf("%s: %w", c.ID, err)
 	}
 	return store.Update(ctx, func(st *state.State) { delete(st.Resources, c.ID) })
+}
+
+// clientToken is the idempotency token of an operation on a node, the same for every try of it
+// that starts from one pending entry.
+func clientToken(app, stage, id string, startedAt time.Time) string {
+	sum := sha256.Sum256([]byte(app + "/" + stage + "/" + id + "/" + startedAt.Format(time.RFC3339Nano)))
+	return "koldstart-" + hex.EncodeToString(sum[:])[:32]
 }
 
 func cloneResource(r *state.Resource) *state.Resource {

@@ -51,6 +51,9 @@ type Resource struct {
 	DeletionPolicy string `json:"deletionPolicy,omitempty"`
 	// Pending is an operation that was started and may not have finished.
 	Pending *Pending `json:"pending,omitempty"`
+	// Imported is a resource kdst import took over. It is retained unless the configuration
+	// says delete.
+	Imported bool `json:"imported,omitempty"`
 }
 
 // Pending records an operation before it is made, so a deploy that dies halfway knows on the
