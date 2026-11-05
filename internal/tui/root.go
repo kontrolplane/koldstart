@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/spinner"
@@ -212,7 +213,7 @@ func (m model) keyPress(msg tea.KeyPressMsg) (model, tea.Cmd) {
 func (m model) View() tea.View {
 	v := tea.NewView(m.render())
 	v.AltScreen = true
-	v.WindowTitle = "kdst ui"
+	v.WindowTitle = binary + " ui"
 	v.ForegroundColor = styles.P.Text
 	if styles.Paint {
 		v.BackgroundColor = styles.P.Base
@@ -316,9 +317,9 @@ func (m model) header() string {
 		project = cell{styles.S(m.project, styles.ToneText), styles.S(" · "+m.projectStage, styles.ToneMuted)}
 	}
 	columns := [][2]fact{
-		{{"profile", text(id.Profile, styles.ToneBody)}, {"account", text(id.Account, styles.ToneBody)}},
-		{{"region", text(id.Region, styles.ToneBody)}, {"bucket", text(id.Bucket, styles.ToneMuted)}},
-		{{"project", project}, {"as", text(id.Caller, styles.ToneMuted)}},
+		{{"profile", text(orDash(id.Profile), styles.ToneBody)}, {"account", text(orDash(id.Account), styles.ToneBody)}},
+		{{"region", text(orDash(id.Region), styles.ToneBody)}, {"bucket", text(orDash(id.Bucket), styles.ToneMuted)}},
+		{{"project", project}, {"as", text(orDash(callerName(id.Caller)), styles.ToneMuted)}},
 	}
 	width := frameWidth - 1
 	each := (width - 2*(len(columns)-1)) / len(columns)
@@ -334,6 +335,16 @@ func (m model) header() string {
 		rendered = append(rendered, strings.Join(lines, "\n"))
 	}
 	return indent(lipgloss.JoinHorizontal(lipgloss.Top, rendered...))
+}
+
+// callerName is the arn of the caller without its partition, service and account, which the
+// header shows already: user/levi, or assumed-role/admin/levi. What is not an arn stays whole.
+func callerName(arn string) string {
+	parts := strings.SplitN(arn, ":", 6)
+	if len(parts) < 6 || parts[0] != "arn" || parts[5] == "" {
+		return arn
+	}
+	return parts[5]
 }
 
 // crumbStages is the first crumb, the overview of every stage.
@@ -416,7 +427,7 @@ func (m model) frameMeta() (string, string) {
 		foot = append(foot, styles.Faint(t.position()))
 	}
 	if !m.refreshedAt.IsZero() && m.refreshes() {
-		foot = append(foot, styles.Faint("read "+formatAgo(m.refreshedAt)))
+		foot = append(foot, styles.Faint("read at "+m.refreshedAt.Local().Format(time.TimeOnly)))
 	}
 	if m.paused {
 		foot = append(foot, styles.Render(styles.S("⏸ paused", styles.ToneWarning)))
@@ -499,11 +510,17 @@ func (m model) shortHelp() [][2]string {
 	if m.error != "" || m.showHelp {
 		return [][2]string{{"any key", "close"}}
 	}
+	if m.loading {
+		if m.page == overviewPage {
+			return [][2]string{hint(k.Help), hint(k.Quit, "quit")}
+		}
+		return [][2]string{hint(k.Help), hint(k.Quit)}
+	}
 	switch m.page {
 	case overviewPage:
-		return [][2]string{hint(k.View), hint(k.Deploy), hint(k.Remove), hint(k.Unlock), hint(k.Filter), hint(k.Copy), hint(k.Pause), hint(k.Help), hint(k.Quit, "quit")}
+		return m.overviewHints()
 	case stagePage:
-		return [][2]string{hint(k.View), hint(k.NextTab), hint(k.Deploy), hint(k.Remove), hint(k.Unlock), hint(k.Filter), hint(k.Copy), hint(k.Help), hint(k.Quit)}
+		return m.stageHints()
 	case functionPage:
 		var h [][2]string
 		switch m.state.function.tab {
@@ -514,20 +531,27 @@ func (m model) shortHelp() [][2]string {
 		case invokeTab:
 			h = append(h, hint(k.EditEvent))
 		}
-		h = append(h, hint(k.NextTab), hint(k.Invoke), hint(k.RunLocal), hint(k.Deploy, "plan its code"))
-		return append(h, hint(k.Copy), hint(k.Help), hint(k.Quit))
+		h = append(h, hint(k.NextTab), hint(k.Invoke))
+		if m.b.Local(m.state.stage.ref) {
+			h = append(h, hint(k.RunLocal), hint(k.Deploy, "plan its code"))
+		}
+		return append(h, hint(k.Copy), m.pauseHint(), hint(k.Help), hint(k.Quit))
 	case resourcePage:
 		return [][2]string{hint(k.NextTab, "applied / in aws"), scrollHint, hint(k.Refresh), hint(k.Copy), hint(k.Help), hint(k.Quit)}
 	case versionPage:
 		return [][2]string{hint(k.View, "diff"), chooseHint, hint(k.Copy), hint(k.Help), hint(k.Quit)}
-	case diffPage, invocationPage:
+	case diffPage:
 		return [][2]string{scrollHint, hint(k.Help), hint(k.Quit)}
+	case invocationPage:
+		return [][2]string{scrollHint, hint(k.Copy, "copy id"), hint(k.Help), hint(k.Quit)}
 	case planPage:
 		p := m.state.plan
 		switch {
 		case p.applying:
 			return [][2]string{scrollHint, hint(k.ForceQuit, "stop and quit")}
-		case p.done || p.plan == nil:
+		case p.plan == nil:
+			return [][2]string{hint(k.Help), hint(k.Quit)}
+		case p.done:
 			return [][2]string{hint(k.View, "diff"), chooseHint, hint(k.Help), hint(k.Quit)}
 		}
 		if p.remove || p.function != "" || p.refresh {
@@ -542,37 +566,173 @@ func (m model) shortHelp() [][2]string {
 	return nil
 }
 
-// helpSections are the columns of the key reference.
-var helpSections = []struct {
-	title string
-	rows  [][2]string
-}{
-	{"move", [][2]string{{"↑/k ↓/j", "up / down"}, {"g / G", "first / last"}, {"pgup/pgdn", "page"}, {keys.Keys.View.Help().Key, "open"}, {"tab/⇧tab", "next / previous tab"}, {"/", "filter"}, {"q", "back, quit on stages"}, {"esc", "back, clear, cancel"}, {"ctrl+c", "quit"}}},
-	{"stage", [][2]string{{"d", "plan a deploy"}, {"ctrl+s", "apply the plan"}, {"r on a plan", "plan again from aws as it is"}, {keys.Keys.View.Help().Key, "a change's diff"}, {"ctrl+d", "remove the stage"}, {"ctrl+x", "release a lock"}, {"c", "copy"}, {"r / p", "refresh / pause"}}},
-	{"function", [][2]string{{"i", "invoke in aws"}, {"shift+i", "run on this machine"}, {"e", "edit the event"}, {"d", "plan its code"}, {"f", "follow the logs"}, {"/", "filter the logs"}, {"↑ at top", "older logs"}, {keys.Keys.View.Help().Key, "an invocation"}}},
+// overviewHints are the keys that do something to the stage under the cursor: d only on the
+// project's app, ctrl+x only on a stage that is locked, ctrl+d only on one deployed.
+func (m model) overviewHints() [][2]string {
+	k := m.keys
+	quit := hint(k.Quit, "quit")
+	s, ok := m.selectedStage()
+	if !ok {
+		return [][2]string{hint(k.Filter), hint(k.Refresh), m.pauseHint(), hint(k.Help), quit}
+	}
+	h := [][2]string{hint(k.View)}
+	if m.b.Local(s.StageRef) {
+		h = append(h, hint(k.Deploy))
+	}
+	if s.Lock != nil {
+		h = append(h, hint(k.Unlock))
+	}
+	h = append(h, hint(k.Filter))
+	if !notDeployed(s) {
+		h = append(h, hint(k.Remove))
+	}
+	return append(h, hint(k.Copy), m.pauseHint(), hint(k.Help), quit)
 }
 
-// helpView draws the key reference in a card, as roomy as the content area allows.
+// stageHints are the keys of the stage's tab: enter where a row opens, d only on the project's
+// app, and ctrl+x only while the stage is locked.
+func (m model) stageHints() [][2]string {
+	k := m.keys
+	s := m.state.stage
+	rows := len(s.tables[s.tab].rows) > 0
+	var h [][2]string
+	if rows && s.tab != outputsTab {
+		h = append(h, hint(k.View))
+	}
+	h = append(h, hint(k.NextTab))
+	if m.b.Local(s.ref) {
+		h = append(h, hint(k.Deploy))
+	}
+	if s.lock != nil {
+		h = append(h, hint(k.Unlock))
+	}
+	h = append(h, hint(k.Filter), hint(k.Remove))
+	if rows {
+		h = append(h, hint(k.Copy))
+	}
+	return append(h, m.pauseHint(), hint(k.Help), hint(k.Quit))
+}
+
+// pauseHint is p as it works now: pause the refresh, or resume it.
+func (m model) pauseHint() [2]string {
+	if m.paused {
+		return hint(m.keys.Pause, "resume")
+	}
+	return hint(m.keys.Pause)
+}
+
+// helpSection is a column of the key reference: a title, and each key with what it does.
+type helpSection struct {
+	title string
+	rows  [][2]string
+}
+
+// helpSections are the columns of the key reference, the keys named as the key map names them.
+func helpSections(k keys.KeyMap) []helpSection {
+	name := func(b key.Binding) string { return b.Help().Key }
+	return []helpSection{
+		{"everywhere", [][2]string{
+			{"↑/k ↓/j", "up / down"}, {name(k.Top) + " / " + name(k.Bottom), "first / last"}, {name(k.PageUp) + "/" + name(k.PageDown), "page"},
+			{name(k.View), "open"}, {name(k.NextTab) + "/" + name(k.PrevTab), "next / previous tab"}, {name(k.Filter), "filter"},
+			{name(k.Yes) + " / " + name(k.No), "answer a dialog"}, {name(k.Quit), "back, quit on stages"}, {name(k.Back), "back, clear, cancel"},
+			{name(k.ForceQuit), "quit"},
+		}},
+		{"stage", [][2]string{
+			{name(k.Deploy), "plan a deploy"}, {name(k.Apply), "apply the plan"}, {name(k.Refresh) + " on a plan", "plan again from aws"},
+			{name(k.View), "a change's diff"}, {name(k.Remove), "remove the stage"}, {name(k.Unlock), "release a lock"}, {name(k.Copy), "copy"},
+			{name(k.Refresh) + " / " + name(k.Pause), "refresh / pause"},
+		}},
+		{"function", [][2]string{
+			{name(k.Invoke), "invoke in aws"}, {name(k.RunLocal), "run on this machine"}, {name(k.EditEvent), "edit the event"},
+			{name(k.Deploy), "plan its code"}, {name(k.Follow), "follow the logs"}, {name(k.Filter), "filter the logs"},
+			{"↑ at top", "older logs"}, {name(k.View), "an invocation"},
+		}},
+	}
+}
+
+// helpNotes are what the key reference says below the keys, when there is room.
+var helpNotes = []string{
+	"● marks the project's app: d plans it and shift+i runs it here",
+	"events to invoke with are kept in .koldstart/events/<function>/",
+}
+
+// helpLayout is one way to draw the key reference: which sections, the gap between them, how
+// much padding, and whether the notes and the line on closing it are shown.
+type helpLayout struct {
+	sections   []helpSection
+	gap        int
+	padY, padX int
+	notes      bool
+	close      bool
+}
+
+// helpView draws the key reference in a card, in the roomiest layout the content area holds.
+// Where every section does not fit, it shows the first, the keys that work everywhere, beside
+// the one for the page on screen. The notes are left out before any keys are.
 func (m model) helpView() string {
-	keyStyle := styles.Fg(styles.ToneText).Bold(true).Width(11)
-	columns := make([]string, 0, len(helpSections))
-	for i, s := range helpSections {
+	all := helpSections(m.keys)
+	pair := []helpSection{all[0], all[1]}
+	switch m.page {
+	case functionPage, runLocalPage, invocationPage:
+		pair[1] = all[2]
+	}
+	layouts := []helpLayout{
+		{sections: all, gap: 4, padY: 1, padX: 3, notes: true, close: true},
+		{sections: all, gap: 4, padX: 2, notes: true},
+		{sections: all, gap: 3, padX: 1},
+		{sections: pair, gap: 4, padY: 1, padX: 3, notes: true, close: true},
+		{sections: pair, gap: 4, padX: 2, notes: true},
+		{sections: pair, gap: 3, padX: 1},
+	}
+	var body string
+	var last helpLayout
+	for _, l := range layouts {
+		body, last = l.body(), l
+		if lipgloss.Width(body) <= l.width() && lipgloss.Height(body) <= l.height() {
+			break
+		}
+	}
+	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(styles.P.RuleBold).Padding(last.padY, last.padX).
+		Render(clip(body, last.width(), last.height()))
+}
+
+// width is the room inside the card, once the overlay's margin, the border and the padding are
+// taken from the content area.
+func (l helpLayout) width() int { return contentWidth - 4 - 2*l.padX }
+
+// height is the room inside the card, once the border and the padding are taken from the content
+// area.
+func (l helpLayout) height() int { return contentHeight - 2 - 2*l.padY }
+
+// body draws the sections side by side, each key in a column as wide as its longest, with the
+// notes below.
+func (l helpLayout) body() string {
+	columns := make([]string, 0, len(l.sections))
+	for i, s := range l.sections {
+		width := 0
+		for _, r := range s.rows {
+			width = max(width, ansi.StringWidth(r[0]))
+		}
+		keyStyle := styles.Fg(styles.ToneText).Bold(true).Width(width + 2)
 		lines := []string{styles.Fg(styles.ToneAccent).Bold(true).MarginBottom(1).Render(s.title)}
 		for _, r := range s.rows {
 			lines = append(lines, keyStyle.Render(r[0])+styles.Muted(r[1]))
 		}
 		column := lipgloss.JoinVertical(lipgloss.Left, lines...)
-		if i < len(helpSections)-1 {
-			column = lipgloss.NewStyle().MarginRight(4).Render(column)
+		if i < len(l.sections)-1 {
+			column = lipgloss.NewStyle().MarginRight(l.gap).Render(column)
 		}
 		columns = append(columns, column)
 	}
-	body := lipgloss.JoinHorizontal(lipgloss.Top, columns...)
-	if lipgloss.Width(body) > contentWidth-8 {
-		body = lipgloss.JoinVertical(lipgloss.Left, columns...)
+	parts := []string{lipgloss.JoinHorizontal(lipgloss.Top, columns...)}
+	if l.notes {
+		parts = append(parts, "")
+		for _, n := range helpNotes {
+			parts = append(parts, styles.Faint(n))
+		}
 	}
-	body = lipgloss.JoinVertical(lipgloss.Center, body, "", styles.Faint("● marks the app of the project here, the one d plans and shift+i runs"),
-		styles.Faint("events to invoke with are kept in .koldstart/events/<function>/"), "", styles.Faint("press any key to close"))
-	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(styles.P.RuleBold).Padding(1, 3).
-		Render(clip(body, contentWidth-10, contentHeight-4))
+	if l.close {
+		parts = append(parts, "", styles.Faint("press any key to close"))
+	}
+	return lipgloss.JoinVertical(lipgloss.Center, parts...)
 }

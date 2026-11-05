@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"cmp"
+	"slices"
 	"time"
 
 	"charm.land/bubbles/v2/key"
@@ -16,27 +18,49 @@ type overviewState struct {
 	loaded bool
 	// opened says the project's stage was opened on start, which happens once.
 	opened bool
+	// failed says a load of the stages failed, so the next failure goes to the footer rather
+	// than raising the error again every refresh.
+	failed bool
 	stages []cli.StageSummary
 	shown  []cli.StageSummary
 	table  dataTable
 	filter filterBox
 }
 
+// overviewColumns are the columns of the stages. On a narrow terminal who deployed goes first,
+// then the count of resources: the region stays, as it tells apart a stage of the same name in
+// two regions.
 var overviewColumns = []column{
 	{title: "app", width: 14, grow: 2},
 	{title: "stage", width: 12, grow: 1},
-	{title: "region", width: 14, drop: 2},
+	{title: "region", width: 14, drop: 1},
 	{title: "deployed", width: 10},
 	{title: "by", width: 10, grow: 1, drop: 3},
-	{title: resourcesWord, width: 10, right: true, drop: 1},
+	{title: resourcesWord, width: 10, right: true, drop: 2},
 	{title: "lock", width: 10, grow: 1},
 }
 
 func newOverviewState() overviewState {
 	return overviewState{
-		table:  newTable(overviewColumns, "no stages yet: deploy one with kdst deploy"),
+		table:  newTable(overviewColumns, noStagesYet()),
 		filter: newFilterBox("filter by app, stage or region…"),
 	}
+}
+
+// noStagesYet is what the overview says when the account holds no stage.
+func noStagesYet() string {
+	return "no stages in this account yet: deploy one with " + binary + " deploy"
+}
+
+// emptyText is what the table says without a row: why, and the key that changes it.
+func (o overviewState) emptyText() string {
+	switch {
+	case !o.loaded && o.failed:
+		return "could not list the stages: r tries again"
+	case o.filter.text != "":
+		return "no stage matches " + o.filter.text + ": esc clears the filter"
+	}
+	return noStagesYet()
 }
 
 // notDeployed is the project's stage before its first deploy, listed so it can be planned.
@@ -44,7 +68,8 @@ func notDeployed(s cli.StageSummary) bool {
 	return s.DeployedAt.IsZero() && s.Resources == 0 && s.Retained == 0 && s.Err == nil
 }
 
-// withProject lists the project's stage when it has no state yet, in the region of the session.
+// withProject lists the project's stage when it has no state yet, in the region of the session,
+// in its place in the order of app, stage and region the stages come in.
 func (m model) withProject(stages []cli.StageSummary) []cli.StageSummary {
 	if m.project == "" {
 		return stages
@@ -54,7 +79,11 @@ func (m model) withProject(stages []cli.StageSummary) []cli.StageSummary {
 			return stages
 		}
 	}
-	return append([]cli.StageSummary{{StageRef: cli.StageRef{Region: m.ident.Region, App: m.project, Stage: m.projectStage}}}, stages...)
+	project := cli.StageSummary{StageRef: cli.StageRef{Region: m.ident.Region, App: m.project, Stage: m.projectStage}}
+	at, _ := slices.BinarySearchFunc(stages, project, func(a, b cli.StageSummary) int {
+		return cmp.Or(cmp.Compare(a.App, b.App), cmp.Compare(a.Stage, b.Stage), cmp.Compare(a.Region, b.Region))
+	})
+	return slices.Insert(slices.Clone(stages), at, project)
 }
 
 func (m model) updateOverviewTable() model {
@@ -73,6 +102,7 @@ func (m model) updateOverviewTable() model {
 		o.shown = append(o.shown, s)
 		rows = append(rows, overviewRow(s, s.App == m.project))
 	}
+	o.table.empty = o.emptyText()
 	o.table.setRows(rows)
 	if cur != nil {
 		for i, s := range o.shown {
@@ -125,7 +155,10 @@ func (m model) applyStages(msg stagesLoadedMsg) (model, tea.Cmd) {
 		m.loading = false
 	}
 	if msg.err != nil {
-		return m.loadError("could not list the stages", msg.err, o.loaded)
+		onScreen := o.loaded || o.failed
+		o.failed = true
+		m = m.updateOverviewTable()
+		return m.loadError("could not list the stages", msg.err, onScreen)
 	}
 	o.stages, o.loaded = m.withProject(msg.stages), true
 	if m.page == overviewPage {

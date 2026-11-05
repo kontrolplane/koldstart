@@ -21,6 +21,10 @@ import (
 	"github.com/kontrolplane/koldstart/internal/tui/styles"
 )
 
+// binary is the name the binary was run by, kdst or koldstart, for the commands the interface
+// suggests.
+var binary = cli.Name(os.Args[0])
+
 // backend is what the interface reads and changes, a *cli.Console outside tests.
 type backend interface {
 	Identity() cli.Identity
