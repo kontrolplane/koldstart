@@ -148,7 +148,7 @@ func (m model) headLines(width int) []string {
 		lines = append(lines, row("messages", m.couldNotRead("the depth", err, styles.ToneMuted), width))
 	}
 	if res.Pending != nil {
-		lines = append(lines, row("pending", text(res.Pending.Operation+" since "+formatAgo(res.Pending.StartedAt)+": deploy again to finish it", styles.ToneWarning), width))
+		lines = append(lines, row("pending", text(res.Pending.Operation+" started "+formatAgo(res.Pending.StartedAt)+": deploy again to finish it", styles.ToneWarning), width))
 	}
 	return lines
 }
