@@ -65,7 +65,7 @@ func propertyProblems(name, typ string, problems []cloudcontrol.Problem) error {
 func importCommand(name string, opts *Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "import <resource> <identifier>",
-		Short: "take over a resource koldstart did not create",
+		Short: "take over a resource that exists already",
 		Long: `import takes over an existing resource as one of the resources in the configuration, by the
 identifier cloud control knows it by: a table's name, a queue's url, a bucket's name. It reads the
 resource into the state and changes nothing in aws; the next deploy brings it in line with the

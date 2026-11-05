@@ -27,7 +27,7 @@ func loadProject(ctx context.Context, opts *Options) (*project, error) {
 		return nil, fmt.Errorf("finding %s: %w", opts.Config, err)
 	}
 	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
-		return nil, fmt.Errorf("no %s here: write one, see docs/configuration.md, or pass --config", opts.Config)
+		return nil, fmt.Errorf("no %s here: run %s init to start a project, or pass --config", opts.Config, opts.binary())
 	} else if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", opts.Config, err)
 	}

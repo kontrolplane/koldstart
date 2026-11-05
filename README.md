@@ -277,6 +277,7 @@ Everything koldstart creates is tagged with its app, stage and node, together wi
 | `ui`                             | open the terminal interface                                                     |
 | `unlock`                         | release a stage's lock left by a deploy that did not finish                     |
 | `version`                        | print the version                                                               |
+| `completion <shell>`             | print the completion script for bash, fish, powershell or zsh                   |
 
 ## flags
 
@@ -291,6 +292,8 @@ Everything koldstart creates is tagged with its app, stage and node, together wi
 | `--help`, `-h`   |                      | print the flags and exit                                        |
 
 Credentials come from the standard aws chain: environment variables, the shared config and credentials files, sso, and the role of the machine or ci job koldstart runs on.
+
+A command that fails exits with 1, a command line that is refused, such as an unknown flag, with 2, and one stopped by ctrl+c or SIGTERM with 130.
 
 ## documentation
 

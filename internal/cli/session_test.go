@@ -2,11 +2,20 @@ package cli
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io/fs"
+	"net"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials/ssocreds"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/aws/smithy-go"
 
 	"github.com/kontrolplane/koldstart/internal/awstest"
 	"github.com/kontrolplane/koldstart/internal/config"
@@ -41,13 +50,149 @@ func TestPathStyle(t *testing.T) {
 
 // TestAccountOf checks the account is read from a role's arn, and anything else refused.
 func TestAccountOf(t *testing.T) {
-	if got, err := accountOf("arn:aws:iam::210987654321:role/koldstart-outputs"); err != nil || got != "210987654321" {
-		t.Errorf("accountOf = %q, %v", got, err)
+	tests := []struct {
+		role string
+		want string
+	}{
+		{role: "arn:aws:iam::210987654321:role/koldstart-outputs", want: "210987654321"},
+		{role: "koldstart-outputs"},
+		{role: "arn:aws:s3:::bucket"},
+		{role: "arn:aws:iam::12:role/x"},
 	}
-	for _, bad := range []string{"koldstart-outputs", "arn:aws:s3:::bucket", "arn:aws:iam::12:role/x"} {
-		if _, err := accountOf(bad); err == nil {
-			t.Errorf("accountOf(%q) took it", bad)
-		}
+	for _, tt := range tests {
+		t.Run(tt.role, func(t *testing.T) {
+			got, err := accountOf(tt.role)
+			if tt.want == "" {
+				if err == nil {
+					t.Errorf("accountOf(%q) = %q, want an error", tt.role, got)
+				}
+				return
+			}
+			if err != nil || got != tt.want {
+				t.Errorf("accountOf(%q) = %q, %v, want %q", tt.role, got, err, tt.want)
+			}
+		})
+	}
+}
+
+// sourced is credentials that say where they came from, as the sdk's do.
+type sourced []aws.CredentialSource
+
+func (sourced) Retrieve(context.Context) (aws.Credentials, error) {
+	return aws.Credentials{}, nil
+}
+
+func (s sourced) ProviderSources() []aws.CredentialSource {
+	return s
+}
+
+// TestAccountError checks a failure to find the account says what to do, from where the
+// credentials came from and why they failed.
+func TestAccountError(t *testing.T) {
+	refused := &smithy.GenericAPIError{Code: "InvalidClientTokenId", Message: "The security token included in the request is invalid."}
+	tests := []struct {
+		name    string
+		err     error
+		sources sourced
+		profile string
+		want    string
+	}{
+		{
+			name:    "sso session never started",
+			err:     fmt.Errorf("get credentials: %w", fs.ErrNotExist),
+			sources: sourced{aws.CredentialSourceProfileSSO, aws.CredentialSourceSSO},
+			profile: "sandbox",
+			want:    "run aws sso login --profile sandbox",
+		},
+		{
+			name: "sso token expired",
+			err:  &ssocreds.InvalidTokenError{},
+			want: "run aws sso login",
+		},
+		{
+			name:    "aws login",
+			err:     errors.New("get credentials: expired"),
+			sources: sourced{aws.CredentialSourceProfileLogin},
+			profile: "dev",
+			want:    "run aws login --profile dev",
+		},
+		{
+			name:    "keys in the environment",
+			err:     refused,
+			sources: sourced{aws.CredentialSourceEnvVars},
+			want:    "AWS_ACCESS_KEY_ID",
+		},
+		{
+			name:    "keys in a profile",
+			err:     refused,
+			sources: sourced{aws.CredentialSourceProfile},
+			profile: "ci",
+			want:    "check the access keys of profile ci",
+		},
+		{
+			name:    "expired",
+			err:     &smithy.GenericAPIError{Code: "ExpiredToken"},
+			sources: sourced{aws.CredentialSourceEnvVars},
+			want:    "have expired",
+		},
+		{
+			name:    "no region",
+			err:     fmt.Errorf("request send failed: %w", &net.DNSError{Err: "no such host", Name: "sts.nowhere-1.amazonaws.com"}),
+			sources: sourced{aws.CredentialSourceProfile},
+			want:    "check the region",
+		},
+		{
+			name:    "no credentials",
+			err:     errors.New("no EC2 IMDS role found"),
+			sources: sourced{aws.CredentialSourceIMDS},
+			want:    "no aws credentials: pass --profile",
+		},
+		{
+			name:    "something else",
+			err:     errors.New("connection reset"),
+			sources: sourced{aws.CredentialSourceProfile},
+			want:    "finding the aws account: connection reset",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := accountError(tt.err, aws.Config{Region: "nowhere-1", Credentials: tt.sources}, tt.profile)
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("accountError = %q, want it to contain %q", err, tt.want)
+			}
+		})
+	}
+}
+
+// TestAWSConfigErrors checks a profile that is not in the shared aws config, and a missing region,
+// say what to do.
+func TestAWSConfigErrors(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "config")
+	if err := os.WriteFile(file, []byte("[profile noregion]\naws_access_key_id = AKIAEXAMPLE\naws_secret_access_key = secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AWS_CONFIG_FILE", file)
+	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", filepath.Join(dir, "credentials"))
+	t.Setenv("AWS_REGION", "")
+	t.Setenv("AWS_DEFAULT_REGION", "")
+	t.Setenv("AWS_PROFILE", "")
+
+	tests := []struct {
+		name    string
+		profile string
+		want    string
+	}{
+		{name: "missing profile", profile: "nope", want: `no aws profile "nope" in the shared aws config: set it up with aws configure sso --profile nope, or pass another --profile`},
+		{name: "no region", profile: "noregion", want: "no aws region: set region in the configuration or the aws profile, or pass --region"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := awsConfig(context.Background(), &Options{Profile: tt.profile}, "")
+			if err == nil || err.Error() != tt.want {
+				t.Errorf("awsConfig = %v, want %q", err, tt.want)
+			}
+		})
 	}
 }
 

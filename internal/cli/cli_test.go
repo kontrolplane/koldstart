@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -154,6 +155,143 @@ func TestVersion(t *testing.T) {
 			t.Error("version -o yaml: want an error")
 		}
 	})
+}
+
+// TestUsageErrors checks a command line that is refused says what was wrong, suggests what may
+// have been meant, names the help to read, and exits with 2; a command that fails exits with 1.
+func TestUsageErrors(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("KOLDSTART_CONFIG", "")
+	tests := []struct {
+		name string
+		args []string
+		want string
+		code int
+	}{
+		{name: "typo of a command", args: []string{"plon"}, want: `unknown command "plon" for kdst: did you mean plan? (see kdst --help)`, code: exitUsage},
+		{name: "unknown command", args: []string{"xyzzy"}, want: `unknown command "xyzzy" for kdst (see kdst --help)`, code: exitUsage},
+		{name: "typo of a subcommand", args: []string{"deploy", "functon"}, want: `unknown command "functon" for kdst deploy: did you mean function? (see kdst deploy --help)`, code: exitUsage},
+		{name: "typo of a flag", args: []string{"plan", "--stge", "prod"}, want: "unknown flag: --stge: did you mean --stage? (see kdst plan --help)", code: exitUsage},
+		{name: "unknown shorthand", args: []string{"plan", "-x"}, want: "unknown shorthand flag: 'x' in -x (see kdst plan --help)", code: exitUsage},
+		{name: "no arguments", args: []string{"plan", "prod"}, want: `kdst plan takes no arguments, got "prod" (see kdst plan --help)`, code: exitUsage},
+		{name: "wrong arguments", args: []string{"import", "orders"}, want: "kdst import takes <resource> <identifier>, got 1 argument (see kdst import --help)", code: exitUsage},
+		{name: "required flag", args: []string{"logs"}, want: "kdst logs needs -f/--function (see kdst logs --help)", code: exitUsage},
+		{name: "help of an unknown command", args: []string{"help", "deplo"}, want: `unknown command "deplo" for kdst: did you mean deploy? (see kdst --help)`, code: exitUsage},
+		{name: "unknown output", args: []string{"version", "-o", "yaml"}, want: `-o "yaml": want text or json (see kdst version --help)`, code: exitUsage},
+		{name: "no configuration", args: []string{"plan"}, want: "no koldstart.pkl here: run kdst init to start a project, or pass --config", code: exitFailed},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := run(t, nameShort, tt.args...)
+			if err == nil {
+				t.Fatalf("%v: want an error", tt.args)
+			}
+			if err.Error() != tt.want {
+				t.Errorf("%v = %q, want %q", tt.args, err, tt.want)
+			}
+			if code := ExitCode(err); code != tt.code {
+				t.Errorf("ExitCode = %d, want %d", code, tt.code)
+			}
+			if out != "" {
+				t.Errorf("%v printed %q, want nothing: main prints the error once", tt.args, out)
+			}
+		})
+	}
+}
+
+// TestHelpGroups checks the root's help lists the commands in their groups, in order, and leaves
+// out the line for running the root itself, which only prints the help.
+func TestHelpGroups(t *testing.T) {
+	out, err := run(t, nameShort)
+	if err != nil {
+		t.Fatalf("no arguments: %v", err)
+	}
+	if strings.Contains(out, "kdst [flags]") {
+		t.Errorf("the help shows how to run the root:\n%s", out)
+	}
+	want := []string{"Start a project:", "  init ", "Deploy a stage:", "  package ", "  plan ", "  deploy ", "Work with a stage:", "  invoke ", "  outputs ", "Other commands:", "  version ", "  completion ", "  help "}
+	rest := out
+	for _, w := range want {
+		i := strings.Index(rest, w)
+		if i < 0 {
+			t.Fatalf("the help does not show %q after what came before:\n%s", w, out)
+		}
+		rest = rest[i+len(w):]
+	}
+}
+
+// TestCompletion checks the values of flags and the commands of help complete, and that a
+// command without arguments completes no file names.
+func TestCompletion(t *testing.T) {
+	ui := func(context.Context, *Console, string) error { return nil }
+	tests := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{name: "commands", args: []string{"pl"}, want: []string{"plan\t"}},
+		{name: "theme", args: []string{"ui", "--theme", ""}, want: []string{"auto", "dark", "light", ":4"}},
+		{name: "output", args: []string{"version", "-o", ""}, want: []string{"text", "json", ":4"}},
+		{name: "help", args: []string{"help", "deploy", ""}, want: []string{"function\t", ":4"}},
+		{name: "no arguments", args: []string{"plan", ""}, want: []string{":4"}},
+		{name: "configuration", args: []string{"--config", ""}, want: []string{"pkl", ":8"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := Root(nameShort, ui)
+			var out bytes.Buffer
+			root.SetOut(&out)
+			root.SetErr(&bytes.Buffer{})
+			root.SetArgs(append([]string{"__complete"}, tt.args...))
+			if err := root.Execute(); err != nil {
+				t.Fatalf("__complete %v: %v", tt.args, err)
+			}
+			for _, w := range tt.want {
+				if !strings.Contains(out.String(), w) {
+					t.Errorf("__complete %v does not give %q:\n%s", tt.args, w, out.String())
+				}
+			}
+		})
+	}
+}
+
+// TestDistance checks the edits counted between a typo and what was meant.
+func TestDistance(t *testing.T) {
+	tests := []struct {
+		a, b string
+		want int
+	}{
+		{a: "stage", b: "stage", want: 0},
+		{a: "stge", b: "stage", want: 1},
+		{a: "regoin", b: "region", want: 2},
+		{a: "", b: "debug", want: 5},
+	}
+	for _, tt := range tests {
+		t.Run(tt.a+"-"+tt.b, func(t *testing.T) {
+			if got := distance(tt.a, tt.b); got != tt.want {
+				t.Errorf("distance(%q, %q) = %d, want %d", tt.a, tt.b, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestOrList checks choices are joined with commas, and the last with or.
+func TestOrList(t *testing.T) {
+	tests := []struct {
+		choices []string
+		want    string
+	}{
+		{choices: []string{"plan"}, want: "plan"},
+		{choices: []string{"plan", "deploy"}, want: "plan or deploy"},
+		{choices: []string{"--stage", "--stack", "--start"}, want: "--stage, --stack or --start"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			if got := orList(tt.choices); got != tt.want {
+				t.Errorf("orList(%q) = %q, want %q", tt.choices, got, tt.want)
+			}
+		})
+	}
 }
 
 // TestDebugLog checks --debug creates debug.log in the working directory, and that without it

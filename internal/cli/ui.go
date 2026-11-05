@@ -27,7 +27,7 @@ and run its functions on this machine; any stage can be browsed, invoked, unlock
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if !slices.Contains(themes, theme) {
-				return fmt.Errorf("--theme %q: want auto, dark or light", theme)
+				return usage(cmd, fmt.Errorf("--theme %q: want auto, dark or light", theme))
 			}
 			c, err := openConsole(cmd.Context(), name, opts)
 			if err != nil {
@@ -37,5 +37,6 @@ and run its functions on this machine; any stage can be browsed, invoked, unlock
 		},
 	}
 	cmd.Flags().StringVar(&theme, "theme", "auto", "auto follows the terminal; dark and light paint their own background")
+	_ = cmd.RegisterFlagCompletionFunc("theme", cobra.FixedCompletions(themes, cobra.ShellCompDirectiveNoFileComp))
 	return cmd
 }
