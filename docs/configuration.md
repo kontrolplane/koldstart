@@ -228,7 +228,7 @@ Resources that hold data are retained: `kdst remove` leaves them in place, and t
 }
 ```
 
-A plan that would replace a retained resource stops, because the new one starts empty. `--allow-replace` replaces it, and leaves the old one in place; when the new one needs the old one's name, give it another.
+A plan that would replace a retained resource stops, because the new one starts empty, and says which properties need a new one. `kdst plan --allow-replace` and `kdst deploy --allow-replace` replace it, and leave the old one in place; when the new one needs the old one's name, give it another.
 
 ### taking over a resource
 
@@ -271,7 +271,11 @@ outputs {
 }
 ```
 
-`kdst outputs` prints them, as does every deploy, with `httpApiUrl` and a `<function>Url` for each function url.
+Every deploy resolves them, records them in the state and prints them, with `httpApiUrl`, `webSocketUrl`, `httpDomainTarget` with a domain, and a `<function>Url` for each function url. `kdst outputs` prints what the last deploy recorded, one `name = value` a line, and `-o json` prints them as one json object, `{}` when there are none:
+
+```bash
+kdst outputs -o json | jq -r .table
+```
 
 ## stages
 
@@ -302,7 +306,7 @@ environment {
 }
 ```
 
-The state is read from the stage's bucket, `koldstart-<account>-<region>`, at `<app>/<stage>/state.json`, and only from a bucket that account owns. With a `role`, koldstart assumes it to read it, and the stage is in the role's account unless `account` says another. The role needs `s3:GetObject` on that key, and the deploying credentials need `sts:AssumeRole` on the role. Without a role, the deploying credentials read it themselves, which the bucket's policy has to allow for another account.
+The state is read from the stage's bucket, `koldstart-state-<account>-<region>`, at `<app>/<stage>/state.json`, and only from a bucket that account owns. With a `role`, koldstart assumes it to read it, and the stage is in the role's account unless `account` says another. The role needs `s3:GetObject` on that key, and the deploying credentials need `sts:AssumeRole` on the role. Without a role, the deploying credentials read it themselves, which the bucket's policy has to allow for another account.
 
 ## secrets
 
