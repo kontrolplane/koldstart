@@ -40,9 +40,11 @@ const (
 
 // stageState is one stage: its functions, resources, outputs and the history of its state.
 type stageState struct {
-	ref    cli.StageRef
-	gen    int
-	loaded bool
+	ref cli.StageRef
+	gen int
+	// answered, and the others of each load, are the generation of its last load that came back.
+	answered int
+	loaded   bool
 	// err is why the state could not be read, before it ever was.
 	err    string
 	st     *state.State
@@ -59,19 +61,22 @@ type stageState struct {
 	// shownDeploys are the deploys the history tab lists, by their index in deploys(history).
 	shownDeploys []int
 
-	historyGen    int
-	historyLoaded bool
+	historyGen      int
+	historyAnswered int
+	historyLoaded   bool
 	// historyErr is why the history could not be listed, before it ever was.
 	historyErr string
 	history    []state.ObjectVersion
 
-	metricsGen int
-	metrics    map[string]cli.Metrics
+	metricsGen      int
+	metricsAnswered int
+	metrics         map[string]cli.Metrics
 	// metricsAt is when the metrics on screen were read; metricsErr is why the last read failed.
-	metricsAt  time.Time
-	metricsErr string
-	queuesGen  int
-	queues     map[string]cli.QueueDepth
+	metricsAt      time.Time
+	metricsErr     string
+	queuesGen      int
+	queuesAnswered int
+	queues         map[string]cli.QueueDepth
 	// queueAt is when each depth was read; queueErrs is why the last read of one failed, whose
 	// depth from the read before stays.
 	queueAt   map[string]time.Time
@@ -234,6 +239,7 @@ func (m model) applyStage(msg stageLoadedMsg) (model, tea.Cmd) {
 	if msg.gen != s.gen {
 		return m, nil
 	}
+	s.answered = msg.gen
 	if m.page == stagePage {
 		m.loading = false
 	}
@@ -249,6 +255,7 @@ func (m model) applyStage(msg stageLoadedMsg) (model, tea.Cmd) {
 	if msg.state == nil {
 		msg.state = state.New(s.ref.App, s.ref.Stage, s.ref.Region, m.ident.Account)
 	}
+	written := s.st != nil && s.st.Serial != msg.state.Serial
 	s.st, s.lock, s.loaded, s.err = msg.state, msg.lock, true, ""
 	if m.page == stagePage {
 		m = m.markRead()
@@ -259,7 +266,11 @@ func (m model) applyStage(msg stageLoadedMsg) (model, tea.Cmd) {
 	}
 	m, metrics := m.loadMetrics()
 	m, queues := m.loadQueues()
-	return m, tea.Batch(metrics, queues)
+	var history tea.Cmd
+	if written && s.historyLoaded {
+		m, history = m.loadHistory()
+	}
+	return m, tea.Batch(metrics, queues, history)
 }
 
 func (m model) applyMetrics(msg metricsLoadedMsg) (model, tea.Cmd) {
@@ -267,6 +278,7 @@ func (m model) applyMetrics(msg metricsLoadedMsg) (model, tea.Cmd) {
 	if msg.gen != s.metricsGen {
 		return m, nil
 	}
+	s.metricsAnswered = msg.gen
 	if msg.err != nil {
 		s.metricsErr = msg.err.Error()
 	} else {
@@ -280,6 +292,7 @@ func (m model) applyQueues(msg queuesLoadedMsg) (model, tea.Cmd) {
 	if msg.gen != s.queuesGen {
 		return m, nil
 	}
+	s.queuesAnswered = msg.gen
 	if msg.depths == nil {
 		msg.depths = map[string]cli.QueueDepth{}
 	}
@@ -313,6 +326,7 @@ func (m model) applyHistory(msg historyLoadedMsg) (model, tea.Cmd) {
 	if msg.gen != s.historyGen {
 		return m, nil
 	}
+	s.historyAnswered = msg.gen
 	if msg.err != nil {
 		if !s.historyLoaded {
 			s.historyErr = msg.err.Error()
@@ -571,11 +585,12 @@ func shortSHA(sha string) string {
 	return sha
 }
 
-// switchTab moves to another tab of the stage, reading the history the first time it is shown.
+// switchTab moves to another tab of the stage, reading the history each time it is shown, as a
+// deploy may have written the state since; what was read before shows until it is in.
 func (m model) switchTab(by int) (model, tea.Cmd) {
 	s := &m.state.stage
 	s.tab = stageTab((int(s.tab) + by + len(stageTabs)) % len(stageTabs))
-	if s.tab == historyTab && !s.historyLoaded {
+	if s.tab == historyTab {
 		return m.loadHistory()
 	}
 	return m, nil

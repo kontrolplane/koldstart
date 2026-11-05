@@ -291,11 +291,12 @@ func (m model) loadFunctionLive() (model, tea.Cmd) {
 	}
 }
 
-// loadMetrics reads the metrics of the stage's functions, by their names in lambda.
+// loadMetrics reads the metrics of the stage's functions, by their names in lambda, unless a read
+// of them is still out.
 func (m model) loadMetrics() (model, tea.Cmd) {
 	s := &m.state.stage
 	names := s.lambdaNames()
-	if len(names) == 0 {
+	if len(names) == 0 || s.metricsGen != s.metricsAnswered {
 		return m, nil
 	}
 	gen := m.next()
@@ -309,11 +310,12 @@ func (m model) loadMetrics() (model, tea.Cmd) {
 	}
 }
 
-// loadQueues reads how many messages each queue of the stage holds, by its id in the state.
+// loadQueues reads how many messages each queue of the stage holds, by its id in the state,
+// unless a read of them is still out.
 func (m model) loadQueues() (model, tea.Cmd) {
 	s := &m.state.stage
 	queues := s.queueURLs()
-	if len(queues) == 0 {
+	if len(queues) == 0 || s.queuesGen != s.queuesAnswered {
 		return m, nil
 	}
 	gen := m.next()

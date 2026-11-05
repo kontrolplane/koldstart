@@ -34,8 +34,10 @@ const stampWidth = 14
 // logState is the logs of the function on screen: the lines read, whether the newest are
 // followed, as a live tail brings them or by reading again, and how far back they go.
 type logState struct {
-	gen    int
-	loaded bool
+	gen int
+	// answered is the generation of the last read of new lines that came back.
+	answered int
+	loaded   bool
 	// err is why the first read of the logs failed.
 	err   string
 	lines []cli.LogEvent
@@ -70,6 +72,8 @@ func (m model) applyLogs(msg logsLoadedMsg) (model, tea.Cmd) {
 	}
 	if msg.how == logsPrepend {
 		l.loadingOlder = false
+	} else {
+		l.answered = msg.gen
 	}
 	if msg.err != nil {
 		if !l.loaded && msg.how != logsPrepend {

@@ -48,8 +48,9 @@ type functionState struct {
 	tab         functionTab
 	scroll      int
 
-	liveGen int
-	live    *cli.FunctionState
+	liveGen      int
+	liveAnswered int
+	live         *cli.FunctionState
 	// liveAt is when live was read; liveErr is why the last read failed.
 	liveAt  time.Time
 	liveErr string
@@ -138,6 +139,7 @@ func (m model) applyFunctionLive(msg functionLiveMsg) (model, tea.Cmd) {
 	if msg.gen != f.liveGen {
 		return m, nil
 	}
+	f.liveAnswered = msg.gen
 	if msg.err != nil {
 		f.liveErr = msg.err.Error()
 		return m, nil
@@ -149,16 +151,24 @@ func (m model) applyFunctionLive(msg functionLiveMsg) (model, tea.Cmd) {
 
 // refreshFunction reads the function again, its state, what lambda says, and the new lines of
 // its logs when no live tail brings them.
-func (m model) refreshFunction() (model, tea.Cmd) {
-	m, cmd := m.loadStage()
-	cmds := []tea.Cmd{cmd}
-	if m.state.function.lambdaName != "" {
+//
+// On a tick, what is still being read since the last refresh is not asked for again: a read
+// slower than the refresh would otherwise be dropped as stale every time, and never land.
+func (m model) refreshFunction(tick bool) (model, tea.Cmd) {
+	var cmds []tea.Cmd
+	var cmd tea.Cmd
+	s, f := m.state.stage, m.state.function
+	if !tick || s.gen == s.answered {
+		m, cmd = m.loadStage()
+		cmds = append(cmds, cmd)
+	}
+	if f.lambdaName != "" && (!tick || f.liveGen == f.liveAnswered) {
 		m, cmd = m.loadFunctionLive()
 		cmds = append(cmds, cmd)
 	}
 	m, cmd = m.loadMetrics()
 	cmds = append(cmds, cmd)
-	if !m.state.function.logs.tailing {
+	if !f.logs.tailing && (!tick || f.logs.gen == f.logs.answered) {
 		m, cmd = m.refreshLogs()
 		cmds = append(cmds, cmd)
 	}
@@ -197,7 +207,7 @@ func (m model) functionUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Deploy):
 		return m.planDeploy(m.state.stage.ref, f.name)
 	case key.Matches(msg, m.keys.Refresh):
-		return m.refreshFunction()
+		return m.refreshFunction(false)
 	case key.Matches(msg, m.keys.Copy):
 		return m.copy(m.functionCopyValue())
 	}

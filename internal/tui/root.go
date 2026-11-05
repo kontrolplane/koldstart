@@ -64,21 +64,31 @@ func (m model) copy(text string) (model, tea.Cmd) {
 	return m, tea.Batch(tea.SetClipboard(text), status)
 }
 
-// refresh reads the page on screen again.
+// refresh reads the page on screen again, on the refresh's tick. What is still being read since
+// the last tick is not asked for again: a read slower than refreshEvery would otherwise be
+// dropped as stale every time, and the page would never change.
 func (m model) refresh() (model, tea.Cmd) {
 	switch m.page {
 	case overviewPage:
+		if o := m.state.overview; o.gen != o.answered {
+			return m, nil
+		}
 		return m.loadStages()
 	case stagePage:
-		m, cmd := m.loadStage()
-		if m.state.stage.tab == historyTab {
-			var history tea.Cmd
-			m, history = m.loadHistory()
-			cmd = tea.Batch(cmd, history)
+		var cmds []tea.Cmd
+		var cmd tea.Cmd
+		s := m.state.stage
+		if s.gen == s.answered {
+			m, cmd = m.loadStage()
+			cmds = append(cmds, cmd)
 		}
-		return m, cmd
+		if s.tab == historyTab && s.historyGen == s.historyAnswered {
+			m, cmd = m.loadHistory()
+			cmds = append(cmds, cmd)
+		}
+		return m, tea.Batch(cmds...)
 	case functionPage:
-		return m.refreshFunction()
+		return m.refreshFunction(true)
 	}
 	return m, nil
 }

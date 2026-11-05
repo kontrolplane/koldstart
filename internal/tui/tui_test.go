@@ -3,6 +3,7 @@ package tui
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -119,6 +120,48 @@ func TestStaleLoadsAreDropped(t *testing.T) {
 	m, _ = update(t, m, stagesLoadedMsg{gen: m.state.overview.gen, err: errAWS})
 	if len(m.state.overview.shown) != 3 || !strings.Contains(m.status, "aws said no") || m.error != "" {
 		t.Fatalf("a failed refresh: %d stages, status %q, error %q; want the stages kept and the error in the footer", len(m.state.overview.shown), m.status, m.error)
+	}
+}
+
+// TestRefreshWaitsForSlowLoads checks a refresh tick does not ask again for what the last one is
+// still reading: a read slower than the refresh used to be overtaken every time, so its result
+// was dropped as stale and the page never changed, nor showed the error of an unreachable aws.
+func TestRefreshWaitsForSlowLoads(t *testing.T) {
+	tests := []struct {
+		name string
+		keys []string
+		gens func(m model) []int
+	}{
+		{name: "overview", keys: []string{"q"}, gens: func(m model) []int { return []int{m.state.overview.gen} }},
+		{name: "stage", keys: []string{"shift+tab"}, gens: func(m model) []int {
+			return []int{m.state.stage.gen, m.state.stage.historyGen}
+		}},
+		{name: "function", keys: []string{"enter"}, gens: func(m model) []int {
+			f := m.state.function
+			return []int{m.state.stage.gen, f.liveGen, f.logs.gen, m.state.stage.metricsGen}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := pressKeys(t, started(t, newFake(t)), tt.keys...)
+			before := tt.gens(m)
+			m, slow := m.refresh()
+			asked := tt.gens(m)
+			if slices.Equal(asked, before) {
+				t.Fatal("the first tick read nothing again")
+			}
+			m, again := m.refresh()
+			if got := tt.gens(m); !slices.Equal(got, asked) || len(run(again)) != 0 {
+				t.Errorf("a tick with the last refresh still out asked again: generations %v, then %v", asked, got)
+			}
+			m = settle(t, m, slow)
+			if m.refreshedAt.IsZero() && tt.name != "function" {
+				t.Error("the slow refresh did not land")
+			}
+			if m, next := m.refresh(); slices.Equal(tt.gens(m), asked) || next == nil {
+				t.Error("once the slow refresh landed, the next tick did not read again")
+			}
+		})
 	}
 }
 
@@ -302,6 +345,39 @@ func TestHistory(t *testing.T) {
 	m = pressKeys(t, m, "enter")
 	if v := screen(m); m.page != versionPage || !strings.Contains(v, "+ resource/table") {
 		t.Fatalf("page %v; the version does not show the table it added", m.page)
+	}
+}
+
+// TestHistoryAfterDeploy checks the history is read again when the state was written since it
+// was read, and each time its tab is shown, so a deploy made meanwhile is listed.
+func TestHistoryAfterDeploy(t *testing.T) {
+	tests := []struct {
+		name string
+		then func(t *testing.T, m model) model
+	}{
+		{name: "the state is written", then: func(t *testing.T, m model) model {
+			m, cmd := m.loadStage()
+			return settle(t, m, cmd)
+		}},
+		{name: "the tab is shown again", then: func(t *testing.T, m model) model {
+			return pressKeys(t, m, "shift+tab")
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFake(t)
+			m := pressKeys(t, started(t, f), "shift+tab", "tab")
+			f.mu.Lock()
+			written := testState(ordersDev)
+			written.Serial++
+			f.states[ordersDev] = written
+			f.history = append([]state.ObjectVersion{{ID: "v3", LastModified: time.Now().Add(time.Hour), Latest: true}}, f.history...)
+			f.mu.Unlock()
+			m = tt.then(t, m)
+			if n := len(m.state.stage.history); n != 3 {
+				t.Errorf("%d versions listed, want the deploy made since too", n)
+			}
+		})
 	}
 }
 

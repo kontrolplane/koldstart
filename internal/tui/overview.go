@@ -12,8 +12,11 @@ import (
 
 // overviewState is the list of every app and stage the account holds.
 type overviewState struct {
-	gen    int
-	loaded bool
+	gen int
+	// answered is the generation of the last load that came back; a refresh does not ask again
+	// while gen is still out, or a read slower than the refresh would be dropped every time.
+	answered int
+	loaded   bool
 	// opened says the project's stage was opened on start, which happens once.
 	opened bool
 	// failed says a load of the stages failed, so the next failure goes to the footer rather
@@ -151,6 +154,7 @@ func (m model) applyStages(msg stagesLoadedMsg) (model, tea.Cmd) {
 	if msg.gen != o.gen {
 		return m, nil
 	}
+	o.answered = msg.gen
 	if m.page == overviewPage {
 		m.loading = false
 	}
