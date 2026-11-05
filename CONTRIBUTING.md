@@ -14,6 +14,7 @@ make test
 
 - `make build` builds `bin/koldstart` and `bin/kdst`.
 - `make emulator test-emulator` runs the tests that talk to aws against floci; `make emulator-down` stops it.
+- [hack/floci/aws-config](hack/floci/aws-config) is an aws profile for floci, to run kdst and the aws cli against it by hand: `AWS_CONFIG_FILE=hack/floci/aws-config kdst --profile local deploy`, or copy the profile into `~/.aws/config`.
 - `make check` runs what ci runs.
 
 ## e2e tests

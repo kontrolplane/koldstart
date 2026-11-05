@@ -21,6 +21,9 @@ type Schema struct {
 	ReadOnly []string
 	// Provisionable is false for a type cloud control cannot create.
 	Provisionable bool
+
+	doc         map[string]any
+	definitions map[string]any
 }
 
 // Schemas looks up resource type schemas.
@@ -63,17 +66,26 @@ func (r *Registry) Schema(ctx context.Context, typ string) (*Schema, error) {
 	return s, nil
 }
 
-// ParseSchema reads the create only and read only properties of a schema, by their top-level
-// property: a change anywhere under /properties/KeySchema counts as one of KeySchema.
+// ParseSchema reads a schema: its create only and read only properties, by their top-level
+// property, so a change anywhere under /properties/KeySchema counts as one of KeySchema, and the
+// rest, for Check.
 func ParseSchema(doc string) (*Schema, error) {
 	var raw struct {
-		CreateOnly []string `json:"createOnlyProperties"`
-		ReadOnly   []string `json:"readOnlyProperties"`
+		CreateOnly  []string       `json:"createOnlyProperties"`
+		ReadOnly    []string       `json:"readOnlyProperties"`
+		Definitions map[string]any `json:"definitions"`
 	}
 	if err := json.Unmarshal([]byte(doc), &raw); err != nil {
 		return nil, err
 	}
-	return &Schema{CreateOnly: topLevel(raw.CreateOnly), ReadOnly: topLevel(raw.ReadOnly), Provisionable: true}, nil
+	var whole map[string]any
+	if err := json.Unmarshal([]byte(doc), &whole); err != nil {
+		return nil, err
+	}
+	return &Schema{
+		CreateOnly: topLevel(raw.CreateOnly), ReadOnly: topLevel(raw.ReadOnly), Provisionable: true,
+		doc: whole, definitions: raw.Definitions,
+	}, nil
 }
 
 func topLevel(pointers []string) []string {

@@ -22,6 +22,7 @@ internal/scaffold/          kdst init's templates: a koldstart.pkl, a handler in
 internal/awstest/           connects tests to the emulator
 hack/schema/                packages the schema in pkl/ with the pkl koldstart pins, for releases
 hack/pkl/                   downloads the pinned pkl for a platform, for the image
+hack/floci/                 an aws profile for floci, for running kdst against it by hand
 examples/                   example projects, each a go module of its own; examples_test.go checks they evaluate
 test/e2e/                   deploys examples/full-featured to a real account, behind the e2e build tag
 internal/version/           the build's version, stamped by the linker, in route's shape

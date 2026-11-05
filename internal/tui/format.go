@@ -90,3 +90,23 @@ func prettyJSON(data []byte) string {
 	}
 	return b.String()
 }
+
+// formatBytes writes a size in the largest unit that keeps it above 1: 512 b, 3.8 mb.
+func formatBytes(n int64) string {
+	units := []string{"b", "kb", "mb", "gb"}
+	v := float64(n)
+	i := 0
+	for v >= 1024 && i < len(units)-1 {
+		v /= 1024
+		i++
+	}
+	if i == 0 {
+		return fmt.Sprintf("%d b", n)
+	}
+	return fmt.Sprintf("%.1f %s", v, units[i])
+}
+
+// formatMillis writes milliseconds the way a person reads them: 3ms, 340ms, 1.2s.
+func formatMillis(ms float64) string {
+	return formatDuration(time.Duration(ms * float64(time.Millisecond)))
+}

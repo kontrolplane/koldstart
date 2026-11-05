@@ -236,7 +236,7 @@ func TestInvoke(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "get-order.json"), []byte(`{"id": 1}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	m := pressKeys(t, started(t, f), "enter", "tab", "tab")
+	m := pressKeys(t, started(t, f), "enter", "tab", "tab", "tab")
 	if m.page != functionPage || m.state.function.tab != invokeTab {
 		t.Fatalf("page %v tab %v, want the invoke tab of the function", m.page, m.state.function.tab)
 	}
@@ -279,15 +279,15 @@ func TestRunLocal(t *testing.T) {
 // TestLogs checks the logs tab shows the lines, f stops following, and scrolling up does too.
 func TestLogs(t *testing.T) {
 	m := pressKeys(t, started(t, newFake(t)), "enter", "tab")
-	if !strings.Contains(screen(m), "order placed") || !m.state.function.follow {
+	if !strings.Contains(screen(m), "order placed") || !m.state.function.logs.follow {
 		t.Fatal("the logs tab does not show the logs, or does not follow them")
 	}
 	m = pressKeys(t, m, "f")
-	if m.state.function.follow {
+	if m.state.function.logs.follow {
 		t.Error("f did not stop following")
 	}
 	m = pressKeys(t, m, "f", "k")
-	if m.state.function.follow {
+	if m.state.function.logs.follow {
 		t.Error("scrolling up did not stop following")
 	}
 }
@@ -315,7 +315,7 @@ func TestStateChanges(t *testing.T) {
 	got := make([]string, 0, len(changes))
 	for _, c := range changes {
 		var b strings.Builder
-		for _, s := range c {
+		for _, s := range c.line {
 			b.WriteString(s.Text)
 		}
 		got = append(got, b.String())
@@ -336,6 +336,9 @@ func layoutPages(t *testing.T, w, h int) map[string]model {
 	st.Outputs[long] = strings.Repeat("https://example.com/", 20)
 	f.logs = append(f.logs, cli.LogEvent{Time: time.Now(), Message: strings.Repeat("a long line 漢字 ", 60)})
 	f.locks[ordersDev] = &state.LockInfo{Who: long, Where: long, Operation: "deploy", Since: time.Now()}
+	f.logs = append(requestLogs(time.Now().Add(-time.Minute)), f.logs...)
+	f.live = map[string]any{"BillingMode": "PROVISIONED", long: strings.Repeat("v", 300)}
+	f.function = cli.FunctionState{State: "Failed", StateReason: long, LastUpdate: "Failed", LastUpdateReason: long, CodeSHA256: "ff", Memory: 9999}
 
 	m := newModel(t.Context(), f)
 	m, _ = update(t, m, tea.WindowSizeMsg{Width: w, Height: h})
@@ -350,15 +353,20 @@ func layoutPages(t *testing.T, w, h int) map[string]model {
 	pages["version"] = m
 	m = pressKeys(t, m, "q", "tab", "tab", "enter")
 	pages["resource"] = m
+	pages["resource in aws"] = pressKeys(t, m, "tab")
 	m = pressKeys(t, m, "q", "tab", "enter")
 	pages["function"] = m
 	m = pressKeys(t, m, "tab")
 	pages["logs"] = m
+	inv := pressKeys(t, m, "tab")
+	pages["invocations"] = inv
+	pages["invocation"] = pressKeys(t, inv, "enter")
 	m = pressKeys(t, m, "tab", "i")
 	pages["invoke"] = m
 	p := pressKeys(t, m, "q", "d")
 	pages["plan"] = p
 	pages["plan applied"] = pressKeys(t, p, "ctrl+s")
+	pages["plan diff"] = pressKeys(t, p, "enter")
 	pages["unlock"] = pressKeys(t, m, "q", "ctrl+x")
 	pages["remove"] = pressKeys(t, m, "q", "ctrl+d")
 	o := pressKeys(t, m, "q", "q")
@@ -409,6 +417,14 @@ func TestEscapesNeverReachTheTerminal(t *testing.T) {
 	f.logs = []cli.LogEvent{{Time: time.Now(), Message: evil}}
 	f.result = cli.Invocation{Payload: []byte(evil), Logs: evil, Error: evil}
 	f.plan = &engine.Plan{Changes: []engine.Change{{ID: evil, Action: engine.Update, Fields: []string{evil}, Before: map[string]any{evil: evil}, After: map[string]any{evil: "y"}}}}
+	f.live = map[string]any{evil: evil}
+	f.function = cli.FunctionState{State: evil, StateReason: evil, LastUpdate: evil, LastUpdateReason: evil, Runtime: evil}
+	f.logs = []cli.LogEvent{
+		{Time: time.Now(), Stream: evil, Message: "START RequestId: " + evil},
+		{Time: time.Now(), Stream: evil, Message: "2026-11-05T10:00:00.001Z\t" + evil + "\tERROR\t" + evil},
+		{Time: time.Now(), Stream: evil, Message: `{"msg":"` + evil + `","level":"error"}`},
+		{Time: time.Now(), Stream: evil, Message: "msg=" + evil + " level=error"},
+	}
 
 	check := func(name string, m model) {
 		t.Helper()
@@ -427,7 +443,13 @@ func TestEscapesNeverReachTheTerminal(t *testing.T) {
 	check("resource", r)
 	fn := pressKeys(t, m, "tab", "tab", "enter")
 	check("function", fn)
+	check("overview", fn)
 	check("logs", pressKeys(t, fn, "tab"))
+	inv := pressKeys(t, fn, "tab", "tab")
+	check("invocations", inv)
+	check("invocation", pressKeys(t, inv, "enter"))
+	check("resource in aws", pressKeys(t, r, "tab"))
+	check("plan diff", pressKeys(t, m, "d", "enter"))
 	check("invoke", pressKeys(t, fn, "tab", "tab", "i"))
 	check("unlock", pressKeys(t, m, "ctrl+x"))
 	check("plan", pressKeys(t, m, "d"))

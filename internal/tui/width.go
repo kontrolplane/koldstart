@@ -3,9 +3,12 @@ package tui
 import (
 	"strings"
 
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/kontrolplane/koldstart/internal/tui/keys"
 	"github.com/kontrolplane/koldstart/internal/tui/styles"
 )
 
@@ -95,4 +98,50 @@ func frame(title, meta, foot, body string) string {
 	}
 	b.WriteString("\n" + blank + "\n" + bottom)
 	return b.String()
+}
+
+// moveCursor moves a cursor among n rows by the key: a row, a page, or to the first or last. It
+// reports whether the key was one that moves it.
+func moveCursor(msg tea.KeyPressMsg, k keys.KeyMap, cursor, n, page int) (int, bool) {
+	switch {
+	case key.Matches(msg, k.Up):
+		cursor--
+	case key.Matches(msg, k.Down):
+		cursor++
+	case key.Matches(msg, k.PageUp):
+		cursor -= page
+	case key.Matches(msg, k.PageDown):
+		cursor += page
+	case key.Matches(msg, k.Top):
+		cursor = 0
+	case key.Matches(msg, k.Bottom):
+		cursor = n - 1
+	default:
+		return cursor, false
+	}
+	return max(0, min(cursor, n-1)), true
+}
+
+// selectable draws height lines of a page with rows that can be selected, rows holding the index
+// of the line of each, the selected one marked. It scrolls so the selected row is in sight, and
+// returns the scroll it drew at.
+func selectable(lines []string, rows []int, cursor, scroll, height int) (string, int) {
+	selected := -1
+	if cursor >= 0 && cursor < len(rows) {
+		selected = rows[cursor]
+	}
+	if selected >= 0 {
+		scroll = min(scroll, selected)
+		scroll = max(scroll, selected-height+1)
+	}
+	scroll = max(0, min(scroll, len(lines)-height))
+	out := make([]string, 0, height)
+	for i := scroll; i < min(len(lines), scroll+height); i++ {
+		mark := "  "
+		if i == selected {
+			mark = styles.Accent("▌") + " "
+		}
+		out = append(out, mark+lines[i])
+	}
+	return strings.Join(out, "\n"), scroll
 }

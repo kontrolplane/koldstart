@@ -14,6 +14,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/apigatewayv2 v1.46.5
 	github.com/aws/aws-sdk-go-v2/service/cloudcontrol v1.38.9
 	github.com/aws/aws-sdk-go-v2/service/cloudformation v1.82.4
+	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.75.4
 	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.91.0
 	github.com/aws/aws-sdk-go-v2/service/iam v1.64.6
 	github.com/aws/aws-sdk-go-v2/service/lambda v1.114.0

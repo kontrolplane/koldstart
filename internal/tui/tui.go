@@ -31,7 +31,12 @@ type backend interface {
 	Stage(ctx context.Context, ref cli.StageRef) (*state.State, *state.LockInfo, error)
 	History(ctx context.Context, ref cli.StageRef) ([]state.ObjectVersion, error)
 	Version(ctx context.Context, ref cli.StageRef, id string) (*state.State, error)
-	Logs(ctx context.Context, ref cli.StageRef, group string, since time.Time) ([]cli.LogEvent, error)
+	LogsBetween(ctx context.Context, ref cli.StageRef, group string, since, until time.Time, filter string) ([]cli.LogEvent, error)
+	Tail(ctx context.Context, ref cli.StageRef, groupARN string, fn func([]cli.LogEvent)) error
+	Live(ctx context.Context, ref cli.StageRef, typ, physicalID string) (map[string]any, error)
+	Function(ctx context.Context, ref cli.StageRef, name string) (cli.FunctionState, error)
+	Queue(ctx context.Context, ref cli.StageRef, url string) (cli.QueueDepth, error)
+	Metrics(ctx context.Context, ref cli.StageRef, names []string) (map[string]cli.Metrics, error)
 	Invoke(ctx context.Context, ref cli.StageRef, function string, payload []byte) (cli.Invocation, error)
 	InvokeLocal(ctx context.Context, ref cli.StageRef, function string, payload []byte) (cli.Invocation, error)
 	Plan(ctx context.Context, ref cli.StageRef, function string) (*engine.Plan, error)

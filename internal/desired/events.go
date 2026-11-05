@@ -26,7 +26,20 @@ func authorizerID(name string) string       { return "authorizer/" + name }
 func schedulerRoleID(fn string) string      { return "schedulerrole/" + fn }
 func permissionID(fn, source string) string { return "permission/" + fn + "/" + source }
 func eventID(kind, fn, key string) string   { return kind + "/" + fn + "/" + key }
-func notificationID(bucket string) string   { return "notification/" + bucket }
+
+// The kinds of the events' nodes, which start their ids.
+const (
+	kindSchedule     = "schedule"
+	kindMapping      = "mapping"
+	kindSubscription = "subscription"
+)
+
+// kindOf is the kind of a node, what its id starts with.
+func kindOf(id string) string {
+	kind, _, _ := strings.Cut(id, "/")
+	return kind
+}
+func notificationID(bucket string) string { return "notification/" + bucket }
 
 // sourceKey names an event's source in node ids: the resource a ref names, or the last part of
 // an arn or name given as is. It does not change when other events are added or removed.
@@ -156,7 +169,7 @@ func (b *builder) events(name string, fn config.Function) []engine.Node {
 func (b *builder) schedule(name string, e config.Event, n int) engine.Node {
 	scheduleName := Name(64, b.project.App, b.project.Stage, name, fmt.Sprint(n))
 	return engine.Node{
-		ID: eventID("schedule", name, fmt.Sprint(n)), Type: awsp.TypeSchedule, Name: scheduleName,
+		ID: eventID(kindSchedule, name, fmt.Sprint(n)), Type: awsp.TypeSchedule, Name: scheduleName,
 		Inputs: map[string]any{
 			inputName: scheduleName, "expression": e.Expression, "timezone": e.Timezone,
 			inputFunction: engine.Ref(FunctionID(name), attrArn), "role": engine.Ref(schedulerRoleID(name), attrArn),
@@ -186,7 +199,7 @@ func (b *builder) mapping(name string, e config.Event) engine.Node {
 		source, startingPosition = e.Stream, e.StartingPosition
 	}
 	return engine.Node{
-		ID: eventID("mapping", name, sourceKey(source)), Type: awsp.TypeMapping, After: []string{RoleID(name)},
+		ID: eventID(kindMapping, name, sourceKey(source)), Type: awsp.TypeMapping, After: []string{RoleID(name)},
 		Inputs: map[string]any{
 			inputFunction: engine.Ref(FunctionID(name), "FunctionName"), "source": b.value(source),
 			"batchSize": e.BatchSize, "maximumBatchingWindow": e.MaximumBatchingWindow,
@@ -201,7 +214,7 @@ func (b *builder) subscription(name string, e config.Event) []engine.Node {
 	topic := b.value(e.Topic)
 	permission := b.permission(name, "topic-"+sourceKey(e.Topic), "sns.amazonaws.com", topic, false)
 	return []engine.Node{permission, {
-		ID: eventID("subscription", name, sourceKey(e.Topic)), Type: awsp.TypeSubscription, After: []string{permission.ID},
+		ID: eventID(kindSubscription, name, sourceKey(e.Topic)), Type: awsp.TypeSubscription, After: []string{permission.ID},
 		Inputs: map[string]any{"topic": topic, inputFunction: engine.Ref(FunctionID(name), attrArn), "filterPolicy": e.FilterPolicy},
 	}}
 }
@@ -304,7 +317,7 @@ func Triggers(resources map[string]*state.Resource, fn string) []string {
 	for id, r := range resources {
 		kind, rest, _ := strings.Cut(id, "/")
 		switch {
-		case kind == "schedule" || kind == "mapping" || kind == "subscription":
+		case kind == kindSchedule || kind == kindMapping || kind == kindSubscription:
 			if strings.HasPrefix(rest, fn+"/") {
 				out = append(out, id)
 			}
@@ -316,4 +329,37 @@ func Triggers(resources map[string]*state.Resource, fn string) []string {
 	}
 	slices.Sort(out)
 	return out
+}
+
+// The groups the nodes of a stage fall in.
+const (
+	GroupFunction = "function"
+	GroupResource = "resource"
+	GroupHTTP     = "http"
+)
+
+// Group says what a node of a state belongs to, by its id and what it depends on. A function
+// has its role, log group, url, integration, permissions and events, and the routes to it; a
+// resource has the notifications of a bucket; the stage's http api has its domain and its
+// authorizers. Anything else has no group.
+func Group(id string, deps []string) (kind, name string) {
+	kind, rest, _ := strings.Cut(id, "/")
+	first, _, _ := strings.Cut(rest, "/")
+	switch kind {
+	case kindOf(FunctionID("")), kindOf(RoleID("")), kindOf(LogGroupID("")), kindOf(URLID("")), kindOf(integrationID("")),
+		kindOf(schedulerRoleID("")), kindOf(permissionID("", "")), kindSchedule, kindMapping, kindSubscription:
+		return GroupFunction, first
+	case kindOf(ResourceID("")), kindOf(notificationID("")):
+		return GroupResource, rest
+	case kindOf(routeID("", "")):
+		for _, d := range deps {
+			if fn, ok := strings.CutPrefix(d, "integration/"); ok {
+				return GroupFunction, fn
+			}
+		}
+		return GroupHTTP, ""
+	case HTTPAPIID, DomainID, kindOf(authorizerID("")):
+		return GroupHTTP, ""
+	}
+	return "", ""
 }

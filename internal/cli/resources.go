@@ -21,9 +21,10 @@ import (
 	"github.com/kontrolplane/koldstart/internal/state"
 )
 
-// checkTypes refuses resource types cloud control cannot create, before anything is planned.
-// Where the registry cannot be read, as on an emulator, the check is left to cloud control.
-func (s *stage) checkTypes(ctx context.Context) error {
+// checkResources refuses resource types cloud control cannot create, and properties the schema
+// of their type does not allow, before anything is planned. Where the registry cannot be read, as
+// on an emulator, the check is left to cloud control.
+func (s *stage) checkResources(ctx context.Context) error {
 	var errs []error
 	for _, name := range slices.Sorted(maps.Keys(s.Resources)) {
 		typ := s.Resources[name].Type
@@ -38,9 +39,27 @@ func (s *stage) checkTypes(ctx context.Context) error {
 		}
 		if !schema.Provisionable {
 			errs = append(errs, fmt.Errorf("resources[%s]: cloud control cannot create %s", name, typ))
+			continue
+		}
+		if problems := schema.Check(s.Resources[name].Properties); len(problems) > 0 {
+			errs = append(errs, propertyProblems(name, typ, problems))
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// propertyProblems lists what the schema of a resource's type does not allow, one a line.
+func propertyProblems(name, typ string, problems []cloudcontrol.Problem) error {
+	var b strings.Builder
+	fmt.Fprintf(&b, "resources[%s] does not fit the schema of %s:", name, typ)
+	for _, p := range problems {
+		if p.Path == "" {
+			fmt.Fprintf(&b, "\n  %s", p.Message)
+			continue
+		}
+		fmt.Fprintf(&b, "\n  properties.%s", p)
+	}
+	return errors.New(b.String())
 }
 
 func importCommand(name string, opts *Options) *cobra.Command {

@@ -2,15 +2,23 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awscloudcontrol "github.com/aws/aws-sdk-go-v2/service/cloudcontrol"
+	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
+	logtypes "github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs/types"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 
 	"github.com/kontrolplane/koldstart/internal/awstest"
 	"github.com/kontrolplane/koldstart/internal/engine"
+	"github.com/kontrolplane/koldstart/internal/provider/cloudcontrol"
 	"github.com/kontrolplane/koldstart/internal/state"
 )
 
@@ -119,5 +127,140 @@ func TestConsoleEmulator(t *testing.T) {
 	}
 	if got, _, _ := c.Stage(ctx, ref); got != nil {
 		t.Fatalf("the state is still there: %+v", got)
+	}
+}
+
+// TestConsoleSeesNewBucketEmulator checks a stage deployed to a region whose state bucket did
+// not exist when the console last looked is listed on the next look, as a refresh of kdst ui
+// does it.
+func TestConsoleSeesNewBucketEmulator(t *testing.T) {
+	cfg := awstest.Emulator(t)
+	ctx := context.Background()
+	ident, err := sts.NewFromConfig(cfg).GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
+	if err != nil {
+		t.Fatalf("GetCallerIdentity: %v", err)
+	}
+	account := aws.ToString(ident.Account)
+	region := "ap-southeast-2"
+	sess := newSession(cfg, account).in(region)
+	c := &Console{name: nameShort, opts: &Options{}, sess: sess, backends: map[string]*regionBackend{}}
+	ref := StageRef{Region: region, App: awstest.Name("later"), Stage: "dev"}
+	if st, _, err := c.Stage(ctx, ref); err != nil || st != nil {
+		t.Skipf("%s has a state bucket already, or cannot be read: %v", region, err)
+	}
+
+	b, err := state.Open(ctx, sess.S3, account, region)
+	if err != nil {
+		t.Fatalf("creating the state bucket of %s: %v", region, err)
+	}
+	if _, err := b.Write(ctx, state.New(ref.App, ref.Stage, region, account), ""); err != nil {
+		t.Fatalf("writing the state: %v", err)
+	}
+	t.Cleanup(func() { deleteBucket(t, sess.S3, state.BucketName(account, region)) })
+
+	st, _, err := c.Stage(ctx, ref)
+	if err != nil || st == nil {
+		t.Fatalf("Stage after the bucket was created = %v, %v; want the state", st, err)
+	}
+}
+
+// deleteBucket deletes a versioned bucket of the emulator, with every version in it, so the
+// region it was in has no state bucket again.
+func deleteBucket(t *testing.T, client *s3.Client, bucket string) {
+	t.Helper()
+	ctx := context.Background()
+	versions, err := client.ListObjectVersions(ctx, &s3.ListObjectVersionsInput{Bucket: &bucket})
+	if err != nil {
+		t.Logf("listing %s: %v", bucket, err)
+		return
+	}
+	for _, v := range versions.Versions {
+		_, _ = client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: &bucket, Key: v.Key, VersionId: v.VersionId})
+	}
+	for _, m := range versions.DeleteMarkers {
+		_, _ = client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: &bucket, Key: m.Key, VersionId: m.VersionId})
+	}
+	if _, err := client.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: &bucket}); err != nil {
+		t.Logf("deleting %s: %v", bucket, err)
+	}
+}
+
+// TestLiveEmulator reads a queue's depth and its properties through cloud control, a function's
+// metrics, and a log group's lines, as kdst ui does, and follows the log group where a live tail
+// runs.
+func TestLiveEmulator(t *testing.T) {
+	cfg := awstest.Emulator(t)
+	ctx := context.Background()
+	sess := newSession(cfg, "000000000000")
+	c := &Console{name: nameShort, opts: &Options{}, sess: sess, backends: map[string]*regionBackend{}}
+	ref := StageRef{Region: awstest.Region, App: "live", Stage: "dev"}
+
+	name := awstest.Name("live")
+	p := cloudcontrol.Provider{Client: awscloudcontrol.NewFromConfig(cfg), Poll: 200e6}
+	inputs, _ := json.Marshal(cloudcontrol.Inputs{Type: "AWS::SQS::Queue", Properties: map[string]any{"QueueName": name}})
+	res, err := p.Create(ctx, engine.Request{ID: "resource/jobs", Inputs: inputs, ClientToken: awstest.Name("koldstart")})
+	if err != nil {
+		t.Fatalf("creating the queue: %v", err)
+	}
+	url := res.PhysicalID
+	t.Cleanup(func() {
+		_ = p.Delete(context.Background(), engine.Request{ID: "resource/jobs", PhysicalID: url, Prior: inputs})
+	})
+	if _, err := sqs.NewFromConfig(cfg).SendMessage(ctx, &sqs.SendMessageInput{QueueUrl: &url, MessageBody: aws.String("order")}); err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+	depth, err := c.Queue(ctx, ref, url)
+	if err != nil || depth.Visible != 1 {
+		t.Errorf("Queue = %+v, %v; want 1 visible", depth, err)
+	}
+
+	props, err := c.Live(ctx, ref, "AWS::SQS::Queue", url)
+	if err != nil || props["QueueName"] != name {
+		t.Errorf("Live = %v, %v; want the queue's properties", props, err)
+	}
+	if _, err := c.Live(ctx, ref, "koldstart::Lambda::Permission", "x"); !errors.Is(err, ErrNotLive) {
+		t.Errorf("Live of a permission: %v, want ErrNotLive", err)
+	}
+
+	metrics, err := c.Metrics(ctx, ref, []string{name})
+	t.Logf("metrics on the emulator: %d series, %v", len(metrics), err)
+	if err == nil && len(metrics[name].Invocations) != int(MetricsWindow/MetricsPeriod) {
+		t.Errorf("Metrics = %d points, want %d", len(metrics[name].Invocations), int(MetricsWindow/MetricsPeriod))
+	}
+
+	group := "/aws/lambda/" + name
+	logs := cloudwatchlogs.NewFromConfig(cfg)
+	if _, err := logs.CreateLogGroup(ctx, &cloudwatchlogs.CreateLogGroupInput{LogGroupName: &group}); err != nil {
+		t.Fatalf("CreateLogGroup: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = logs.DeleteLogGroup(context.Background(), &cloudwatchlogs.DeleteLogGroupInput{LogGroupName: &group})
+	})
+	stream := "2026/11/05/[$LATEST]abc"
+	if _, err := logs.CreateLogStream(ctx, &cloudwatchlogs.CreateLogStreamInput{LogGroupName: &group, LogStreamName: &stream}); err != nil {
+		t.Fatalf("CreateLogStream: %v", err)
+	}
+	now := time.Now()
+	if _, err := logs.PutLogEvents(ctx, &cloudwatchlogs.PutLogEventsInput{LogGroupName: &group, LogStreamName: &stream, LogEvents: []logtypes.InputLogEvent{
+		{Timestamp: aws.Int64(now.Add(-2 * time.Hour).UnixMilli()), Message: aws.String("older")},
+		{Timestamp: aws.Int64(now.UnixMilli()), Message: aws.String("newer")},
+	}}); err != nil {
+		t.Fatalf("PutLogEvents: %v", err)
+	}
+	recent, err := c.LogsBetween(ctx, ref, group, now.Add(-time.Hour), time.Time{}, "")
+	if err != nil || len(recent) != 1 || recent[0].Message != "newer" || recent[0].Stream != stream {
+		t.Errorf("LogsBetween the last hour = %+v, %v; want newer, with its stream", recent, err)
+	}
+	older, err := c.LogsBetween(ctx, ref, group, now.Add(-3*time.Hour), now.Add(-time.Hour), "")
+	if err != nil || len(older) != 1 || older[0].Message != "older" {
+		t.Errorf("LogsBetween an hour before = %+v, %v; want older", older, err)
+	}
+
+	tailCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	err = c.Tail(tailCtx, ref, "arn:aws:logs:eu-west-1:000000000000:log-group:"+group+":*", func([]LogEvent) {})
+	t.Logf("live tail on the emulator: %v", err)
+	if err != nil && !errors.Is(err, ErrNoLiveTail) {
+		t.Errorf("Tail: %v, want nil or ErrNoLiveTail", err)
 	}
 }

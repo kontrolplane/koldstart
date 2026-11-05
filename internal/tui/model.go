@@ -56,6 +56,8 @@ const (
 	unlockPage
 	removePage
 	runLocalPage
+	diffPage
+	invocationPage
 )
 
 type model struct {
@@ -90,15 +92,17 @@ type model struct {
 }
 
 type pages struct {
-	overview overviewState
-	stage    stageState
-	function functionState
-	resource resourceState
-	version  versionState
-	plan     planState
-	unlock   unlockState
-	remove   removeState
-	runLocal runLocalState
+	overview   overviewState
+	stage      stageState
+	function   functionState
+	resource   resourceState
+	version    versionState
+	plan       planState
+	unlock     unlockState
+	remove     removeState
+	runLocal   runLocalState
+	diff       diffState
+	invocation invocationState
 }
 
 func newModel(ctx context.Context, b backend) model {
@@ -153,6 +157,8 @@ func (m model) typing() bool {
 		return m.state.overview.filter.active
 	case stagePage:
 		return m.state.stage.filter.active
+	case functionPage:
+		return m.state.function.tab == logsTab && m.state.function.logs.filter.active
 	case removePage:
 		return true
 	}
@@ -182,5 +188,6 @@ func (m model) resize() model {
 	}
 	f := &m.state.function
 	f.events.setSize(eventsWidth(), functionBodyHeight()-tableHeaderRows)
+	f.invocations.setSize(tableWidth(), functionBodyHeight()-tableHeaderRows)
 	return m
 }

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"cmp"
 	"encoding/json"
 	"maps"
 	"slices"
@@ -49,38 +50,79 @@ type stageState struct {
 	historyGen    int
 	historyLoaded bool
 	history       []state.ObjectVersion
+
+	metricsGen int
+	metrics    map[string]cli.Metrics
+	metricsErr string
+	queuesGen  int
+	queues     map[string]cli.QueueDepth
 }
 
-// stageResource is a resource of the state, or one a remove left in place.
+// lambdaNames are the names in lambda of the stage's functions, sorted.
+func (s stageState) lambdaNames() []string {
+	if s.st == nil {
+		return nil
+	}
+	var out []string
+	for id, r := range s.st.Resources {
+		if r.Type == awsp.TypeFunction && strings.HasPrefix(id, "function/") && r.PhysicalID != "" {
+			out = append(out, r.PhysicalID)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// queueURLs are the urls of the stage's queues, by their ids in the state.
+func (s stageState) queueURLs() map[string]string {
+	out := map[string]string{}
+	if s.st == nil {
+		return out
+	}
+	for id, r := range s.st.Resources {
+		if r.Type == "AWS::SQS::Queue" && r.PhysicalID != "" {
+			out[id] = r.PhysicalID
+		}
+	}
+	return out
+}
+
+// stageResource is a resource of the state, or one a remove left in place, with how deep it
+// sits in the tree of the resources tab: 0 for what heads a group, 1 for what it brings.
 type stageResource struct {
 	id       string
 	res      *state.Resource
 	retained bool
+	depth    int
+	last     bool
 }
 
 var (
 	functionColumns = []column{
 		{title: "function", width: 12, grow: 2},
-		{title: "runtime", width: 15, drop: 3},
-		{title: "memory", width: 7, right: true, drop: 2},
-		{title: "timeout", width: 7, right: true, drop: 2},
-		{title: "arch", width: 7, drop: 4},
-		{title: "code", width: 12, drop: 1},
-		{title: "in lambda", width: 14, grow: 3, drop: 5},
+		{title: "runtime", width: 15, drop: 5},
+		{title: "memory", width: 7, right: true, drop: 4},
+		{title: "timeout", width: 7, right: true, drop: 6},
+		{title: "calls 1h", width: 9, right: true},
+		{title: "errors", width: 7, right: true, drop: 1},
+		{title: "p99", width: 8, right: true, drop: 2},
+		{title: "code", width: 12, drop: 3},
+		{title: "in lambda", width: 14, grow: 3, drop: 7},
 	}
 	resourceColumns = []column{
-		{title: "resource", width: 16, grow: 2},
+		{title: "resource", width: 22, grow: 2},
 		{title: "type", width: 18, grow: 2, drop: 2},
 		{title: "id in aws", width: 16, grow: 3, drop: 1},
-		{title: "", width: 10},
+		{title: "", width: 24},
 	}
 	outputColumns = []column{
 		{title: "output", width: 16, grow: 1},
 		{title: "value", width: 20, grow: 4},
 	}
 	historyColumns = []column{
-		{title: "saved", width: 20},
+		{title: "deploy", width: 20},
 		{title: "", width: 10},
+		{title: "writes", width: 8, right: true},
 		{title: "version", width: 20, grow: 1, drop: 1},
 	}
 )
@@ -91,7 +133,7 @@ func newStageState() stageState {
 			newTable(functionColumns, "no functions"),
 			newTable(resourceColumns, "no resources"),
 			newTable(outputColumns, "no outputs"),
-			newTable(historyColumns, "no earlier versions"),
+			newTable(historyColumns, "no deploys yet"),
 		},
 		filter: newFilterBox("filter by name…"),
 	}
@@ -160,7 +202,31 @@ func (m model) applyStage(msg stageLoadedMsg) (model, tea.Cmd) {
 	if m.page == functionPage {
 		m = m.syncFunction()
 	}
-	return m, nil
+	m, metrics := m.loadMetrics()
+	m, queues := m.loadQueues()
+	return m, tea.Batch(metrics, queues)
+}
+
+func (m model) applyMetrics(msg metricsLoadedMsg) (model, tea.Cmd) {
+	s := &m.state.stage
+	if msg.gen != s.metricsGen {
+		return m, nil
+	}
+	if msg.err != nil {
+		s.metricsErr = msg.err.Error()
+	} else {
+		s.metrics, s.metricsErr = msg.metrics, ""
+	}
+	return m.updateStageTables(), nil
+}
+
+func (m model) applyQueues(msg queuesLoadedMsg) (model, tea.Cmd) {
+	s := &m.state.stage
+	if msg.gen != s.queuesGen {
+		return m, nil
+	}
+	s.queues = msg.depths
+	return m.updateStageTables(), nil
 }
 
 // stageGone leaves a stage whose state was removed elsewhere.
@@ -202,31 +268,38 @@ func (m model) updateStageTables() model {
 		}
 		in := functionInputs(r)
 		s.functions = append(s.functions, name)
+		calls, errs, p99 := text("…", styles.ToneFaint), text("…", styles.ToneFaint), text("…", styles.ToneFaint)
+		if mt, ok := s.metrics[r.PhysicalID]; ok {
+			sum := mt.Summary()
+			calls = text(formatInt(int(sum.Invocations)), styles.ToneBody)
+			errs = text(formatInt(int(sum.Errors)), styles.ToneFaint)
+			if sum.Errors > 0 {
+				errs = text(formatInt(int(sum.Errors)), styles.ToneDanger)
+			}
+			p99 = text("-", styles.ToneFaint)
+			if sum.DurationP99 > 0 {
+				p99 = text(formatMillis(sum.DurationP99), styles.ToneBody)
+			}
+		} else if s.metricsErr != "" {
+			calls, errs, p99 = text("-", styles.ToneFaint), text("-", styles.ToneFaint), text("-", styles.ToneFaint)
+		}
 		rows = append(rows, tableRow{
 			text(name, styles.ToneText),
 			text(in.Runtime, styles.ToneBody),
 			text(formatInt(int(in.Memory)), styles.ToneBody),
 			text(formatInt(int(in.Timeout))+"s", styles.ToneBody),
-			text(in.Architecture, styles.ToneMuted),
+			calls, errs, p99,
 			text(shortSHA(in.Code.SHA256), styles.ToneFaint),
 			text(r.PhysicalID, styles.ToneMuted),
 		})
 	}
 	s.tables[functionsTab].setRows(rows)
 
-	s.resources, rows = nil, nil
-	add := func(list map[string]*state.Resource, retained bool) {
-		for _, id := range slices.Sorted(maps.Keys(list)) {
-			r := list[id]
-			if !f.matches(id, r.Type, r.PhysicalID) {
-				continue
-			}
-			s.resources = append(s.resources, stageResource{id: id, res: r, retained: retained})
-			rows = append(rows, tableRow{text(id, styles.ToneText), text(r.Type, styles.ToneMuted), text(orDash(r.PhysicalID), styles.ToneBody), resourceNote(r, retained)})
-		}
+	s.resources = groupResources(s.st, f)
+	rows = nil
+	for _, r := range s.resources {
+		rows = append(rows, s.resourceRow(r))
 	}
-	add(s.st.Resources, false)
-	add(s.st.Retained, true)
 	s.tables[resourcesTab].setRows(rows)
 
 	s.outputs, rows = nil, nil
@@ -240,15 +313,122 @@ func (m model) updateStageTables() model {
 	s.tables[outputsTab].setRows(rows)
 
 	rows = nil
-	for _, v := range s.history {
+	for _, d := range deploys(s.history) {
+		v := d[0]
 		note := text("", styles.ToneFaint)
 		if v.Latest {
 			note = text("current", styles.ToneAccent)
 		}
-		rows = append(rows, tableRow{text(formatTime(v.LastModified), styles.ToneBody), note, text(v.ID, styles.ToneFaint)})
+		rows = append(rows, tableRow{text(formatTime(v.LastModified), styles.ToneBody), note, text(formatInt(len(d)), styles.ToneMuted), text(v.ID, styles.ToneFaint)})
 	}
 	s.tables[historyTab].setRows(rows)
 	return m
+}
+
+// groupKey orders the groups of the resources tab: functions, then resources, then the http api,
+// then anything else, each by name.
+type groupKey struct {
+	order int
+	name  string
+}
+
+// groupResources puts the resources of the state, and the ones a remove left in place, in a tree:
+// each function with what it brings, each resource with its notifications, and the http api with
+// its domain and authorizers. A filter keeps a group whose head or any member matches.
+func groupResources(st *state.State, f filterBox) []stageResource {
+	heads := map[groupKey]string{}
+	members := map[groupKey][]stageResource{}
+	add := func(list map[string]*state.Resource, retained bool) {
+		for id, r := range list {
+			kind, name := desired.Group(id, r.Dependencies)
+			k := groupKey{order: 3, name: id}
+			head := id
+			switch kind {
+			case desired.GroupFunction:
+				k, head = groupKey{0, name}, desired.FunctionID(name)
+			case desired.GroupResource:
+				k, head = groupKey{1, name}, desired.ResourceID(name)
+			case desired.GroupHTTP:
+				k, head = groupKey{2, ""}, desired.HTTPAPIID
+			}
+			heads[k] = head
+			members[k] = append(members[k], stageResource{id: id, res: r, retained: retained})
+		}
+	}
+	add(st.Resources, false)
+	add(st.Retained, true)
+	keys := slices.SortedFunc(maps.Keys(members), func(a, b groupKey) int {
+		return cmp.Or(cmp.Compare(a.order, b.order), cmp.Compare(a.name, b.name))
+	})
+	var out []stageResource
+	for _, k := range keys {
+		group := members[k]
+		slices.SortFunc(group, func(a, b stageResource) int {
+			return cmp.Or(cmp.Compare(boolInt(a.id != heads[k]), boolInt(b.id != heads[k])), cmp.Compare(a.id, b.id))
+		})
+		if !slices.ContainsFunc(group, func(r stageResource) bool { return f.matches(r.id, r.res.Type, r.res.PhysicalID) }) {
+			continue
+		}
+		hasHead := group[0].id == heads[k]
+		for i, r := range group {
+			if !hasHead || i > 0 {
+				r.depth = 1
+			}
+			r.last = i == len(group)-1
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// shortType drops koldstart's prefix from its own types: koldstart::IAM::Role is IAM::Role.
+func shortType(typ string) string {
+	return strings.TrimPrefix(typ, "koldstart::")
+}
+
+// resourceRow draws a resource in the tree, with the depth of a queue when it has one.
+func (s stageState) resourceRow(r stageResource) tableRow {
+	name := cell{styles.S(r.id, styles.ToneText)}
+	if r.depth > 0 {
+		branch := "├ "
+		if r.last {
+			branch = "└ "
+		}
+		name = cell{styles.S(branch, styles.ToneRule), styles.S(r.id, styles.ToneBody)}
+	}
+	note := resourceNote(r.res, r.retained)
+	if d, ok := s.queues[r.id]; ok && len(note) == 1 && note[0].Text == "" {
+		note = cell{styles.S(formatInt(d.Visible), styles.ToneBody), styles.S(" queued", styles.ToneFaint)}
+		if d.InFlight > 0 {
+			note = append(note, styles.S(" · "+formatInt(d.InFlight)+" in flight", styles.ToneFaint))
+		}
+	}
+	return tableRow{name, text(shortType(r.res.Type), styles.ToneMuted), text(orDash(r.res.PhysicalID), styles.ToneBody), note}
+}
+
+// deployGap is the longest pause between two writes of the state that one deploy makes.
+const deployGap = time.Minute
+
+// deploys groups the versions of a state, newest first, into the deploys that wrote them: a
+// deploy writes the state before and after every step, so its versions follow each other closely.
+func deploys(history []state.ObjectVersion) [][]state.ObjectVersion {
+	var out [][]state.ObjectVersion
+	var prev time.Time
+	for _, v := range history {
+		if len(out) == 0 || prev.Sub(v.LastModified) > deployGap {
+			out = append(out, nil)
+		}
+		out[len(out)-1] = append(out[len(out)-1], v)
+		prev = v.LastModified
+	}
+	return out
 }
 
 // resourceNote says what is special about a resource: left in place, taken over, or caught
@@ -335,7 +515,8 @@ func (m model) stageUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 	return m, nil
 }
 
-// openSelected opens what is under the cursor: a function, a resource or a version.
+// openSelected opens what is under the cursor: a function, also from the resources tab, a
+// resource or a version.
 func (m model) openSelected() (model, tea.Cmd) {
 	s := m.state.stage
 	i := s.tables[s.tab].cursor
@@ -345,11 +526,15 @@ func (m model) openSelected() (model, tea.Cmd) {
 			return m.openFunction(s.functions[i])
 		}
 	case resourcesTab:
-		if i < len(s.resources) {
-			return m.openResource(s.resources[i])
+		if i >= len(s.resources) {
+			break
 		}
+		if name, ok := strings.CutPrefix(s.resources[i].id, "function/"); ok && !s.resources[i].retained {
+			return m.openFunction(name)
+		}
+		return m.openResource(s.resources[i])
 	case historyTab:
-		if i < len(s.history) {
+		if i < len(deploys(s.history)) {
 			return m.openVersion(i)
 		}
 	}
@@ -369,8 +554,8 @@ func (m model) stageCopyValue() string {
 		return s.resources[i].res.PhysicalID
 	case s.tab == outputsTab && i < len(s.outputs):
 		return s.st.Outputs[s.outputs[i]]
-	case s.tab == historyTab && i < len(s.history):
-		return s.history[i].ID
+	case s.tab == historyTab && i < len(deploys(s.history)):
+		return deploys(s.history)[i][0].ID
 	}
 	return ""
 }
@@ -443,7 +628,7 @@ func (m model) stageView() string {
 	s := m.state.stage
 	counts := []string{formatInt(len(s.functions)), formatInt(len(s.resources)), formatInt(len(s.outputs)), ""}
 	if s.historyLoaded {
-		counts[historyTab] = formatInt(len(s.history))
+		counts[historyTab] = formatInt(len(deploys(s.history)))
 	}
 	return strings.Join([]string{
 		m.stageFacts(),
