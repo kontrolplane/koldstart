@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 
 	"github.com/kontrolplane/koldstart/internal/awstest"
@@ -119,5 +120,60 @@ func TestConsoleEmulator(t *testing.T) {
 	}
 	if got, _, _ := c.Stage(ctx, ref); got != nil {
 		t.Fatalf("the state is still there: %+v", got)
+	}
+}
+
+// TestConsoleSeesNewBucketEmulator checks a stage deployed to a region whose state bucket did
+// not exist when the console last looked is listed on the next look, as a refresh of kdst ui
+// does it.
+func TestConsoleSeesNewBucketEmulator(t *testing.T) {
+	cfg := awstest.Emulator(t)
+	ctx := context.Background()
+	ident, err := sts.NewFromConfig(cfg).GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
+	if err != nil {
+		t.Fatalf("GetCallerIdentity: %v", err)
+	}
+	account := aws.ToString(ident.Account)
+	region := "ap-southeast-2"
+	sess := newSession(cfg, account).in(region)
+	c := &Console{name: nameShort, opts: &Options{}, sess: sess, backends: map[string]*regionBackend{}}
+	ref := StageRef{Region: region, App: awstest.Name("later"), Stage: "dev"}
+	if st, _, err := c.Stage(ctx, ref); err != nil || st != nil {
+		t.Skipf("%s has a state bucket already, or cannot be read: %v", region, err)
+	}
+
+	b, err := state.Open(ctx, sess.S3, account, region)
+	if err != nil {
+		t.Fatalf("creating the state bucket of %s: %v", region, err)
+	}
+	if _, err := b.Write(ctx, state.New(ref.App, ref.Stage, region, account), ""); err != nil {
+		t.Fatalf("writing the state: %v", err)
+	}
+	t.Cleanup(func() { deleteBucket(t, sess.S3, state.BucketName(account, region)) })
+
+	st, _, err := c.Stage(ctx, ref)
+	if err != nil || st == nil {
+		t.Fatalf("Stage after the bucket was created = %v, %v; want the state", st, err)
+	}
+}
+
+// deleteBucket deletes a versioned bucket of the emulator, with every version in it, so the
+// region it was in has no state bucket again.
+func deleteBucket(t *testing.T, client *s3.Client, bucket string) {
+	t.Helper()
+	ctx := context.Background()
+	versions, err := client.ListObjectVersions(ctx, &s3.ListObjectVersionsInput{Bucket: &bucket})
+	if err != nil {
+		t.Logf("listing %s: %v", bucket, err)
+		return
+	}
+	for _, v := range versions.Versions {
+		_, _ = client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: &bucket, Key: v.Key, VersionId: v.VersionId})
+	}
+	for _, m := range versions.DeleteMarkers {
+		_, _ = client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: &bucket, Key: m.Key, VersionId: m.VersionId})
+	}
+	if _, err := client.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: &bucket}); err != nil {
+		t.Logf("deleting %s: %v", bucket, err)
 	}
 }

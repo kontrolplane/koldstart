@@ -157,7 +157,9 @@ func (c *Console) EventsDir(function string) string {
 	return filepath.Join(root, ".koldstart", "events", function)
 }
 
-// backend returns the state bucket of a region, or nil when it has none.
+// backend returns the state bucket of a region, or nil when it has none. Only a bucket that
+// exists is kept: a region without one is looked at again, as a first deploy there creates it
+// while the interface is open.
 func (c *Console) backend(ctx context.Context, region string) (*regionBackend, error) {
 	c.mu.Lock()
 	rb, ok := c.backends[region]
@@ -171,9 +173,10 @@ func (c *Console) backend(ctx context.Context, region string) (*regionBackend, e
 		return nil, err
 	}
 	rb = &regionBackend{sess: sess}
-	if exists {
-		rb.backend = b
+	if !exists {
+		return rb, nil
 	}
+	rb.backend = b
 	c.mu.Lock()
 	c.backends[region] = rb
 	c.mu.Unlock()
