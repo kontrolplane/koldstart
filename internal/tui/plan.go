@@ -52,7 +52,7 @@ type nodeProgress struct {
 // planDeploy plans a deploy of a stage of the project here, or with function of its code.
 func (m model) planDeploy(ref cli.StageRef, function string) (model, tea.Cmd) {
 	if !m.b.Local(ref) {
-		return m.setStatus("only the project here can be deployed: run kdst ui in its directory", styles.ToneWarning)
+		return m.setStatus("only the project here can be deployed: run "+binary+" ui in its directory", styles.ToneWarning)
 	}
 	m.state.plan = planState{ref: ref, function: function, from: m.page}
 	m = m.switchPage(planPage)

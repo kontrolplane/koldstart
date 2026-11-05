@@ -171,7 +171,7 @@ func (m model) startInvoke(local bool) (model, tea.Cmd) {
 	case f.invoking:
 		return m.setStatus("an invocation is running already", styles.ToneWarning)
 	case local && !m.b.Local(ref):
-		return m.setStatus("only the project here runs on this machine: run kdst ui in its directory", styles.ToneWarning)
+		return m.setStatus("only the project here runs on this machine: run "+binary+" ui in its directory", styles.ToneWarning)
 	case !local && f.lambdaName == "":
 		return m.setStatus(f.name+" is not deployed yet", styles.ToneWarning)
 	}
