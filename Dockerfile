@@ -7,6 +7,7 @@ RUN go mod download
 
 COPY cmd/ cmd/
 COPY internal/ internal/
+COPY pkl/ pkl/
 
 ARG TARGETOS
 ARG TARGETARCH

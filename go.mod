@@ -24,6 +24,7 @@ require (
 	github.com/aws/smithy-go v1.28.8
 	github.com/evanw/esbuild v0.28.2
 	github.com/spf13/cobra v1.10.2
+	go.yaml.in/yaml/v3 v3.0.6
 )
 
 require (
