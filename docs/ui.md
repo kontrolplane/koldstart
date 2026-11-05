@@ -66,8 +66,10 @@ Events to invoke a function with are kept in `.koldstart/events/<function>/` in 
 
 ## flags
 
-| flag      | description                                                                              |
-| --------- | ---------------------------------------------------------------------------------------- |
-| `--theme` | `auto`, the default, follows the terminal; `dark` and `light` paint their own background |
+| flag      | description                                                                                                                                                                    |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--theme` | `auto`, the default, follows the background the terminal reports, or `COLORFGBG`, and is dark when neither says; `dark` and `light` paint their own background into every cell |
+
+The colours follow what the terminal shows: truecolor, 256 colours, its own 16, or none with `NO_COLOR`. In 16 colours or none, the row under the cursor is drawn in reverse video, and without colour, failures and warnings are bold.
 
 The global `--stage`, `--config`, `--profile`, `--region` and `--debug` flags work as they do everywhere: `--stage` picks the project's stage it opens on, and `--config` the project.
