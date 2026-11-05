@@ -68,8 +68,9 @@ func TestSchema(t *testing.T) {
 		if p.HTTP == nil || p.HTTP.Authorizers["users"].Type != "jwt" || p.HTTP.Throttling.Burst != 200 {
 			t.Errorf("%s: http = %+v", stage, p.HTTP)
 		}
-		if refs := config.Refs(p.Resources["jobs"].Properties); len(refs) != 1 || refs[0].Resource != "dead" {
-			t.Errorf("%s: refs in jobs = %v", stage, refs)
+		redrive, _ := p.Resources["jobs"].Properties["RedrivePolicy"].(map[string]any)
+		if r, ok := config.AsRef(redrive["deadLetterTargetArn"]); !ok || r.Resource != "dead" {
+			t.Errorf("%s: the dead letter target = %v", stage, redrive["deadLetterTargetArn"])
 		}
 	}
 }

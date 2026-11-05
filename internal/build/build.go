@@ -5,7 +5,6 @@ package build
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -24,8 +23,6 @@ type Archive struct {
 	Size     int64
 	// SHA256 is the hex sha256 of the zip, which names it in the state bucket.
 	SHA256 string
-	// CodeSHA256 is the same hash as lambda reports it, in base64.
-	CodeSHA256 string
 }
 
 // Target is the platform a function is built for.
@@ -33,8 +30,8 @@ type Target struct {
 	GOOS, GOARCH string
 }
 
-// Lambda returns the target lambda runs a function with architecture on.
-func Lambda(architecture string) Target {
+// LambdaTarget returns the platform lambda runs a function of the architecture on.
+func LambdaTarget(architecture string) Target {
 	if architecture == config.ArchX8664 {
 		return Target{GOOS: "linux", GOARCH: "amd64"}
 	}
@@ -50,7 +47,7 @@ type Builder struct {
 
 // Build builds the function name for lambda and writes its zip under Dir.
 func (b Builder) Build(ctx context.Context, name string, fn config.Function) (Archive, error) {
-	files, err := b.Files(ctx, name, fn, Lambda(fn.Architecture))
+	files, err := b.Files(ctx, name, fn, LambdaTarget(fn.Architecture))
 	if err != nil {
 		return Archive{}, err
 	}
@@ -67,11 +64,10 @@ func (b Builder) Build(ctx context.Context, name string, fn config.Function) (Ar
 		return Archive{}, fmt.Errorf("writing %s: %w", path, err)
 	}
 	return Archive{
-		Function:   name,
-		Path:       path,
-		Size:       int64(len(data)),
-		SHA256:     hex.EncodeToString(sum[:]),
-		CodeSHA256: base64.StdEncoding.EncodeToString(sum[:]),
+		Function: name,
+		Path:     path,
+		Size:     int64(len(data)),
+		SHA256:   hex.EncodeToString(sum[:]),
 	}, nil
 }
 

@@ -145,7 +145,7 @@ var ErrConflict = errors.New("the state changed since it was read: another deplo
 // ErrNotLocked is an unlock of a stage nobody holds.
 var ErrNotLocked = errors.New("the stage is not locked")
 
-// Version of an object, as a listing of the state's history returns it.
+// ObjectVersion is one version of a state, as a listing of its history returns it.
 type ObjectVersion struct {
 	ID           string
 	LastModified time.Time

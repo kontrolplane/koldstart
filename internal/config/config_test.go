@@ -42,8 +42,9 @@ func TestDecode(t *testing.T) {
 	if !p.Functions["api"].IsNode() || !p.Functions["worker"].IsGo() {
 		t.Error("runtimes are not told apart")
 	}
-	if got := Refs(p.Resources["jobs"].Properties); len(got) != 1 || got[0].Resource != "dead" {
-		t.Errorf("Refs(jobs) = %v, want the ref to dead", got)
+	redrive := p.Resources["jobs"].Properties["RedrivePolicy"].(map[string]any)
+	if r, ok := AsRef(redrive["deadLetterTargetArn"]); !ok || r.Resource != "dead" {
+		t.Errorf("the dead letter target = %v, want a ref to dead", redrive["deadLetterTargetArn"])
 	}
 	if err := p.Validate(); err != nil {
 		t.Errorf("Validate: %v", err)
@@ -115,7 +116,7 @@ func TestValidate(t *testing.T) {
 			change: func(p *Project) {
 				p.Functions["api"].Environment["X"] = Value{Ref: &Ref{Resource: "missing", Attribute: "Arn"}}
 			},
-			want: `ref("missing", "Arn") refers to no function or resource`,
+			want: `kdst.ref("missing", "Arn") refers to no function or resource`,
 		},
 		{
 			name: "link to a function",
@@ -147,7 +148,7 @@ func TestValidate(t *testing.T) {
 					"X": map[string]any{marker: kindRef, "resource": "gone", "attribute": "Arn"},
 				}}
 			},
-			want: `resources[dead]: ref("gone", "Arn")`,
+			want: `resources[dead]: kdst.ref("gone", "Arn")`,
 		},
 		{
 			name: "name shared",
@@ -180,7 +181,7 @@ func TestValidate(t *testing.T) {
 			change: func(p *Project) {
 				p.Outputs["self"] = Value{Output: &OutputRef{App: "orders", Stage: "dev", Output: "table"}}
 			},
-			want: "use ref() instead",
+			want: "use kdst.ref() instead",
 		},
 	}
 	for _, tt := range tests {

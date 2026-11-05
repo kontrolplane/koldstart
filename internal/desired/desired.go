@@ -1,5 +1,6 @@
-// Package desired turns a configuration into the nodes the engine applies: for each function
-// its log group, role, the function and its url, and every resource.
+// Package desired turns a configuration into the nodes the engine applies: for each function its
+// log group, role, the function and its url; the http api and the nodes of every event; and
+// every resource.
 package desired
 
 import (
@@ -58,20 +59,20 @@ func FunctionName(p *config.Project, fn string) string {
 	return Name(64, p.App, p.Stage, fn)
 }
 
-// RoleName is the name of a function's role. Roles are global and states are per region, so
+// roleName is the name of a function's role. Roles are global and states are per region, so
 // the region is in the name.
-func RoleName(p *config.Project, region, fn string) string {
+func roleName(p *config.Project, region, fn string) string {
 	return Name(64, p.App, p.Stage, fn, region)
 }
 
-// LogGroupName is the log group lambda writes a function's logs to.
-func LogGroupName(p *config.Project, fn string) string {
+// logGroupName is the log group lambda writes a function's logs to.
+func logGroupName(p *config.Project, fn string) string {
 	return "/aws/lambda/" + FunctionName(p, fn)
 }
 
 // Build returns the nodes for p deployed to t.
 func Build(p *config.Project, t Target) ([]engine.Node, error) {
-	b := builder{p: p, t: t}
+	b := builder{project: p, target: t}
 	var nodes []engine.Node
 	for _, name := range slices.Sorted(maps.Keys(p.Functions)) {
 		fnNodes, err := b.function(name, p.Functions[name])
@@ -92,10 +93,11 @@ func Build(p *config.Project, t Target) ([]engine.Node, error) {
 	return nodes, errors.Join(b.errs...)
 }
 
+// builder builds the nodes of a project for a target, collecting what is wrong as it goes.
 type builder struct {
-	p    *config.Project
-	t    Target
-	errs []error
+	project *config.Project
+	target  Target
+	errs    []error
 }
 
 // NodeID is the id of the node a name in the configuration stands for: a function or a resource.
@@ -110,7 +112,7 @@ func NodeID(p *config.Project, name string) string {
 func (b *builder) value(v config.Value) any {
 	switch {
 	case v.Ref != nil:
-		return engine.Ref(NodeID(b.p, v.Ref.Resource), v.Ref.Attribute)
+		return engine.Ref(NodeID(b.project, v.Ref.Resource), v.Ref.Attribute)
 	case v.Secret != nil:
 		return engine.SecretValue(*v.Secret)
 	case v.Output != nil:
@@ -128,27 +130,59 @@ func (b *builder) values(vs []config.Value) []any {
 	return out
 }
 
+// function returns a function's nodes: its log group, its role, the function, and its url.
 func (b *builder) function(name string, fn config.Function) ([]engine.Node, error) {
-	fnName := FunctionName(b.p, name)
-	logGroup := engine.Node{
-		ID: LogGroupID(name), Type: awsp.TypeLogGroup, Name: LogGroupName(b.p, name),
-		Inputs: map[string]any{inputName: LogGroupName(b.p, name), "retention": fn.LogRetention},
+	archive, ok := b.target.Archives[name]
+	if !ok {
+		return nil, errors.New("it was not built")
 	}
-
-	policy, managed, env, err := b.permissions(name, fn)
+	role, err := b.roleNode(name, fn)
 	if err != nil {
 		return nil, err
 	}
-	role := engine.Node{
-		ID: RoleID(name), Type: awsp.TypeRole, Name: RoleName(b.p, b.t.Region, name),
+	env, err := b.environment(fn)
+	if err != nil {
+		return nil, err
+	}
+	nodes := []engine.Node{b.logGroupNode(name, fn), role, b.functionNode(name, fn, env, archive)}
+	if fn.URL != nil {
+		nodes = append(nodes, b.urlNode(name, fn.URL))
+	}
+	return nodes, nil
+}
+
+func (b *builder) logGroupNode(name string, fn config.Function) engine.Node {
+	group := logGroupName(b.project, name)
+	return engine.Node{
+		ID: LogGroupID(name), Type: awsp.TypeLogGroup, Name: group,
+		Inputs: map[string]any{inputName: group, "retention": fn.LogRetention},
+	}
+}
+
+func (b *builder) roleNode(name string, fn config.Function) (engine.Node, error) {
+	policy, managed, err := b.permissions(name, fn)
+	if err != nil {
+		return engine.Node{}, err
+	}
+	role := roleName(b.project, b.target.Region, name)
+	return engine.Node{
+		ID: RoleID(name), Type: awsp.TypeRole, Name: role,
 		Inputs: map[string]any{
-			inputName:          RoleName(b.p, b.t.Region, name),
+			inputName:          role,
 			"assumeRolePolicy": assumeRolePolicy,
 			"policy":           policy,
 			"managedPolicies":  managed,
 		},
-	}
+	}, nil
+}
 
+// environment is a function's variables: those it sets, those link adds, the key of each field
+// of a secret it reads at runtime, and source maps turned on for node when it ships them.
+func (b *builder) environment(fn config.Function) (map[string]any, error) {
+	env, err := b.linkEnvironment(fn)
+	if err != nil {
+		return nil, err
+	}
 	for _, key := range slices.Sorted(maps.Keys(fn.Environment)) {
 		v := fn.Environment[key]
 		env[key] = b.value(v)
@@ -161,54 +195,56 @@ func (b *builder) function(name string, fn config.Function) ([]engine.Node, erro
 	if fn.IsNode() && fn.Bundle.Sourcemap {
 		env["NODE_OPTIONS"] = "--enable-source-maps"
 	}
+	return env, nil
+}
 
-	archive, ok := b.t.Archives[name]
-	if !ok {
-		return nil, errors.New("it was not built")
-	}
+func (b *builder) functionNode(name string, fn config.Function, env map[string]any, archive build.Archive) engine.Node {
 	handler := fn.Handler
 	if fn.IsGo() {
 		handler = "bootstrap"
 	}
-	inputs := map[string]any{
-		inputName:             fnName,
-		"runtime":             fn.Runtime,
-		"handler":             handler,
-		"memory":              fn.Memory,
-		"timeout":             fn.Timeout,
-		"architecture":        fn.Architecture,
-		"ephemeralStorage":    fn.EphemeralStorage,
-		"reservedConcurrency": fn.ReservedConcurrency,
-		"environment":         env,
-		"role":                engine.Ref(RoleID(name), "Arn"),
-		"logGroup":            LogGroupName(b.p, name),
-		"code": map[string]any{
-			"bucket": b.t.Bucket,
-			"key":    state.ZipKey(b.p.App, b.p.Stage, archive.SHA256),
-			"sha256": archive.SHA256,
-		},
-		"vpc": nil,
-	}
+	var vpc any
 	if fn.VPC != nil {
-		inputs["vpc"] = map[string]any{"subnetIds": b.values(fn.VPC.SubnetIDs), "securityGroupIds": b.values(fn.VPC.SecurityGroupIDs)}
+		vpc = map[string]any{"subnetIds": b.values(fn.VPC.SubnetIDs), "securityGroupIds": b.values(fn.VPC.SecurityGroupIDs)}
 	}
-	function := engine.Node{ID: FunctionID(name), Type: awsp.TypeFunction, Name: fnName, Inputs: inputs, After: []string{LogGroupID(name)}}
-
-	nodes := []engine.Node{logGroup, role, function}
-	if fn.URL != nil {
-		auth := "AWS_IAM"
-		if fn.URL.Auth == "none" {
-			auth = "NONE"
-		}
-		nodes = append(nodes, engine.Node{
-			ID: URLID(name), Type: awsp.TypeURL, Name: fnName,
-			Inputs: map[string]any{inputFunction: engine.Ref(FunctionID(name), "FunctionName"), "auth": auth, "cors": urlCORS(fn.URL.CORS)},
-		})
+	lambdaName := FunctionName(b.project, name)
+	return engine.Node{
+		ID: FunctionID(name), Type: awsp.TypeFunction, Name: lambdaName, After: []string{LogGroupID(name)},
+		Inputs: map[string]any{
+			inputName:             lambdaName,
+			"runtime":             fn.Runtime,
+			"handler":             handler,
+			"memory":              fn.Memory,
+			"timeout":             fn.Timeout,
+			"architecture":        fn.Architecture,
+			"ephemeralStorage":    fn.EphemeralStorage,
+			"reservedConcurrency": fn.ReservedConcurrency,
+			"environment":         env,
+			"role":                engine.Ref(RoleID(name), attrArn),
+			"logGroup":            logGroupName(b.project, name),
+			"code": map[string]any{
+				"bucket": b.target.Bucket,
+				"key":    state.ZipKey(b.project.App, b.project.Stage, archive.SHA256),
+				"sha256": archive.SHA256,
+			},
+			"vpc": vpc,
+		},
 	}
-	return nodes, nil
 }
 
-func urlCORS(c *config.CORS) any {
+func (b *builder) urlNode(name string, url *config.FunctionURL) engine.Node {
+	auth := "AWS_IAM"
+	if url.Auth == "none" {
+		auth = "NONE"
+	}
+	return engine.Node{
+		ID: URLID(name), Type: awsp.TypeURL, Name: FunctionName(b.project, name),
+		Inputs: map[string]any{inputFunction: engine.Ref(FunctionID(name), "FunctionName"), "auth": auth, "cors": corsInputs(url.CORS)},
+	}
+}
+
+// corsInputs are the inputs of a cross-origin configuration, of a function url or the http api.
+func corsInputs(c *config.CORS) any {
 	if c == nil {
 		return nil
 	}
@@ -224,7 +260,7 @@ var assumeRolePolicy = trust("lambda.amazonaws.com", nil)
 func (b *builder) resource(name string, r config.Resource) engine.Node {
 	props := b.properties(r.Properties)
 	policy := r.DeletionPolicy
-	if policy == "" && Stateful(r.Type) {
+	if policy == "" && stateful(r.Type) {
 		policy = engine.PolicyRetain
 	}
 	return engine.Node{
@@ -238,7 +274,7 @@ func (b *builder) properties(props map[string]any) any {
 	var conv func(v any) any
 	conv = func(v any) any {
 		if r, ok := config.AsRef(v); ok {
-			return engine.Ref(NodeID(b.p, r.Resource), r.Attribute)
+			return engine.Ref(NodeID(b.project, r.Resource), r.Attribute)
 		}
 		switch x := v.(type) {
 		case map[string]any:
@@ -263,8 +299,8 @@ func (b *builder) properties(props map[string]any) any {
 	return conv(props)
 }
 
-// stateful are the types that hold data, retained unless deletionPolicy says delete.
-var stateful = []string{
+// statefulTypes are the types that hold data, retained unless deletionPolicy says delete.
+var statefulTypes = []string{
 	"AWS::DynamoDB::Table", "AWS::DynamoDB::GlobalTable", "AWS::S3::Bucket",
 	"AWS::RDS::DBInstance", "AWS::RDS::DBCluster", "AWS::EFS::FileSystem",
 	"AWS::Kinesis::Stream", "AWS::KMS::Key", "AWS::SecretsManager::Secret",
@@ -273,7 +309,7 @@ var stateful = []string{
 	"AWS::Redshift::Cluster", "AWS::Backup::BackupVault", "AWS::Timestream::Table",
 }
 
-// Stateful reports whether a resource type holds data, and is retained by default.
-func Stateful(typ string) bool {
-	return slices.Contains(stateful, typ)
+// stateful reports whether a resource type holds data, and is retained by default.
+func stateful(typ string) bool {
+	return slices.Contains(statefulTypes, typ)
 }

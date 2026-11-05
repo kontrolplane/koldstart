@@ -8,15 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
-	"net"
-	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"sync"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
@@ -24,10 +21,10 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/kontrolplane/koldstart/internal/build"
-	"github.com/kontrolplane/koldstart/internal/config"
 	"github.com/kontrolplane/koldstart/internal/desired"
 	"github.com/kontrolplane/koldstart/internal/local"
 	"github.com/kontrolplane/koldstart/internal/pkl"
+	"github.com/kontrolplane/koldstart/internal/provider/awsp"
 )
 
 // localDir is where functions are built to run on this machine.
@@ -39,15 +36,22 @@ func overridesFile(stage string) string {
 	return filepath.Join(".koldstart", "local."+stage+".pkl")
 }
 
+// runner builds and runs the stage's functions on this machine.
+func (s *stage) runner() local.Runner {
+	return local.Runner{Root: s.Root, Stage: s.Stage, Dir: filepath.Join(s.Root, localDir, s.Stage)}
+}
+
 // overrides reads the stage's overrides file, when there is one.
 func (s *stage) overrides(ctx context.Context) (map[string]map[string]string, error) {
 	path := filepath.Join(s.Root, overridesFile(s.Stage))
-	if _, err := os.Stat(path); err != nil {
+	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", path, err)
 	}
 	binary, err := pkl.Find(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("finding pkl: %w", err)
 	}
 	out, err := pkl.Evaluator{Binary: binary}.EvalJSON(ctx, path, nil)
 	if err != nil {
@@ -66,44 +70,76 @@ func (s *stage) overrides(ctx context.Context) (map[string]map[string]string, er
 // stage, overridden by the stage's overrides file, and the session's credentials, so it talks to
 // what the stage deployed.
 func (s *stage) localFunction(ctx context.Context, name string, out io.Writer) (local.Function, error) {
-	fn := s.Functions[name]
+	env, err := s.declaredEnvironment(name)
+	if err != nil {
+		return local.Function{}, err
+	}
+	vars, err := s.resolveVariables(ctx, name, env)
+	if err != nil {
+		return local.Function{}, err
+	}
+	credentials, err := s.awsVariables(ctx)
+	if err != nil {
+		return local.Function{}, err
+	}
+	maps.Copy(vars, credentials)
+	lambdaName := desired.FunctionName(s.Project, name)
+	return local.Function{
+		Name: name, LambdaName: lambdaName, Config: s.Functions[name], Region: s.Region, Env: vars, Output: out,
+		ARN: "arn:" + awsp.Partition(s.Region) + ":lambda:" + s.Region + ":" + s.sess.Account + ":function:" + lambdaName,
+	}, nil
+}
+
+// declaredEnvironment is a function's environment as a deploy gives it, before it is resolved.
+func (s *stage) declaredEnvironment(name string) (map[string]any, error) {
 	archives := map[string]build.Archive{}
-	for other := range s.Functions {
-		archives[other] = build.Archive{Function: other, SHA256: "local"}
+	for fn := range s.Functions {
+		archives[fn] = build.Archive{Function: fn, SHA256: "local"}
 	}
 	nodes, err := s.nodes(archives)
 	if err != nil {
-		return local.Function{}, err
+		return nil, err
 	}
-	var env map[string]any
 	for _, n := range nodes {
 		if n.ID == desired.FunctionID(name) {
-			env, _ = n.Inputs["environment"].(map[string]any)
+			env, _ := n.Inputs["environment"].(map[string]any)
+			return env, nil
 		}
 	}
+	return nil, nil
+}
+
+// resolveVariables resolves a function's variables against what the stage deployed, each one
+// the overrides file sets taken from there instead.
+func (s *stage) resolveVariables(ctx context.Context, name string, env map[string]any) (map[string]string, error) {
 	overrides, err := s.overrides(ctx)
 	if err != nil {
-		return local.Function{}, err
+		return nil, err
 	}
 	e := s.engine()
 	vars := map[string]string{}
 	for _, key := range slices.Sorted(maps.Keys(env)) {
-		if v, ok := overrides[name][key]; ok {
-			vars[key] = v
+		if _, set := overrides[name][key]; set {
 			continue
 		}
 		v, err := e.Resolve(ctx, env[key], s.state)
 		if err != nil {
-			return local.Function{}, fmt.Errorf("%s: %w: deploy it, or set %s in %s", key, err, key, overridesFile(s.Stage))
+			return nil, fmt.Errorf("%s: %w: deploy it, or set %s in %s", key, err, key, overridesFile(s.Stage))
 		}
 		vars[key] = fmt.Sprint(v)
 	}
 	maps.Copy(vars, overrides[name])
+	return vars, nil
+}
+
+// awsVariables are the session's credentials, and the endpoint of an emulator when one is set,
+// so the function reaches what koldstart reaches.
+func (s *stage) awsVariables(ctx context.Context) (map[string]string, error) {
 	creds, err := s.sess.cfg.Credentials.Retrieve(ctx)
 	if err != nil {
-		return local.Function{}, fmt.Errorf("reading the aws credentials for the function: %w", err)
+		return nil, fmt.Errorf("reading the aws credentials for the function: %w", err)
 	}
-	vars["AWS_ACCESS_KEY_ID"], vars["AWS_SECRET_ACCESS_KEY"] = creds.AccessKeyID, creds.SecretAccessKey
+	vars := map[string]string{"AWS_ACCESS_KEY_ID": creds.AccessKeyID, "AWS_SECRET_ACCESS_KEY": creds.SecretAccessKey}
 	if creds.SessionToken != "" {
 		vars["AWS_SESSION_TOKEN"] = creds.SessionToken
 	}
@@ -112,11 +148,7 @@ func (s *stage) localFunction(ctx context.Context, name string, out io.Writer) (
 			vars[k] = v
 		}
 	}
-	fnName := desired.FunctionName(s.Project, name)
-	return local.Function{
-		Name: name, FunctionName: fnName, Config: fn, Region: s.Region, Env: vars, Output: out,
-		ARN: "arn:aws:lambda:" + s.Region + ":" + s.sess.Account + ":function:" + fnName,
-	}, nil
+	return vars, nil
 }
 
 // prefixed writes each line of a function's output with its name before it, one line at a time.
@@ -192,16 +224,16 @@ writes what the stage deployed; .koldstart/local.<stage>.pkl overrides variables
 			if err != nil {
 				return err
 			}
-			if _, ok := s.Functions[function]; !ok {
-				return fmt.Errorf("no function %q in %s", function, s.Path)
+			if err := s.function(function); err != nil {
+				return err
 			}
-			if runLocal {
-				if err := confirmProd(cmd, s, yes); err != nil {
-					return err
-				}
-				return s.invokeLocal(ctx, cmd, function, payload)
+			if !runLocal {
+				return s.invokeRemote(ctx, cmd, function, payload)
 			}
-			return s.invokeRemote(ctx, cmd, function, payload)
+			if err := confirmProd(cmd, s, yes); err != nil {
+				return err
+			}
+			return s.invokeLocal(ctx, cmd, function, payload)
 		},
 	}
 	cmd.Flags().StringVarP(&function, "function", "f", "", "the function to invoke")
@@ -213,6 +245,8 @@ writes what the stage deployed; .koldstart/local.<stage>.pkl overrides variables
 	return cmd
 }
 
+// invokeRemote invokes the deployed function, printing the end of its log on stderr and what it
+// returned on stdout.
 func (s *stage) invokeRemote(ctx context.Context, cmd *cobra.Command, function string, payload []byte) error {
 	out, err := s.sess.Lambda.Invoke(ctx, &lambda.InvokeInput{
 		FunctionName: aws.String(desired.FunctionName(s.Project, function)), Payload: payload, LogType: lambdatypes.LogTypeTail,
@@ -233,20 +267,15 @@ func (s *stage) invokeRemote(ctx context.Context, cmd *cobra.Command, function s
 	return nil
 }
 
+// invokeLocal runs the function once on this machine, its output on stderr and what it returned
+// on stdout.
 func (s *stage) invokeLocal(ctx context.Context, cmd *cobra.Command, function string, payload []byte) error {
 	f, err := s.localFunction(ctx, function, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}
-	l := local.Local{Root: s.Root, Stage: s.Stage, Dir: filepath.Join(s.Root, localDir, s.Stage)}
-	if err := l.Build(ctx, f); err != nil {
-		return err
-	}
-	r, err := l.Runtime(f)
+	r, err := s.runner().Start(ctx, f)
 	if err != nil {
-		return err
-	}
-	if err := r.Start(); err != nil {
 		return err
 	}
 	defer func() { _ = r.Close() }()
@@ -256,123 +285,6 @@ func (s *stage) invokeLocal(ctx context.Context, cmd *cobra.Command, function st
 	}
 	if err != nil {
 		return fmt.Errorf("%s failed: %w", function, err)
-	}
-	return nil
-}
-
-// runtimes are the functions offline serves, each a warm process, rebuilt on a change.
-type runtimes struct {
-	mu   sync.Mutex
-	byFn map[string]*local.Runtime
-}
-
-func (r *runtimes) Invoke(ctx context.Context, function string, payload []byte) ([]byte, error) {
-	r.mu.Lock()
-	rt := r.byFn[function]
-	r.mu.Unlock()
-	if rt == nil {
-		return nil, fmt.Errorf("%s is not running", function)
-	}
-	return rt.Invoke(ctx, payload)
-}
-
-func offlineCommand(name string, opts *Options) *cobra.Command {
-	var port int
-	var yes bool
-	cmd := &cobra.Command{
-		Use:   "offline",
-		Short: "serve the http routes on this machine",
-		Long: `offline serves every http route of the stage on 127.0.0.1, each request an invocation of its
-function on this machine, as invoke --local runs it. A change to a file of the project rebuilds the
-functions and the next request runs the new code.`,
-		Example: fmt.Sprintf("  %[1]s offline\n  %[1]s offline --port 8080", name),
-		Args:    cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			ctx := cmd.Context()
-			s, err := openStage(ctx, opts, false)
-			if err != nil {
-				return err
-			}
-			if err := confirmProd(cmd, s, yes); err != nil {
-				return err
-			}
-			var routes []local.Route
-			for _, fn := range slices.Sorted(maps.Keys(s.Functions)) {
-				for _, e := range s.Functions[fn].Events {
-					if e.Type == config.EventHTTPRoute {
-						routes = append(routes, local.Route{Method: strings.ToUpper(e.Method), Path: e.Path, Function: fn})
-					}
-				}
-			}
-			if len(routes) == 0 {
-				return errors.New("no function has an http route to serve")
-			}
-			return s.serve(ctx, cmd, routes, port)
-		},
-	}
-	cmd.Flags().IntVar(&port, "port", 3000, "the port to listen on")
-	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "run against prod without asking")
-	return cmd
-}
-
-func (s *stage) serve(ctx context.Context, cmd *cobra.Command, routes []local.Route, port int) error {
-	l := local.Local{Root: s.Root, Stage: s.Stage, Dir: filepath.Join(s.Root, localDir, s.Stage)}
-	var mu sync.Mutex
-	rts := &runtimes{byFn: map[string]*local.Runtime{}}
-	var functions []local.Function
-	seen := map[string]bool{}
-	for _, r := range routes {
-		if seen[r.Function] {
-			continue
-		}
-		seen[r.Function] = true
-		f, err := s.localFunction(ctx, r.Function, &prefixed{mu: &mu, w: cmd.ErrOrStderr(), prefix: "[" + r.Function + "] "})
-		if err != nil {
-			return err
-		}
-		if err := l.Build(ctx, f); err != nil {
-			return err
-		}
-		rt, err := l.Runtime(f)
-		if err != nil {
-			return err
-		}
-		if err := rt.Start(); err != nil {
-			return err
-		}
-		defer func() { _ = rt.Close() }()
-		rts.byFn[r.Function] = rt
-		functions = append(functions, f)
-	}
-
-	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
-	if err != nil {
-		return fmt.Errorf("listening on port %d: %w", port, err)
-	}
-	out := cmd.OutOrStdout()
-	_, _ = fmt.Fprintf(out, "serving %s/%s on http://%s\n", s.App, s.Stage, listener.Addr())
-	for _, r := range routes {
-		_, _ = fmt.Fprintf(out, "  %-28s %s\n", r.Key(), r.Function)
-	}
-	srv := &http.Server{Handler: &local.Offline{Routes: routes, Invoker: rts, Log: cmd.ErrOrStderr()}, ReadHeaderTimeout: 10 * time.Second}
-	go local.Watch(ctx, s.Root, 500*time.Millisecond, func() {
-		for _, f := range functions {
-			if err := l.Build(ctx, f); err != nil {
-				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "rebuilding %s: %v\n", f.Name, err)
-				continue
-			}
-			rts.byFn[f.Name].Restart()
-		}
-		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "rebuilt")
-	})
-	go func() {
-		<-ctx.Done()
-		shutdown, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(shutdown)
-	}()
-	if err := srv.Serve(listener); !errors.Is(err, http.ErrServerClosed) {
-		return err
 	}
 	return nil
 }

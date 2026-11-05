@@ -138,29 +138,52 @@ func (b *builder) runtimeSecrets(fn config.Function) []any {
 	return out
 }
 
-// permissions returns the role's inline policy, its managed policies, and the environment
-// variables link adds. An ssm parameter's arn is not an attribute, so it is built from its name.
-func (b *builder) permissions(name string, fn config.Function) (map[string]any, []string, map[string]any, error) {
+// permissions returns a function's role's inline policy and its managed policies: writing to its
+// log group, its own statements, reading its event sources and runtime secrets, and what link
+// gives it.
+func (b *builder) permissions(name string, fn config.Function) (map[string]any, []string, error) {
 	statements := []any{statement("Allow",
 		[]string{"logs:CreateLogStream", "logs:PutLogEvents"},
-		[]any{engine.Ref(LogGroupID(name), "Arn")},
+		[]any{engine.Ref(LogGroupID(name), attrArn)},
 	)}
-
 	for _, s := range fn.Permissions {
 		statements = append(statements, statement(s.Effect, s.Actions, b.values(s.Resources)))
 	}
-
 	statements = append(statements, b.sourceStatements(fn)...)
 	statements = append(statements, b.runtimeSecrets(fn)...)
+	linked, err := b.linkStatements(fn)
+	if err != nil {
+		return nil, nil, err
+	}
+	statements = append(statements, linked...)
 
-	env := map[string]any{}
+	var managed []string
+	if fn.VPC != nil {
+		managed = append(managed, "arn:"+awsp.Partition(b.target.Region)+":iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole")
+	}
+	return policy(statements...), managed, nil
+}
+
+// linkAccess is what link knows of a resource a function links to, or an error for a type it
+// does not know.
+func (b *builder) linkAccess(target string) (access, error) {
+	res := b.project.Resources[target]
+	a, ok := links[res.Type]
+	if !ok {
+		return access{}, fmt.Errorf("link[%s]: link does not know %s yet: give access with permissions instead", target, res.Type)
+	}
+	return a, nil
+}
+
+// linkStatements are the statements link gives a function, one per resource. An ssm parameter's
+// arn is not an attribute, so it is built from its name.
+func (b *builder) linkStatements(fn config.Function) ([]any, error) {
+	var out []any
 	for _, target := range slices.Sorted(maps.Keys(fn.Link)) {
-		res := b.p.Resources[target]
-		a, ok := links[res.Type]
-		if !ok {
-			return nil, nil, nil, fmt.Errorf("link[%s]: link does not know %s yet: give access with permissions instead", target, res.Type)
+		a, err := b.linkAccess(target)
+		if err != nil {
+			return nil, err
 		}
-		node := ResourceID(target)
 		var actions []string
 		switch fn.Link[target] {
 		case "read":
@@ -170,23 +193,28 @@ func (b *builder) permissions(name string, fn config.Function) (map[string]any, 
 		default:
 			actions = slices.Concat(a.read, a.write)
 		}
-		slices.Sort(actions)
-		actions = slices.Compact(actions)
-		var resources []any
+		actions = slices.Compact(slices.Sorted(slices.Values(actions)))
+		node := ResourceID(target)
+		resources := []any{engine.Join(b.arnPrefix("ssm")+"parameter/", engine.Ref(node, "Name"))}
 		if a.resources != nil {
 			resources = a.resources(node)
-		} else {
-			resources = []any{engine.Join("arn:"+awsp.Partition(b.t.Region)+":ssm:"+b.t.Region+":"+b.t.Account+":parameter/", engine.Ref(node, "Name"))}
 		}
-		statements = append(statements, statement("Allow", actions, resources))
-		for _, suffix := range slices.Sorted(maps.Keys(a.env)) {
-			env[envName(target)+"_"+suffix] = engine.Ref(node, a.env[suffix])
-		}
+		out = append(out, statement("Allow", actions, resources))
 	}
+	return out, nil
+}
 
-	var managed []string
-	if fn.VPC != nil {
-		managed = append(managed, "arn:"+awsp.Partition(b.t.Region)+":iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole")
+// linkEnvironment are the variables link adds to a function: the names and arns of what it links.
+func (b *builder) linkEnvironment(fn config.Function) (map[string]any, error) {
+	env := map[string]any{}
+	for _, target := range slices.Sorted(maps.Keys(fn.Link)) {
+		a, err := b.linkAccess(target)
+		if err != nil {
+			return nil, err
+		}
+		for _, suffix := range slices.Sorted(maps.Keys(a.env)) {
+			env[envName(target)+"_"+suffix] = engine.Ref(ResourceID(target), a.env[suffix])
+		}
 	}
-	return policy(statements...), managed, env, nil
+	return env, nil
 }

@@ -35,7 +35,8 @@ func Watch(ctx context.Context, root string, interval time.Duration, changed fun
 	}
 }
 
-// snapshot sums the paths, sizes and times of the files under root.
+// snapshot joins the path and modification time of each source file under root, so two
+// snapshots differ when a source changed.
 func snapshot(root string) string {
 	var b strings.Builder
 	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
@@ -54,7 +55,6 @@ func snapshot(root string) string {
 		if info, err := d.Info(); err == nil && !d.IsDir() {
 			b.WriteString(p)
 			b.WriteString(info.ModTime().String())
-			b.WriteString(info.Name())
 		}
 		return nil
 	})

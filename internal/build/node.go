@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/evanw/esbuild/pkg/api"
@@ -137,7 +139,10 @@ func typecheck(ctx context.Context, root string) error {
 	cmd.Stdout = &out
 	cmd.Stderr = &out
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("tsc --noEmit:\n%s", strings.TrimSpace(out.String()))
+		if msg := strings.TrimSpace(out.String()); msg != "" {
+			return fmt.Errorf("tsc --noEmit:\n%s", msg)
+		}
+		return fmt.Errorf("tsc --noEmit: %w", err)
 	}
 	return nil
 }
@@ -147,7 +152,7 @@ func typecheck(ctx context.Context, root string) error {
 func nodeModules(root string, names []string) ([]File, error) {
 	var files []File
 	seen := map[string]bool{}
-	queue := append([]string(nil), names...)
+	queue := slices.Clone(names)
 	for len(queue) > 0 {
 		name := queue[0]
 		queue = queue[1:]
@@ -155,58 +160,69 @@ func nodeModules(root string, names []string) ([]File, error) {
 			continue
 		}
 		seen[name] = true
-
-		dir := filepath.Join(root, "node_modules", filepath.FromSlash(name))
-		real, err := filepath.EvalSymlinks(dir)
+		pkgDir, err := filepath.EvalSymlinks(filepath.Join(root, "node_modules", filepath.FromSlash(name)))
 		if err != nil {
 			return nil, fmt.Errorf("external %s is not in node_modules: install it, for the architecture the function runs on", name)
 		}
-		var pkg struct {
-			Dependencies         map[string]string `json:"dependencies"`
-			OptionalDependencies map[string]string `json:"optionalDependencies"`
-		}
-		data, err := os.ReadFile(filepath.Join(real, "package.json"))
+		deps, err := dependencies(root, name, pkgDir)
 		if err != nil {
-			return nil, fmt.Errorf("reading the package.json of %s: %w", name, err)
+			return nil, err
 		}
-		if err := json.Unmarshal(data, &pkg); err != nil {
-			return nil, fmt.Errorf("reading the package.json of %s: %w", name, err)
-		}
-		for dep := range pkg.Dependencies {
-			queue = append(queue, dep)
-		}
-		for dep := range pkg.OptionalDependencies {
-			if _, err := os.Stat(filepath.Join(root, "node_modules", filepath.FromSlash(dep))); err == nil {
-				queue = append(queue, dep)
-			}
-		}
-
-		err = filepath.WalkDir(real, func(p string, d fs.DirEntry, err error) error {
-			if err != nil || d.IsDir() {
-				return err
-			}
-			rel, err := filepath.Rel(real, p)
-			if err != nil {
-				return err
-			}
-			info, err := os.Stat(p)
-			if err != nil {
-				return err
-			}
-			content, err := fs.ReadFile(os.DirFS(real), filepath.ToSlash(rel))
-			if err != nil {
-				return err
-			}
-			files = append(files, File{
-				Name:       path.Join("node_modules", name, filepath.ToSlash(rel)),
-				Data:       content,
-				Executable: info.Mode().Perm()&0o111 != 0,
-			})
-			return nil
-		})
+		queue = append(queue, deps...)
+		pkgFiles, err := packageFiles(name, pkgDir)
 		if err != nil {
 			return nil, fmt.Errorf("copying %s: %w", name, err)
 		}
+		files = append(files, pkgFiles...)
 	}
 	return files, nil
+}
+
+// dependencies are what the package in pkgDir depends on: all its dependencies, and the optional
+// ones that are installed.
+func dependencies(root, name, pkgDir string) ([]string, error) {
+	var pkg struct {
+		Dependencies         map[string]string `json:"dependencies"`
+		OptionalDependencies map[string]string `json:"optionalDependencies"`
+	}
+	data, err := fs.ReadFile(os.DirFS(pkgDir), "package.json")
+	if err != nil {
+		return nil, fmt.Errorf("reading the package.json of %s: %w", name, err)
+	}
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		return nil, fmt.Errorf("reading the package.json of %s: %w", name, err)
+	}
+	deps := slices.Sorted(maps.Keys(pkg.Dependencies))
+	for _, dep := range slices.Sorted(maps.Keys(pkg.OptionalDependencies)) {
+		if _, err := os.Stat(filepath.Join(root, "node_modules", filepath.FromSlash(dep))); err == nil {
+			deps = append(deps, dep)
+		}
+	}
+	return deps, nil
+}
+
+// packageFiles are the files of the package in pkgDir, under node_modules/<name> in the zip.
+func packageFiles(name, pkgDir string) ([]File, error) {
+	var files []File
+	fsys := os.DirFS(pkgDir)
+	err := fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		content, err := fs.ReadFile(fsys, p)
+		if err != nil {
+			return err
+		}
+		files = append(files, File{
+			Name:       path.Join("node_modules", name, p),
+			Data:       content,
+			Executable: info.Mode().Perm()&0o111 != 0,
+		})
+		return nil
+	})
+	return files, err
 }

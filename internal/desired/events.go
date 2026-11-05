@@ -42,12 +42,12 @@ func sourceKey(v config.Value) string {
 
 // arnPrefix starts the arns of a service in the target's region and account.
 func (b *builder) arnPrefix(service string) string {
-	return "arn:" + awsp.Partition(b.t.Region) + ":" + service + ":" + b.t.Region + ":" + b.t.Account + ":"
+	return "arn:" + awsp.Partition(b.target.Region) + ":" + service + ":" + b.target.Region + ":" + b.target.Account + ":"
 }
 
 // statementID names a permission on a function's policy after its node, unique per stage.
 func (b *builder) statementID(node string) string {
-	sum := sha256.Sum256([]byte(b.p.App + "/" + b.p.Stage + "/" + node))
+	sum := sha256.Sum256([]byte(b.project.App + "/" + b.project.Stage + "/" + node))
 	return "koldstart-" + hex.EncodeToString(sum[:])[:16]
 }
 
@@ -61,31 +61,24 @@ func (b *builder) permission(fn, source, principal string, sourceArn any, accoun
 		"sourceArn":   sourceArn,
 	}
 	if account {
-		inputs["sourceAccount"] = b.t.Account
+		inputs["sourceAccount"] = b.target.Account
 	}
 	return engine.Node{ID: id, Type: awsp.TypePermission, Inputs: inputs}
 }
 
+// hasEvent reports whether a function has an event of the type.
+func hasEvent(fn config.Function, typ string) bool {
+	return slices.ContainsFunc(fn.Events, func(e config.Event) bool { return e.Type == typ })
+}
+
 // hasRoutes reports whether any function has an http route, which makes the stage an http api.
 func (b *builder) hasRoutes() bool {
-	for _, fn := range b.p.Functions {
-		for _, e := range fn.Events {
-			if e.Type == config.EventHTTPRoute {
-				return true
-			}
+	for _, fn := range b.project.Functions {
+		if hasEvent(fn, config.EventHTTPRoute) {
+			return true
 		}
 	}
 	return false
-}
-
-func cors(c *config.CORS) any {
-	if c == nil {
-		return nil
-	}
-	return map[string]any{
-		"origins": c.Origins, "methods": c.Methods, "headers": c.Headers,
-		"expose": c.Expose, "credentials": c.Credentials, "maxAge": c.MaxAge,
-	}
 }
 
 // httpAPI returns the stage's http api, its authorizers and its domain.
@@ -93,15 +86,15 @@ func (b *builder) httpAPI() []engine.Node {
 	if !b.hasRoutes() {
 		return nil
 	}
-	inputs := map[string]any{inputName: Name(128, b.p.App, b.p.Stage), "cors": nil, "throttling": nil}
-	h := b.p.HTTP
+	inputs := map[string]any{inputName: Name(128, b.project.App, b.project.Stage), "cors": nil, "throttling": nil}
+	h := b.project.HTTP
 	if h != nil {
-		inputs["cors"] = cors(h.CORS)
+		inputs["cors"] = corsInputs(h.CORS)
 		if h.Throttling != nil {
 			inputs["throttling"] = map[string]any{"rate": h.Throttling.Rate, "burst": h.Throttling.Burst}
 		}
 	}
-	nodes := []engine.Node{{ID: HTTPAPIID, Type: awsp.TypeHTTPAPI, Name: Name(128, b.p.App, b.p.Stage), Inputs: inputs}}
+	nodes := []engine.Node{{ID: HTTPAPIID, Type: awsp.TypeHTTPAPI, Name: Name(128, b.project.App, b.project.Stage), Inputs: inputs}}
 	if h == nil {
 		return nodes
 	}
@@ -113,7 +106,7 @@ func (b *builder) httpAPI() []engine.Node {
 			in["type"], in["issuer"], in["audience"] = "JWT", a.Issuer, a.Audience
 		} else {
 			in["type"], in["ttl"] = "REQUEST", a.TTL
-			in["uri"] = engine.Join("arn:"+awsp.Partition(b.t.Region)+":apigateway:"+b.t.Region+":lambda:path/2015-03-31/functions/",
+			in["uri"] = engine.Join("arn:"+awsp.Partition(b.target.Region)+":apigateway:"+b.target.Region+":lambda:path/2015-03-31/functions/",
 				engine.Ref(FunctionID(a.Function), attrArn), "/invocations")
 			nodes = append(nodes, b.permission(a.Function, "authorizer-"+name, "apigateway.amazonaws.com",
 				engine.Join(b.arnPrefix("execute-api"), api, "/authorizers/*"), false))
@@ -130,70 +123,95 @@ func (b *builder) httpAPI() []engine.Node {
 }
 
 // events returns the nodes a function's events add: its integration and routes, schedules,
-// mappings, subscriptions, and the permissions that let each source invoke it.
+// mappings, subscriptions, and the permissions that let each source invoke it. Buckets are left
+// to notifications, which gathers the functions of each bucket.
 func (b *builder) events(name string, fn config.Function) []engine.Node {
 	var nodes []engine.Node
-	arn := engine.Ref(FunctionID(name), attrArn)
-	functionName := engine.Ref(FunctionID(name), "FunctionName")
-	routed := false
 	schedules := 0
 	for _, e := range fn.Events {
 		switch e.Type {
 		case config.EventHTTPRoute:
-			routed = true
 			nodes = append(nodes, b.route(name, e))
 		case config.EventSchedule:
-			enabled := e.Enabled == nil || *e.Enabled
-			n := fmt.Sprint(schedules)
+			nodes = append(nodes, b.schedule(name, e, schedules))
 			schedules++
-			nodes = append(nodes, engine.Node{
-				ID: eventID("schedule", name, n), Type: awsp.TypeSchedule, Name: Name(64, b.p.App, b.p.Stage, name, n),
-				Inputs: map[string]any{
-					inputName: Name(64, b.p.App, b.p.Stage, name, n), "expression": e.Expression, "timezone": e.Timezone,
-					inputFunction: arn, "role": engine.Ref(schedulerRoleID(name), attrArn), "input": e.Input, "enabled": enabled,
-				},
-			})
 		case config.EventQueue, config.EventStream:
-			source := e.Queue
-			in := map[string]any{
-				inputFunction: functionName, "batchSize": e.BatchSize, "maximumBatchingWindow": e.MaximumBatchingWindow,
-				"reportBatchItemFailures": e.ReportBatchItemFailures, "filters": e.Filters, "startingPosition": "",
-			}
-			if e.Type == config.EventStream {
-				source = e.Stream
-				in["startingPosition"] = e.StartingPosition
-			}
-			in["source"] = b.value(source)
-			nodes = append(nodes, engine.Node{ID: eventID("mapping", name, sourceKey(source)), Type: awsp.TypeMapping, Inputs: in, After: []string{RoleID(name)}})
+			nodes = append(nodes, b.mapping(name, e))
 		case config.EventTopic:
-			topic := b.value(e.Topic)
-			id := eventID("subscription", name, sourceKey(e.Topic))
-			permission := b.permission(name, "topic-"+sourceKey(e.Topic), "sns.amazonaws.com", topic, false)
-			nodes = append(nodes, permission, engine.Node{
-				ID: id, Type: awsp.TypeSubscription,
-				Inputs: map[string]any{"topic": topic, inputFunction: arn, "filterPolicy": e.FilterPolicy},
-				After:  []string{permission.ID},
-			})
+			nodes = append(nodes, b.subscription(name, e)...)
 		}
 	}
-	if routed {
-		nodes = append(nodes,
-			engine.Node{ID: integrationID(name), Type: awsp.TypeIntegration, Inputs: map[string]any{inputAPI: engine.Ref(HTTPAPIID, "ApiId"), inputFunction: arn}},
-			b.permission(name, "httpapi", "apigateway.amazonaws.com", engine.Join(b.arnPrefix("execute-api"), engine.Ref(HTTPAPIID, "ApiId"), "/*/*"), false),
-		)
+	if hasEvent(fn, config.EventHTTPRoute) {
+		nodes = append(nodes, b.integration(name)...)
 	}
-	if slices.ContainsFunc(fn.Events, func(e config.Event) bool { return e.Type == config.EventSchedule }) {
-		nodes = append(nodes, engine.Node{
-			ID: schedulerRoleID(name), Type: awsp.TypeRole, Name: Name(64, b.p.App, b.p.Stage, name, "scheduler", b.t.Region),
-			Inputs: map[string]any{
-				inputName:          Name(64, b.p.App, b.p.Stage, name, "scheduler", b.t.Region),
-				"assumeRolePolicy": trust("scheduler.amazonaws.com", map[string]any{"StringEquals": map[string]any{"aws:SourceAccount": b.t.Account}}),
-				"policy":           policy(statement("Allow", []string{"lambda:InvokeFunction"}, []any{arn})),
-				"managedPolicies":  nil,
-			},
-		})
+	if hasEvent(fn, config.EventSchedule) {
+		nodes = append(nodes, b.schedulerRole(name))
 	}
 	return nodes
+}
+
+// schedule is the n-th schedule of a function. Schedules are numbered among themselves, so one
+// keeps its node when an event of another kind comes or goes.
+func (b *builder) schedule(name string, e config.Event, n int) engine.Node {
+	scheduleName := Name(64, b.project.App, b.project.Stage, name, fmt.Sprint(n))
+	return engine.Node{
+		ID: eventID("schedule", name, fmt.Sprint(n)), Type: awsp.TypeSchedule, Name: scheduleName,
+		Inputs: map[string]any{
+			inputName: scheduleName, "expression": e.Expression, "timezone": e.Timezone,
+			inputFunction: engine.Ref(FunctionID(name), attrArn), "role": engine.Ref(schedulerRoleID(name), attrArn),
+			"input": e.Input, "enabled": e.Enabled == nil || *e.Enabled,
+		},
+	}
+}
+
+// schedulerRole is the role the scheduler invokes a function with.
+func (b *builder) schedulerRole(name string) engine.Node {
+	role := Name(64, b.project.App, b.project.Stage, name, "scheduler", b.target.Region)
+	return engine.Node{
+		ID: schedulerRoleID(name), Type: awsp.TypeRole, Name: role,
+		Inputs: map[string]any{
+			inputName:          role,
+			"assumeRolePolicy": trust("scheduler.amazonaws.com", map[string]any{"StringEquals": map[string]any{"aws:SourceAccount": b.target.Account}}),
+			"policy":           policy(statement("Allow", []string{"lambda:InvokeFunction"}, []any{engine.Ref(FunctionID(name), attrArn)})),
+			"managedPolicies":  nil,
+		},
+	}
+}
+
+// mapping is the event source mapping of a queue or a stream, after the role that may read it.
+func (b *builder) mapping(name string, e config.Event) engine.Node {
+	source, startingPosition := e.Queue, ""
+	if e.Type == config.EventStream {
+		source, startingPosition = e.Stream, e.StartingPosition
+	}
+	return engine.Node{
+		ID: eventID("mapping", name, sourceKey(source)), Type: awsp.TypeMapping, After: []string{RoleID(name)},
+		Inputs: map[string]any{
+			inputFunction: engine.Ref(FunctionID(name), "FunctionName"), "source": b.value(source),
+			"batchSize": e.BatchSize, "maximumBatchingWindow": e.MaximumBatchingWindow,
+			"reportBatchItemFailures": e.ReportBatchItemFailures, "filters": e.Filters, "startingPosition": startingPosition,
+		},
+	}
+}
+
+// subscription is a function's subscription to a topic, after the permission that lets sns
+// invoke it.
+func (b *builder) subscription(name string, e config.Event) []engine.Node {
+	topic := b.value(e.Topic)
+	permission := b.permission(name, "topic-"+sourceKey(e.Topic), "sns.amazonaws.com", topic, false)
+	return []engine.Node{permission, {
+		ID: eventID("subscription", name, sourceKey(e.Topic)), Type: awsp.TypeSubscription, After: []string{permission.ID},
+		Inputs: map[string]any{"topic": topic, inputFunction: engine.Ref(FunctionID(name), attrArn), "filterPolicy": e.FilterPolicy},
+	}}
+}
+
+// integration is how the http api hands a function's routes to it, and its permission to.
+func (b *builder) integration(name string) []engine.Node {
+	api := engine.Ref(HTTPAPIID, "ApiId")
+	return []engine.Node{
+		{ID: integrationID(name), Type: awsp.TypeIntegration, Inputs: map[string]any{inputAPI: api, inputFunction: engine.Ref(FunctionID(name), attrArn)}},
+		b.permission(name, "httpapi", "apigateway.amazonaws.com", engine.Join(b.arnPrefix("execute-api"), api, "/*/*"), false),
+	}
 }
 
 func (b *builder) route(fn string, e config.Event) engine.Node {
@@ -211,7 +229,7 @@ func (b *builder) route(fn string, e config.Event) engine.Node {
 	if e.Authorizer != "" {
 		in["authorizer"] = engine.Ref(authorizerID(e.Authorizer), "AuthorizerId")
 		in["authorizationType"] = "CUSTOM"
-		if b.p.HTTP.Authorizers[e.Authorizer].Type == "jwt" {
+		if b.project.HTTP.Authorizers[e.Authorizer].Type == "jwt" {
 			in["authorizationType"] = "JWT"
 		}
 	}
@@ -228,10 +246,10 @@ func (b *builder) notifications() []engine.Node {
 	}
 	buckets := map[string]*entry{}
 	var nodes []engine.Node
-	prefix := "koldstart-" + b.p.App + "-" + b.p.Stage + "-"
-	for _, name := range slices.Sorted(maps.Keys(b.p.Functions)) {
+	prefix := "koldstart-" + b.project.App + "-" + b.project.Stage + "-"
+	for _, name := range slices.Sorted(maps.Keys(b.project.Functions)) {
 		seen := map[string]int{}
-		for _, e := range b.p.Functions[name].Events {
+		for _, e := range b.project.Functions[name].Events {
 			if e.Type != config.EventBucket {
 				continue
 			}
@@ -242,7 +260,7 @@ func (b *builder) notifications() []engine.Node {
 				buckets[key] = en
 			}
 			if seen[key] == 0 {
-				permission := b.permission(name, "bucket-"+key, "s3.amazonaws.com", engine.Join("arn:"+awsp.Partition(b.t.Region)+":s3:::", en.bucket), true)
+				permission := b.permission(name, "bucket-"+key, "s3.amazonaws.com", engine.Join("arn:"+awsp.Partition(b.target.Region)+":s3:::", en.bucket), true)
 				nodes = append(nodes, permission)
 				en.after = append(en.after, permission.ID)
 			}

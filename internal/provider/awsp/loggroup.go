@@ -49,7 +49,10 @@ func (p LogGroup) Create(ctx context.Context, req engine.Request) (engine.Result
 func (p LogGroup) retention(ctx context.Context, in LogGroupInputs) error {
 	if in.Retention == 0 {
 		_, err := p.Client.DeleteRetentionPolicy(ctx, &cloudwatchlogs.DeleteRetentionPolicyInput{LogGroupName: &in.Name})
-		return err
+		if err != nil {
+			return fmt.Errorf("keeping the logs of %s forever: %w", in.Name, err)
+		}
+		return nil
 	}
 	_, err := p.Client.PutRetentionPolicy(ctx, &cloudwatchlogs.PutRetentionPolicyInput{LogGroupName: &in.Name, RetentionInDays: &in.Retention})
 	if err != nil {

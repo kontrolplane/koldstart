@@ -2,7 +2,9 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 
@@ -22,13 +24,12 @@ type project struct {
 func loadProject(ctx context.Context, opts *Options) (*project, error) {
 	path, err := filepath.Abs(opts.Config)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("finding %s: %w", opts.Config, err)
 	}
-	if _, err := os.Stat(path); err != nil {
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("no %s here: run init to write one, or pass --config", opts.Config)
-		}
-		return nil, err
+	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("no %s here: write one, see docs/configuration.md, or pass --config", opts.Config)
+	} else if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", opts.Config, err)
 	}
 	binary, err := pkl.Find(ctx)
 	if err != nil {

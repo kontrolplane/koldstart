@@ -30,7 +30,7 @@ func (b Builder) golang(ctx context.Context, fn config.Function, target Target) 
 	}
 	tmp, err := os.MkdirTemp("", "koldstart-go-")
 	if err != nil {
-		return File{}, err
+		return File{}, fmt.Errorf("making a directory to build in: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(tmp) }()
 	out := filepath.Join(tmp, "bootstrap")
@@ -50,7 +50,7 @@ func (b Builder) golang(ctx context.Context, fn config.Function, target Target) 
 	}
 	data, err := fs.ReadFile(os.DirFS(tmp), "bootstrap")
 	if err != nil {
-		return File{}, err
+		return File{}, fmt.Errorf("reading the built %s: %w", fn.Handler, err)
 	}
 	return File{Name: "bootstrap", Data: data, Executable: true}, nil
 }

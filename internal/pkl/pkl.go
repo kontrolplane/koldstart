@@ -51,6 +51,7 @@ func asset(goos, goarch string, musl bool) (string, error) {
 	arch := map[string]string{amd64: amd64, "arm64": "aarch64"}[goarch]
 	switch {
 	case arch == "":
+		return "", fmt.Errorf("pkl has no build for %s/%s: install pkl and set %s", goos, goarch, EnvBinary)
 	case goos == "darwin":
 		return "pkl-macos-" + arch, nil
 	case goos == linux && musl && arch == amd64:
@@ -69,8 +70,8 @@ func isMusl() bool {
 	return len(matches) > 0
 }
 
-// CacheDir is where downloaded binaries go: $XDG_CACHE_HOME/koldstart, or ~/.cache/koldstart.
-func CacheDir() (string, error) {
+// cacheDir is where downloaded binaries go: $XDG_CACHE_HOME/koldstart, or ~/.cache/koldstart.
+func cacheDir() (string, error) {
 	if dir := os.Getenv("XDG_CACHE_HOME"); dir != "" {
 		return filepath.Join(dir, "koldstart"), nil
 	}
@@ -97,7 +98,7 @@ func Find(ctx context.Context) (string, error) {
 			return path, nil
 		}
 	}
-	dir, err := CacheDir()
+	dir, err := cacheDir()
 	if err != nil {
 		return "", err
 	}

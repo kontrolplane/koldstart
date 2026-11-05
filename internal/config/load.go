@@ -105,7 +105,7 @@ func (p *Project) Validate() error {
 	for _, name := range slices.Sorted(maps.Keys(p.Resources)) {
 		walkRefs(p.Resources[name].Properties, func(r Ref) {
 			if !v.exists(r.Resource) {
-				v.errorf("resources[%s]: ref(%q, %q) refers to no function or resource", name, r.Resource, r.Attribute)
+				v.errorf("resources[%s]: kdst.ref(%q, %q) refers to no function or resource", name, r.Resource, r.Attribute)
 			}
 			if r.Resource == name {
 				v.errorf("resources[%s]: refers to itself", name)
@@ -138,10 +138,10 @@ func (v *validator) exists(name string) bool {
 
 func (v *validator) value(where string, val Value) {
 	if val.Ref != nil && !v.exists(val.Ref.Resource) {
-		v.errorf("%s: ref(%q, %q) refers to no function or resource", where, val.Ref.Resource, val.Ref.Attribute)
+		v.errorf("%s: kdst.ref(%q, %q) refers to no function or resource", where, val.Ref.Resource, val.Ref.Attribute)
 	}
 	if val.Output != nil && val.Output.App == v.p.App && val.Output.Stage == v.p.Stage {
-		v.errorf("%s: output() of this app and stage: use ref() instead", where)
+		v.errorf("%s: kdst.stageOutput() of this app and stage: use kdst.ref() instead", where)
 	}
 }
 
@@ -170,32 +170,32 @@ func (v *validator) function(name string, fn Function) {
 	}
 }
 
-func (v *validator) event(fn, at string, e Event) {
+func (v *validator) event(fn, where string, e Event) {
 	switch e.Type {
 	case EventHTTPRoute:
 		if !routePattern.MatchString(e.Path) {
-			v.errorf("%s: path %q must start with / or be $default", at, e.Path)
+			v.errorf("%s: path %q must start with / or be $default", where, e.Path)
 		}
 		route := strings.ToUpper(e.Method) + " " + e.Path
 		if other, ok := v.routes[route]; ok {
-			v.errorf("%s: %s is also a route of %s", at, route, other)
+			v.errorf("%s: %s is also a route of %s", where, route, other)
 		}
 		v.routes[route] = fn
 		if e.Authorizer != "" && (v.p.HTTP == nil || v.p.HTTP.Authorizers[e.Authorizer].Type == "") {
-			v.errorf("%s: no authorizer %q in http.authorizers", at, e.Authorizer)
+			v.errorf("%s: no authorizer %q in http.authorizers", where, e.Authorizer)
 		}
 	case EventQueue:
-		v.value(at+".queue", e.Queue)
-		v.visibility(fn, at, e.Queue)
+		v.value(where+".queue", e.Queue)
+		v.visibility(fn, where, e.Queue)
 	case EventTopic:
-		v.value(at+".topic", e.Topic)
+		v.value(where+".topic", e.Topic)
 	case EventStream:
-		v.value(at+".stream", e.Stream)
+		v.value(where+".stream", e.Stream)
 	case EventBucket:
-		v.value(at+".bucket", e.Bucket)
+		v.value(where+".bucket", e.Bucket)
 		if e.Bucket.Ref != nil {
 			if _, set := v.p.Resources[e.Bucket.Ref.Resource].Properties["NotificationConfiguration"]; set {
-				v.errorf("%s: resources[%s] sets NotificationConfiguration, which koldstart manages for bucket events: move those notifications to events, or leave the bucket out of events", at, e.Bucket.Ref.Resource)
+				v.errorf("%s: resources[%s] sets NotificationConfiguration, which koldstart manages for bucket events: move those notifications to events, or leave the bucket out of events", where, e.Bucket.Ref.Resource)
 			}
 		}
 	}
@@ -206,7 +206,7 @@ const defaultVisibility = 30
 
 // visibility checks a queue of the project hides a message for at least the function's timeout,
 // or lambda refuses the mapping, as a message would come back while the function still runs.
-func (v *validator) visibility(fn, at string, queue Value) {
+func (v *validator) visibility(fn, where string, queue Value) {
 	if queue.Ref == nil {
 		return
 	}
@@ -219,7 +219,7 @@ func (v *validator) visibility(fn, at string, queue Value) {
 		visibility = int(t)
 	}
 	if timeout := v.p.Functions[fn].Timeout; visibility < timeout {
-		v.errorf("%s: resources[%s] hides a message for %ds, less than the function's timeout of %ds: set its VisibilityTimeout to at least %d", at, queue.Ref.Resource, visibility, timeout, timeout)
+		v.errorf("%s: resources[%s] hides a message for %ds, less than the function's timeout of %ds: set its VisibilityTimeout to at least %d", where, queue.Ref.Resource, visibility, timeout, timeout)
 	}
 }
 
@@ -239,11 +239,4 @@ func walkRefs(value any, fn func(Ref)) {
 			walkRefs(item, fn)
 		}
 	}
-}
-
-// Refs returns every ref inside resource properties, in a stable order.
-func Refs(properties map[string]any) []Ref {
-	var refs []Ref
-	walkRefs(properties, func(r Ref) { refs = append(refs, r) })
-	return refs
 }

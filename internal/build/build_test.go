@@ -134,7 +134,7 @@ func TestNode(t *testing.T) {
 	if !strings.Contains(bundle.String(), "hello ${name}") || !strings.Contains(bundle.String(), `require("ext")`) {
 		t.Errorf("the bundle lacks the import or keeps the external:\n%s", bundle.String())
 	}
-	if arc.Path != filepath.Join(root, Dir, "dev", "api.zip") || len(arc.SHA256) != 64 || arc.CodeSHA256 == "" {
+	if arc.Path != filepath.Join(root, Dir, "dev", "api.zip") || len(arc.SHA256) != 64 {
 		t.Errorf("Archive = %+v", arc)
 	}
 

@@ -34,8 +34,8 @@ func logsCommand(name string, opts *Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if _, ok := s.Functions[function]; !ok {
-				return fmt.Errorf("no function %q in %s", function, s.Path)
+			if err := s.function(function); err != nil {
+				return err
 			}
 			group := s.state.Resources[desired.LogGroupID(function)]
 			if group == nil {
@@ -44,8 +44,11 @@ func logsCommand(name string, opts *Options) *cobra.Command {
 			start := time.Now().Add(-since)
 			out := cmd.OutOrStdout()
 			last, err := s.printLogs(ctx, out, group.PhysicalID, filter, start)
-			if err != nil || !tail {
+			if err != nil {
 				return err
+			}
+			if !tail {
+				return nil
 			}
 			return s.tailLogs(ctx, out, group.Attributes["Arn"], group.PhysicalID, filter, last)
 		},

@@ -3,6 +3,7 @@
 package local
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -35,11 +36,10 @@ func (e *FunctionError) Error() string {
 // started on the first invocation, kept for the next, and started again after it exits or times
 // out.
 type Runtime struct {
-	// Name, Memory and Timeout are what the function is told about itself, and how long an
+	// Name and ARN are what the function is told about itself, and Timeout how long an
 	// invocation may take.
 	Name    string
 	ARN     string
-	Memory  int
 	Timeout time.Duration
 	// Command returns the process to run, told the runtime api is at addr.
 	Command func(addr string) *exec.Cmd
@@ -66,7 +66,7 @@ type invocation struct {
 
 type outcome struct {
 	payload []byte
-	err     *FunctionError
+	err     error
 }
 
 // Start listens on a free port of 127.0.0.1.
@@ -119,8 +119,8 @@ func (r *Runtime) stop() {
 	<-exited
 }
 
-// ensure starts the process when none runs.
-func (r *Runtime) ensure() (chan struct{}, error) {
+// startProcess starts the function's process when none runs, and returns what closes when it exits.
+func (r *Runtime) startProcess() (chan struct{}, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.cmd != nil {
@@ -152,7 +152,7 @@ func traceID() string {
 	return fmt.Sprintf("Root=1-%08x-%s;Sampled=0", time.Now().Unix(), hex.EncodeToString(b))
 }
 
-func newID() string {
+func requestID() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
 	h := hex.EncodeToString(b)
@@ -167,11 +167,11 @@ func (r *Runtime) Invoke(ctx context.Context, payload []byte) ([]byte, error) {
 	if !json.Valid(payload) {
 		return nil, errors.New("the event is not json")
 	}
-	exited, err := r.ensure()
+	exited, err := r.startProcess()
 	if err != nil {
 		return nil, err
 	}
-	inv := &invocation{id: newID(), payload: payload, deadline: time.Now().Add(r.Timeout), done: make(chan outcome, 1)}
+	inv := &invocation{id: requestID(), payload: payload, deadline: time.Now().Add(r.Timeout), done: make(chan outcome, 1)}
 	timer := time.NewTimer(r.Timeout)
 	defer timer.Stop()
 
@@ -188,10 +188,7 @@ func (r *Runtime) Invoke(ctx context.Context, payload []byte) ([]byte, error) {
 
 	select {
 	case out := <-inv.done:
-		if out.err != nil {
-			return out.payload, out.err
-		}
-		return out.payload, nil
+		return out.payload, out.err
 	case <-exited:
 		return nil, r.exitError()
 	case <-timer.C:
@@ -248,14 +245,16 @@ func (r *Runtime) handleResponse(w http.ResponseWriter, req *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
+// readError reads the error a function posted. Without a type in the body, the type is the one
+// its header names, or Unhandled.
 func readError(req *http.Request) *FunctionError {
 	body, _ := io.ReadAll(req.Body)
 	fe := &FunctionError{}
-	if err := json.Unmarshal(body, fe); err != nil || fe.Type == "" {
-		fe = &FunctionError{Type: "Unhandled", Message: strings.TrimSpace(string(body))}
+	if err := json.Unmarshal(body, fe); err != nil {
+		fe = &FunctionError{Message: strings.TrimSpace(string(body))}
 	}
-	if t := req.Header.Get("Lambda-Runtime-Function-Error-Type"); t != "" && fe.Type == "" {
-		fe.Type = t
+	if fe.Type == "" {
+		fe.Type = cmp.Or(req.Header.Get("Lambda-Runtime-Function-Error-Type"), "Unhandled")
 	}
 	return fe
 }

@@ -185,11 +185,6 @@ type OutputRef struct {
 	Output string `json:"output"`
 }
 
-// IsZero reports whether the value was left out.
-func (v Value) IsZero() bool {
-	return v.Literal == "" && v.Ref == nil && v.Secret == nil && v.Output == nil
-}
-
 // UnmarshalJSON reads a plain string, or one of koldstart's values.
 func (v *Value) UnmarshalJSON(data []byte) error {
 	*v = Value{}

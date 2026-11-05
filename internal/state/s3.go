@@ -89,9 +89,11 @@ func (b *S3) create(ctx context.Context, region string) error {
 		in.CreateBucketConfiguration = &types.CreateBucketConfiguration{LocationConstraint: types.BucketLocationConstraint(region)}
 	}
 	if _, err := b.Client.CreateBucket(ctx, in); err != nil {
-		if code := awserr.Code(err); code == "BucketAlreadyExists" {
+		switch awserr.Code(err) {
+		case "BucketAlreadyOwnedByYou":
+		case "BucketAlreadyExists":
 			return fmt.Errorf("the state bucket %s is taken by another account: koldstart will not write to it", b.Bucket)
-		} else if code != "BucketAlreadyOwnedByYou" {
+		default:
 			return fmt.Errorf("creating the state bucket %s: %w", b.Bucket, err)
 		}
 	}
@@ -325,7 +327,7 @@ func (b *S3) ReadVersion(ctx context.Context, app, stage, version string) (*Stat
 	defer func() { _ = out.Body.Close() }()
 	data, err := io.ReadAll(out.Body)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("reading version %s of the state of %s/%s: %w", version, app, stage, err)
 	}
 	return Decode(data)
 }

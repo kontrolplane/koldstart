@@ -9,16 +9,16 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 )
 
-// defaultRoute catches every request no other route matches; localName stands for the api and
-// the account where there are none.
+// defaultRoute catches every request no other route matches, and defaultStage is the stage every
+// http api koldstart makes has; localName stands for the api and the account where there are none.
 const (
 	defaultRoute = "$default"
+	defaultStage = "$default"
 	localName    = "local"
 )
 
@@ -148,9 +148,9 @@ func event(req *http.Request, route Route, params map[string]string, body []byte
 				"method": req.Method, "path": req.URL.Path, "protocol": req.Proto,
 				"sourceIp": strings.Split(req.RemoteAddr, ":")[0], "userAgent": req.UserAgent(),
 			},
-			"requestId": newID(),
+			"requestId": requestID(),
 			"routeKey":  route.Key(),
-			"stage":     defaultRoute,
+			"stage":     defaultStage,
 			"time":      now.UTC().Format("02/Jan/2006:15:04:05 -0700"),
 			"timeEpoch": now.UnixMilli(),
 		},
@@ -238,28 +238,24 @@ func (o *Offline) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	start := time.Now()
 	route, params, ok := match(o.Routes, req.Method, req.URL.Path)
 	if !ok {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		_, _ = io.WriteString(w, `{"message":"Not Found"}`)
+		writeMessage(w, http.StatusNotFound)
 		o.log(req, http.StatusNotFound, "", start)
 		return
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, req.Body, 10<<20))
 	if err != nil {
-		http.Error(w, `{"message":"Request Entity Too Large"}`, http.StatusRequestEntityTooLarge)
+		writeMessage(w, http.StatusRequestEntityTooLarge)
 		return
 	}
 	payload, err := json.Marshal(event(req, route, params, body, start))
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeMessage(w, http.StatusInternalServerError)
 		return
 	}
 	out, err := o.Invoker.Invoke(req.Context(), route.Function, payload)
 	if err != nil {
 		slog.Debug("invocation failed", "route", route.Key(), "error", err)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = io.WriteString(w, `{"message":"Internal Server Error"}`)
+		writeMessage(w, http.StatusInternalServerError)
 		o.log(req, http.StatusInternalServerError, route.Function+": "+err.Error(), start)
 		return
 	}
@@ -268,11 +264,18 @@ func (o *Offline) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	o.log(req, rec.status, route.Function, start)
 }
 
+// writeMessage answers with a status and its text as json, as an http api does.
+func writeMessage(w http.ResponseWriter, status int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_, _ = fmt.Fprintf(w, `{"message":%q}`, http.StatusText(status))
+}
+
 func (o *Offline) log(req *http.Request, status int, note string, start time.Time) {
 	if o.Log == nil {
 		return
 	}
-	line := fmt.Sprintf("%s %s %s %s", req.Method, req.URL.RequestURI(), strconv.Itoa(status), time.Since(start).Round(time.Millisecond))
+	line := fmt.Sprintf("%s %s %d %s", req.Method, req.URL.RequestURI(), status, time.Since(start).Round(time.Millisecond))
 	if note != "" {
 		line += "  " + note
 	}

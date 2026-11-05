@@ -50,17 +50,11 @@ func (b *syncBuffer) String() string {
 func start(t *testing.T, root string, fn config.Function, env map[string]string) (*Runtime, *syncBuffer) {
 	t.Helper()
 	var out syncBuffer
-	l := Local{Root: root, Stage: "dev", Dir: t.TempDir()}
-	f := Function{Name: "api", FunctionName: "orders-dev-api", ARN: "arn:aws:lambda:eu-west-1:123456789012:function:orders-dev-api", Config: fn, Region: "eu-west-1", Env: env, Output: &out}
-	if err := l.Build(context.Background(), f); err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	r, err := l.Runtime(f)
+	l := Runner{Root: root, Stage: "dev", Dir: t.TempDir()}
+	f := Function{Name: "api", LambdaName: "orders-dev-api", ARN: "arn:aws:lambda:eu-west-1:123456789012:function:orders-dev-api", Config: fn, Region: "eu-west-1", Env: env, Output: &out}
+	r, err := l.Start(context.Background(), f)
 	if err != nil {
-		t.Fatalf("Runtime: %v", err)
-	}
-	if err := r.Start(); err != nil {
-		t.Fatal(err)
+		t.Fatalf("Start: %v", err)
 	}
 	t.Cleanup(func() { _ = r.Close() })
 	return r, &out
