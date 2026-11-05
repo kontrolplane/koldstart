@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/x/ansi"
 
@@ -15,7 +17,14 @@ import (
 // its level in a tone. Anything else reads as it is, with a leading timestamp faint.
 func tint(line string) cell {
 	if platformLine(line) {
-		return cell{{Text: line, Tone: styles.ToneFaint}}
+		tone := styles.ToneFaint
+		if strings.Contains(line, "Status: timeout") || strings.Contains(line, "Status: error") {
+			tone = styles.ToneDanger
+		}
+		return cell{{Text: line, Tone: tone}}
+	}
+	if strings.Contains(line, "Task timed out after") {
+		return cell{{Text: line, Tone: styles.ToneDanger}}
 	}
 	if c, ok := tintNode(line); ok {
 		return c
@@ -42,6 +51,27 @@ func isMessageKey(key string) bool {
 		}
 	}
 	return false
+}
+
+// isLevelKey reports whether a field holds the level a line was logged at.
+func isLevelKey(key string) bool {
+	switch strings.ToLower(key) {
+	case "level", "lvl", "severity":
+		return true
+	}
+	return false
+}
+
+// valueLevelTone is the tone of a level written as a value of json or logfmt: error and worse in
+// danger, a warning in warning, the rest in the body ink.
+func valueLevelTone(level string) styles.Tone {
+	switch strings.ToUpper(level) {
+	case "ERROR", "ERR", "FATAL", "CRITICAL", "PANIC":
+		return styles.ToneDanger
+	case "WARN", "WARNING":
+		return styles.ToneWarning
+	}
+	return styles.ToneBody
 }
 
 // tintJSON tints a JSON line. It does not check the line is valid, a broken one is tinted as far
@@ -81,6 +111,8 @@ func tintJSON(line string) cell {
 				add(line[i:j], styles.ToneFaint)
 			case depth == 1 && isMessageKey(key):
 				add(line[i:j], styles.ToneText)
+			case depth == 1 && isLevelKey(key):
+				add(line[i:j], valueLevelTone(strings.Trim(line[i:j], `"`)))
 			default:
 				add(line[i:j], styles.ToneBody)
 			}
@@ -150,8 +182,11 @@ func tintLogfmt(line string) (cell, bool) {
 			}
 		}
 		tone := styles.ToneBody
-		if isMessageKey(key) {
+		switch {
+		case isMessageKey(key):
 			tone = styles.ToneText
+		case isLevelKey(key):
+			tone = valueLevelTone(strings.Trim(line[vstart:i], `"`))
 		}
 		if i > vstart {
 			c = append(c, styles.Span{Text: line[vstart:i], Tone: tone})
@@ -214,9 +249,16 @@ func leadingTimestamp(line string) int {
 	return n
 }
 
-// platformLine reports whether lambda wrote the line: START, END or REPORT of a request, or INIT_START.
+// platformLines are the starts of the lines lambda writes itself: those of a request, of the start
+// of an instance, and of its extensions.
+var platformLines = []string{
+	"START RequestId:", "END RequestId:", "REPORT RequestId:",
+	"INIT_START ", "INIT_REPORT ", "RESTORE_START ", "RESTORE_REPORT ", "EXTENSION ", "TELEMETRY ",
+}
+
+// platformLine reports whether lambda wrote the line. Its tabs are spaces by now, as Clean makes them.
 func platformLine(line string) bool {
-	for _, p := range []string{"START RequestId:", "END RequestId:", "REPORT RequestId:", "INIT_START "} {
+	for _, p := range platformLines {
 		if strings.HasPrefix(line, p) {
 			return true
 		}
@@ -247,9 +289,14 @@ func tintNode(line string) (cell, bool) {
 	}, tint(parts[3])...), true
 }
 
+// colours are the sgr sequences a logger colours its lines with. They are dropped; any other
+// escape sequence is shown escaped, by Clean.
+var colours = regexp.MustCompile(`\x1b\[[0-9;:]*m`)
+
 // tintLine tints a raw line of a log for drawing: a node line by its tab separated fields, anything
-// else as tint does, every span cleaned of control characters.
+// else as tint does, its colours dropped and every span cleaned of control characters.
 func tintLine(raw string) cell {
+	raw = colours.ReplaceAllString(raw, "")
 	var c cell
 	if parts := strings.SplitN(raw, "\t", 4); len(parts) == 4 {
 		if node, ok := tintNode(strings.Join([]string{styles.Clean(parts[0]), styles.Clean(parts[1]), styles.Clean(parts[2]), styles.Clean(parts[3])}, "\t")); ok {
@@ -262,41 +309,105 @@ func tintLine(raw string) cell {
 	return c
 }
 
-// wrapCell breaks a cell into lines of at most width columns, keeping each span's tone.
+// wrapCell breaks a cell into lines of at most width columns, keeping each span's tone. A line
+// breaks at its last space or after its last comma, when that fills at least half of it, and
+// otherwise where the width runs out. The space it breaks at, or after the comma, is dropped.
 func wrapCell(c cell, width int) []cell {
-	if width <= 0 {
+	text := plainText(c)
+	if width <= 0 || ansi.StringWidth(text) <= width {
 		return []cell{c}
 	}
 	var lines []cell
-	var cur cell
-	used := 0
-	for _, s := range c {
-		rest := s.Text
-		for rest != "" {
-			room := width - used
-			if room <= 0 {
-				lines = append(lines, cur)
-				cur, used = nil, 0
-				room = width
+	start, used := 0, 0
+	cut, next, cutUsed := -1, -1, 0
+	for i := 0; i < len(text); {
+		r, size := utf8.DecodeRuneInString(text[i:])
+		w := ansi.StringWidth(string(r))
+		if used+w > width && i > start {
+			if cut <= start || cutUsed*2 < width {
+				cut, next = i, i
+				if r == ' ' {
+					next = i + size
+				}
 			}
-			part := ansi.Truncate(rest, room, "")
-			if part == "" {
-				part = string([]rune(rest)[:1])
-			}
-			cur = append(cur, styles.Span{Text: part, Tone: s.Tone, Bold: s.Bold})
-			used += ansi.StringWidth(part)
-			rest = rest[len(part):]
+			lines = append(lines, sliceCell(c, start, cut))
+			start, i, used, cut = next, next, 0, -1
+			continue
 		}
+		switch r {
+		case ' ':
+			cut, next, cutUsed = i, i+size, used
+		case ',':
+			cut, next, cutUsed = i+size, i+size, used+w
+			if next < len(text) && text[next] == ' ' {
+				next++
+			}
+		}
+		used += w
+		i += size
 	}
-	return append(lines, cur)
+	if start < len(text) {
+		lines = append(lines, sliceCell(c, start, len(text)))
+	}
+	return lines
+}
+
+// plainText is the text of a cell, without its tones.
+func plainText(c cell) string {
+	var b strings.Builder
+	for _, s := range c {
+		b.WriteString(s.Text)
+	}
+	return b.String()
+}
+
+// sliceCell is the part of a cell from byte from to byte to of its text.
+func sliceCell(c cell, from, to int) cell {
+	var out cell
+	at := 0
+	for _, s := range c {
+		end := at + len(s.Text)
+		if lo, hi := max(from, at), min(to, end); lo < hi {
+			out = append(out, styles.Span{Text: s.Text[lo-at : hi-at], Tone: s.Tone, Bold: s.Bold})
+		}
+		at = end
+	}
+	return out
+}
+
+// highlight marks where a cell holds want, ignoring case, in bold accent, so the lines a filter
+// keeps show why.
+func highlight(c cell, want string) cell {
+	text := plainText(c)
+	lower, want := strings.ToLower(text), strings.ToLower(want)
+	if want == "" || len(lower) != len(text) || !strings.Contains(lower, want) {
+		return c
+	}
+	var out cell
+	at := 0
+	for {
+		i := strings.Index(lower[at:], want)
+		if i < 0 {
+			break
+		}
+		out = append(out, sliceCell(c, at, at+i)...)
+		out = append(out, styles.Span{Text: text[at+i : at+i+len(want)], Tone: styles.ToneAccent, Bold: true})
+		at += i + len(want)
+	}
+	return append(out, sliceCell(c, at, len(text))...)
 }
 
 // logCells are the drawn lines of one log message: each of its lines tinted and wrapped to width.
-func logCells(message string, width int) []cell {
-	lines := strings.Split(strings.ReplaceAll(message, "\r\n", "\n"), "\n")
+func logCells(message string, width int) []cell { return markedLogCells(message, "", width) }
+
+// markedLogCells are logCells with where the message holds mark marked. The newlines a message
+// ends in draw no empty lines.
+func markedLogCells(message, mark string, width int) []cell {
+	message = strings.TrimRight(strings.ReplaceAll(message, "\r\n", "\n"), "\n")
+	lines := strings.Split(message, "\n")
 	out := make([]cell, 0, len(lines))
 	for _, raw := range lines {
-		out = append(out, wrapCell(tintLine(raw), width)...)
+		out = append(out, wrapCell(highlight(tintLine(raw), mark), width)...)
 	}
 	return out
 }
