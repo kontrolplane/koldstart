@@ -420,7 +420,7 @@ func (m model) configLines(width int) []string {
 		row("timeout", value(seconds(in.Timeout)), w),
 		row("/tmp", value(megabytes(in.EphemeralStorage)), w),
 		row("concurrency", concurrency, w),
-		row("code", text(orDash(shortSHA(in.Code.SHA256)), styles.ToneMuted), w),
+		row("code", text(orDash(shortSHA(in.Code.SHA256)), styles.ToneFaint), w),
 		row("role", long(in.Role), w),
 		row("log group", long(f.logGroup), w),
 	}
@@ -522,13 +522,16 @@ func configDrift(in awsp.FunctionInputs, live cli.FunctionState) []string {
 	return out
 }
 
-// stateTone is the tone of a state lambda reports. An inactive function is one lambda reclaimed
-// after weeks without invocations: the next invocation wakes it, so it warns rather than fails.
+// stateTone is the tone of a state lambda reports. A pending function or an update in progress is
+// in flight, in the accent. An inactive function is one lambda reclaimed after weeks without
+// invocations: the next invocation wakes it, so it warns rather than fails.
 func stateTone(state string) styles.Tone {
 	switch strings.ToLower(state) {
 	case "active", "successful":
 		return styles.ToneSuccess
-	case "pending", "inprogress", "inactive":
+	case "pending", "inprogress":
+		return styles.ToneAccent
+	case "inactive":
 		return styles.ToneWarning
 	case "failed":
 		return styles.ToneDanger

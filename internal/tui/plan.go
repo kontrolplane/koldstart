@@ -369,7 +369,7 @@ func (m model) planLines() ([]string, pickList) {
 		status := m.progressCell(c)
 		body.add(renderCell(line, cols[0], nil)+" "+renderCell(status, cols[2], nil), litRow(cols, line, nil, status))
 		if len(c.Drift) > 0 {
-			body.lines = append(body.lines, renderCell(text("        changed outside koldstart: "+strings.Join(c.Drift, ", "), styles.ToneWarning), column{width: width}, nil))
+			body.lines = append(body.lines, renderCell(text("        ▲ changed outside koldstart: "+strings.Join(c.Drift, ", "), styles.ToneWarning), column{width: width}, nil))
 		}
 		if c.Action == engine.Update || c.Action == engine.Replace || c.Action == engine.Adopt {
 			for _, change := range cli.FieldChanges(c) {
@@ -473,7 +473,7 @@ func (m model) progressCell(c engine.Change) cell {
 	case p.applying:
 		return cell{styles.S(m.spinner.View()+" ", styles.ToneAccent), styles.S(doing[pr.action]+" ", styles.ToneMuted), styles.S(elapsed(time.Since(pr.since)), styles.ToneFaint)}
 	}
-	return text("✗ stopped", styles.ToneWarning)
+	return text("✗ stopped", styles.ToneDanger)
 }
 
 // planBodyHeight is the room the changes get below the head.

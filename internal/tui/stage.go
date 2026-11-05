@@ -384,7 +384,7 @@ func (m model) updateStageTables() model {
 		}
 		s.shownDeploys = append(s.shownDeploys, i)
 		keys = append(keys, d[len(d)-1].ID)
-		rows = append(rows, tableRow{text(at, styles.ToneBody), note, text(formatInt(len(d)), styles.ToneMuted), text(v.ID, styles.ToneFaint)})
+		rows = append(rows, tableRow{text(at, styles.ToneBody), note, text(formatInt(len(d)), styles.ToneBody), text(v.ID, styles.ToneFaint)})
 	}
 	s.setRows(historyTab, keys, rows)
 	return m
@@ -531,7 +531,7 @@ func (s stageState) resourceRow(r stageResource) tableRow {
 		}
 		note = depth
 	}
-	return tableRow{name, text(shortType(r.res.Type), styles.ToneMuted), text(orDash(r.res.PhysicalID), styles.ToneBody), note}
+	return tableRow{name, text(shortType(r.res.Type), styles.ToneMuted), text(orDash(r.res.PhysicalID), styles.ToneMuted), note}
 }
 
 // deployGap is the longest pause between two writes of the state that one deploy makes.
@@ -563,7 +563,7 @@ func resourceNote(r *state.Resource, retained bool) cell {
 	case r.Imported:
 		return text("imported", styles.ToneMuted)
 	case r.DeletionPolicy == "retain":
-		return text("retained", styles.ToneFaint)
+		return text("retained", styles.ToneMuted)
 	}
 	return text("", styles.ToneFaint)
 }

@@ -55,7 +55,7 @@ func requestRow(r request, timeout time.Duration) tableRow {
 	case r.failed:
 		status = text("✗ failed", styles.ToneDanger)
 	case !r.reported && time.Since(r.last) < timeout+5*time.Second:
-		status = text("● running", styles.ToneWarning)
+		status = text("● running", styles.ToneAccent)
 	case !r.reported:
 		status = text("no report", styles.ToneFaint)
 	}
@@ -65,7 +65,7 @@ func requestRow(r request, timeout time.Duration) tableRow {
 	}
 	cold := text("", styles.ToneFaint)
 	if r.init > 0 {
-		cold = text(formatMillis(r.init), styles.ToneWarning)
+		cold = text(formatMillis(r.init), styles.ToneInfo)
 	}
 	duration := text("-", styles.ToneFaint)
 	if r.reported {
@@ -75,7 +75,7 @@ func requestRow(r request, timeout time.Duration) tableRow {
 	if r.billed > 0 {
 		billed = text(formatMillis(r.billed), styles.ToneMuted)
 	}
-	return tableRow{text(r.start.Local().Format("15:04:05.000"), styles.ToneMuted), text(r.id, styles.ToneFaint), duration, billed, memory, cold, status}
+	return tableRow{text(r.start.Local().Format("15:04:05.000"), styles.ToneBody), text(r.id, styles.ToneFaint), duration, billed, memory, cold, status}
 }
 
 func (m model) invocationsUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {

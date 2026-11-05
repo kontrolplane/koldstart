@@ -7,11 +7,14 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/kontrolplane/koldstart/internal/cli"
+	"github.com/kontrolplane/koldstart/internal/state"
 	"github.com/kontrolplane/koldstart/internal/tui/styles"
 )
 
@@ -98,6 +101,45 @@ func TestContrast(t *testing.T) {
 	}
 }
 
+// TestToneRules checks the same kind of thing takes the same tone on every page, as the styles
+// package's doc comment sets out: what is in flight the accent, a cold start info, an event that
+// is not json a warning, what a failure stopped and an unreadable stage danger, with their
+// symbols, a note on a resource muted, an id in aws in a table muted, a hash faint, and a time or
+// a count in a column body.
+func TestToneRules(t *testing.T) {
+	now := time.Now()
+	running := requestRow(request{id: "r1", start: now, last: now}, time.Minute)
+	cold := requestRow(request{id: "r2", start: now, last: now, reported: true, init: 120, duration: 5}, time.Minute)
+	stage := cli.StageSummary{StageRef: ordersDev, Err: errAWS}
+	tests := []struct {
+		name string
+		c    cell
+		part string
+		want styles.Tone
+	}{
+		{name: "a running invocation", c: running[6], part: "● running", want: styles.ToneAccent},
+		{name: "the time of an invocation", c: running[0], part: ":", want: styles.ToneBody},
+		{name: "a request id", c: running[1], part: "r1", want: styles.ToneFaint},
+		{name: "a cold start", c: cold[5], part: "ms", want: styles.ToneInfo},
+		{name: "a pending function", c: cell{styles.S("pending", stateTone("Pending"))}, part: "pending", want: styles.ToneAccent},
+		{name: "an inactive function", c: cell{styles.S("inactive", stateTone("Inactive"))}, part: "inactive", want: styles.ToneWarning},
+		{name: "a retained resource", c: resourceNote(&state.Resource{DeletionPolicy: "retain"}, false), part: "retained", want: styles.ToneMuted},
+		{name: "a kept resource", c: resourceNote(&state.Resource{}, true), part: "kept", want: styles.ToneMuted},
+		{name: "an unreadable stage", c: overviewRow(stage, false)[3], part: "✗ unreadable", want: styles.ToneDanger},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tone, ok := toneOf(tt.c, tt.part)
+			if !ok {
+				t.Fatalf("no %q in %+v", tt.part, tt.c)
+			}
+			if tone != tt.want {
+				t.Errorf("tone %d, want %d", tone, tt.want)
+			}
+		})
+	}
+}
+
 // TestBackgroundAnswer checks the palette follows the background the terminal answers with when
 // the theme is auto, and keeps the one --theme chose otherwise; and that the profile the program
 // detects picks the palette for it.
@@ -161,10 +203,10 @@ func themeUnpainted(s string) (int, int) {
 	defer ansi.PutParser(p)
 	for i, line := range strings.Split(s, "\n") {
 		painted, col := false, 0
-		var state byte
+		var parse byte
 		for rest := line; rest != ""; {
 			p.Reset()
-			seq, width, n, next := ansi.DecodeSequence(rest, state, p)
+			seq, width, n, next := ansi.DecodeSequence(rest, parse, p)
 			switch {
 			case ansi.HasCsiPrefix(seq) && p.Command() == 'm':
 				painted = themeBackground(p.Params(), painted)
@@ -172,7 +214,7 @@ func themeUnpainted(s string) (int, int) {
 				return i, col
 			}
 			col += width
-			rest, state = rest[n:], next
+			rest, parse = rest[n:], next
 		}
 	}
 	return -1, -1
@@ -293,10 +335,10 @@ func themeColours(s string) map[string]bool {
 	kinds := map[string]bool{}
 	p := ansi.GetParser()
 	defer ansi.PutParser(p)
-	var state byte
+	var parse byte
 	for rest := s; rest != ""; {
 		p.Reset()
-		seq, _, n, next := ansi.DecodeSequence(rest, state, p)
+		seq, _, n, next := ansi.DecodeSequence(rest, parse, p)
 		if ansi.HasCsiPrefix(seq) && p.Command() == 'm' {
 			params := p.Params()
 			for i := 0; i < len(params); i++ {
@@ -316,7 +358,7 @@ func themeColours(s string) map[string]bool {
 				}
 			}
 		}
-		rest, state = rest[n:], next
+		rest, parse = rest[n:], next
 	}
 	return kinds
 }
@@ -325,10 +367,10 @@ func themeColours(s string) map[string]bool {
 func themeAttr(s string, n int) bool {
 	p := ansi.GetParser()
 	defer ansi.PutParser(p)
-	var state byte
+	var parse byte
 	for rest := s; rest != ""; {
 		p.Reset()
-		seq, _, read, next := ansi.DecodeSequence(rest, state, p)
+		seq, _, read, next := ansi.DecodeSequence(rest, parse, p)
 		if ansi.HasCsiPrefix(seq) && p.Command() == 'm' {
 			params := p.Params()
 			for i := 0; i < len(params); i++ {
@@ -344,7 +386,7 @@ func themeAttr(s string, n int) bool {
 				}
 			}
 		}
-		rest, state = rest[read:], next
+		rest, parse = rest[read:], next
 	}
 	return false
 }

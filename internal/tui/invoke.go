@@ -69,7 +69,7 @@ func (m model) readEventFiles() model {
 	for _, name := range files {
 		c := cell{styles.S(strings.TrimSuffix(name, ".json"), styles.ToneText)}
 		if data, err := os.ReadFile(filepath.Join(dir, name)); err == nil && !json.Valid(bytes.TrimSpace(data)) {
-			c = append(c, styles.S("  not json", styles.ToneDanger))
+			c = append(c, styles.S("  not json", styles.ToneWarning))
 		}
 		rows = append(rows, tableRow{c})
 	}
@@ -248,7 +248,7 @@ func (m model) invokeLines(width int) []string {
 	case !ok:
 		if _, err := m.eventPayload(); err != nil {
 			var lines []string
-			for _, c := range wrapCell(text("✗ "+err.Error(), styles.ToneDanger), width-2) {
+			for _, c := range wrapCell(text("▲ "+err.Error(), styles.ToneWarning), width-2) {
 				lines = append(lines, renderCell(c, column{width: width - 2}, nil))
 			}
 			return append(lines, "", styles.Faint("e edits it, and i sends it once it is json"))

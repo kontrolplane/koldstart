@@ -13,22 +13,25 @@
 //
 //   - text: what a row or a page is about: the name of an app, a function, a resource, an output or
 //     a change, the last crumb, and the keys in the footer and the help, in bold.
-//   - body: values: what a column or a field says, numbers, times and sizes among them, and the
-//     words of a log line or a payload.
+//   - body: values: what a column or a field says, numbers, counts, times and sizes among them,
+//     and the words of a log line or a payload.
 //   - muted: what qualifies a value: a region, who did something, a type, an id in aws in a table,
-//     a reason, the tabs that are not open, what a key does, and a note on why something is missing.
+//     a reason, a billed duration, what a plan changes in a field, a note on a row (kept, imported,
+//     retained), the tabs that are not open, what a key does, and what a page or a table says while
+//     it loads or holds nothing.
 //   - faint: metadata and punctuation: column headings and field labels, units and counts beside a
-//     name, hashes and version ids, the time stamped on a log line, separators, empty values such
-//     as "-", "none" and "free", and hints.
+//     name or a tab, hashes and request and version ids, the time stamped on a log line,
+//     separators, empty values such as "-", "none" and "free", hints, and notes on what cannot be
+//     shown and why.
 //   - accent: where the cursor is and what runs now: the open tab, the cursor's marker, the
-//     spinner, something in flight, the project's app (●), the current version, a filter's matches
-//     and the titles in the help.
+//     spinner, something in flight (● running, a function lambda is updating), the project's app
+//     (●), the current version, a filter's matches and the titles in the help.
 //   - success: something done or healthy: ✓, + and create, ok, active.
 //   - warning: something that needs attention and has not failed: ▲, ~ and update, a lock, a change
 //     outside koldstart, what is pending, paused or throttled, an event that is not json, and a
 //     dialog that asks before something that cannot be undone easily.
 //   - danger: a failure or something destructive: ✗, - and delete, -/+ and replace, errors and their
-//     counts, a timeout, and the dialog that removes a stage.
+//     counts, a timeout, what a failure stopped, and the dialog that removes a stage.
 //   - info: what koldstart takes over or does not change itself, = and adopt, a reference to a
 //     secret or an output, and a cold start.
 //   - warm: numbers in a payload.
