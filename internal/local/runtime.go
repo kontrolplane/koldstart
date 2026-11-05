@@ -43,6 +43,8 @@ type Runtime struct {
 	Timeout time.Duration
 	// Command returns the process to run, told the runtime api is at addr.
 	Command func(addr string) *exec.Cmd
+	// Stop, when set, ends what the process started that outlives it, such as a container.
+	Stop func()
 	// Output receives the function's stdout and stderr.
 	Output io.Writer
 
@@ -114,6 +116,9 @@ func (r *Runtime) stop() {
 	r.mu.Unlock()
 	if cmd == nil {
 		return
+	}
+	if r.Stop != nil {
+		r.Stop()
 	}
 	_ = cmd.Process.Kill()
 	<-exited

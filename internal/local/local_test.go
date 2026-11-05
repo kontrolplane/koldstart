@@ -8,9 +8,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/kontrolplane/koldstart/internal/config"
 )
@@ -196,5 +198,81 @@ func TestInvokeRefusesBadJSON(t *testing.T) {
 	r := &Runtime{}
 	if _, err := r.Invoke(context.Background(), []byte(`{nope`)); err == nil {
 		t.Error("Invoke with bad json: want an error")
+	}
+}
+
+// TestPythonRuntime runs a python handler through the runtime client koldstart writes next to
+// it, against the runtime api here: what it returns, and what it raises as the function's error.
+//
+//nolint:gosec // runs the test's own handler
+func TestPythonRuntime(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("no python3 on the PATH")
+	}
+	dir := t.TempDir()
+	handler := "import os\n\ndef ok(event, context):\n    return {'got': event, 'request': len(context.aws_request_id) > 0, 'root': os.environ['LAMBDA_TASK_ROOT'] != ''}\n\ndef fail(event, context):\n    raise ValueError('no order ' + str(event['id']))\n"
+	if err := os.WriteFile(filepath.Join(dir, "app.py"), []byte(handler), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, pythonRuntimeFile), pythonRuntime, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		function string
+		want     string
+		errType  string
+	}{
+		{function: "ok", want: `{"got": {"id": 7}, "request": true, "root": true}`},
+		{function: "fail", errType: "ValueError"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.function, func(t *testing.T) {
+			var out bytes.Buffer
+			r := &Runtime{Name: "app", Timeout: 10 * time.Second, Output: &out, Command: func(addr string) *exec.Cmd {
+				cmd := exec.Command(python, filepath.Join(dir, pythonRuntimeFile), "app", tt.function)
+				cmd.Dir, cmd.Env = dir, []string{"AWS_LAMBDA_RUNTIME_API=" + addr, "LAMBDA_TASK_ROOT=" + dir, "PATH=" + os.Getenv("PATH")}
+				return cmd
+			}}
+			if err := r.Start(); err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = r.Close() }()
+			got, err := r.Invoke(context.Background(), []byte(`{"id": 7}`))
+			if tt.errType != "" {
+				var fe *FunctionError
+				if !errors.As(err, &fe) || fe.Type != tt.errType || !strings.Contains(fe.Message, "no order 7") {
+					t.Fatalf("Invoke = %s, %v; want a %s; output:\n%s", got, err, tt.errType, out.String())
+				}
+				return
+			}
+			if err != nil || string(got) != tt.want {
+				t.Fatalf("Invoke = %s, %v; want %s; output:\n%s", got, err, tt.want, out.String())
+			}
+		})
+	}
+}
+
+// TestImageEnv checks a container gets lambda's variables and the function's, without this
+// machine's, with this machine's addresses as the container reaches them.
+func TestImageEnv(t *testing.T) {
+	f := Function{Name: "img", LambdaName: "shop-dev-img", Config: config.Function{Image: &config.Image{}, Memory: 256, Timeout: 5},
+		Region: "eu-west-1", Env: map[string]string{"AWS_ENDPOINT_URL": "http://127.0.0.1:4566", "TABLE": "orders"}}
+	env := strings.Join(Runner{}.imageEnv(f, "host.docker.internal:9001"), "\n")
+	for _, want := range []string{"AWS_LAMBDA_RUNTIME_API=host.docker.internal:9001", "TABLE=orders", "AWS_LAMBDA_FUNCTION_NAME=shop-dev-img"} {
+		if !strings.Contains(env, want) {
+			t.Errorf("no %s in:\n%s", want, env)
+		}
+	}
+	for _, unwanted := range []string{"PATH=", "HOME=", "LAMBDA_TASK_ROOT=", "_HANDLER="} {
+		if strings.Contains(env, "\n"+unwanted) || strings.HasPrefix(env, unwanted) {
+			t.Errorf("%s is passed to the container", unwanted)
+		}
+	}
+	if runtime.GOOS != "linux" && !strings.Contains(env, "AWS_ENDPOINT_URL=http://host.docker.internal:4566") {
+		t.Errorf("the emulator's endpoint is not one the container reaches:\n%s", env)
+	}
+	if got := hostAddress("127.0.0.1:4566"); got != "host.docker.internal:4566" {
+		t.Errorf("hostAddress = %s", got)
 	}
 }
