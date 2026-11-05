@@ -305,6 +305,9 @@ func TestRemove(t *testing.T) {
 	if f.removes != 1 || m.page != overviewPage || m.status != "removed orders/dev" {
 		t.Fatalf("%d removes, page %v, status %q", f.removes, m.page, m.status)
 	}
+	if s, _ := m.selectedStage(); s.StageRef != ordersDev || !notDeployed(s) {
+		t.Errorf("after the remove the cursor is on %v, want the project's stage, listed as not deployed", s.StageRef)
+	}
 }
 
 // TestUnlock checks ctrl+x shows who holds the lock, n keeps it and y releases it.

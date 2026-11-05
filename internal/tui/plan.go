@@ -147,7 +147,7 @@ func (m model) applied(msg appliedMsg) (model, tea.Cmd) {
 		return m.setStatus(text, styles.ToneWarning)
 	case msg.gone:
 		m.state.stage = newStageState()
-		m = m.switchPage(overviewPage)
+		m = m.switchPage(overviewPage).selectStage(p.ref)
 		m, cmd := m.loadStages()
 		m, status := m.setStatus("removed "+p.ref.String(), styles.ToneSuccess)
 		return m, tea.Batch(cmd, status)
