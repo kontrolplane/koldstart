@@ -164,7 +164,7 @@ func (p *progress) event(ev engine.Event) {
 		p.failed++
 		failed := "failed after " + took
 		if !started {
-			failed = "failed before it started"
+			failed = "failed before starting"
 		}
 		_, _ = fmt.Fprintf(&p.buf, "  %s %s  %s %s\n", p.colour.paint(sgrRed, "✗"), id, verbs[ev.Action], p.colour.paint(sgrRed, failed))
 	default:

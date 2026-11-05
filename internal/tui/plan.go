@@ -42,10 +42,12 @@ type planState struct {
 }
 
 // nodeProgress is how far applying a node got, from the first event about it. action is what the
-// engine does, which can differ from the plan's when the resource changed since.
+// engine does, which can differ from the plan's when the resource changed since. started is
+// whether the engine said it began, which a node whose inputs could not be resolved never does.
 type nodeProgress struct {
 	action   engine.Action
 	since    time.Time
+	started  bool
 	done     bool
 	err      error
 	duration time.Duration
@@ -116,6 +118,7 @@ func (m model) applyProgress(msg progressMsg) (model, tea.Cmd) {
 			pr.since = time.Now()
 		}
 		pr.action, pr.done, pr.err, pr.duration = ev.Action, ev.Done, ev.Err, ev.Duration
+		pr.started = pr.started || !ev.Done
 		p.progress[ev.ID] = pr
 	}
 	return m, waitFor(msg.ch)
@@ -445,6 +448,8 @@ func (m model) progressCell(c engine.Change) cell {
 		return text("not applied", styles.ToneFaint)
 	case !ok:
 		return text("unchanged", styles.ToneFaint)
+	case pr.err != nil && !pr.started:
+		return text("✗ failed before starting", styles.ToneDanger)
 	case pr.err != nil:
 		return cell{styles.S("✗ failed after ", styles.ToneDanger), styles.S(cli.Duration(pr.duration), styles.ToneFaint)}
 	case pr.done:

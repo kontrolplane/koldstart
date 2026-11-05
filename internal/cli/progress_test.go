@@ -68,13 +68,13 @@ func TestProgressLines(t *testing.T) {
 			summary: "1 failed, 1 stopped, 1 not started",
 		},
 		{
-			name: "failed before it started",
+			name: "failed before starting",
 			events: []engine.Event{
 				{ID: "resource/orders", Action: engine.Create, Done: true, Duration: 8 * time.Millisecond},
 				{ID: "url/api", Action: engine.Create, Done: true, Err: errors.New("resource/orders has no attribute Arn")},
 			},
 			unstarted: "url/api",
-			want:      []string{"  ✓ resource/orders  created in 8ms", "  ✗ url/api          create failed before it started"},
+			want:      []string{"  ✓ resource/orders  created in 8ms", "  ✗ url/api          create failed before starting"},
 			summary:   "1 created, 1 failed, 1 not started",
 		},
 		{
