@@ -344,7 +344,7 @@ func (m model) planLines() ([]string, pickList) {
 		}
 		switch {
 		case c.Resume:
-			line = append(line, styles.S("  finishing what a deploy started", styles.ToneFaint))
+			line = append(line, styles.S("  "+cli.ResumeNote(c.Action), styles.ToneFaint))
 		case c.Gone:
 			line = append(line, styles.S("  deleted outside koldstart", styles.ToneWarning))
 		}
@@ -409,7 +409,7 @@ func (m model) applyLines(width int) []string {
 		line = cell{styles.S(m.spinner.View()+" ", styles.ToneAccent), styles.S(applyingWord(p.remove)+" · "+counts, styles.ToneBody),
 			styles.S(" · "+cli.Elapsed(time.Since(p.startedAt)), styles.ToneFaint)}
 	case p.failed:
-		summary := cli.ApplySummary(finished, failed, stopped)
+		summary := cli.ApplySummary(finished, failed, stopped, max(len(m.planChanges())-len(p.progress), 0))
 		line = cell{styles.S("✗ ", styles.ToneDanger), styles.S("failed after "+cli.Duration(p.finishedAt.Sub(p.startedAt))+" · "+summary, styles.ToneDanger)}
 		return []string{" " + renderCell(line, column{width: width - 1}, nil), " " + renderCell(text(m.planAgain(), styles.ToneFaint), column{width: width - 1}, nil)}
 	default:
@@ -418,7 +418,7 @@ func (m model) applyLines(width int) []string {
 			what = "removed"
 		}
 		line = cell{styles.S("✓ ", styles.ToneSuccess), styles.S(what+" in "+cli.Duration(p.finishedAt.Sub(p.startedAt)), styles.ToneSuccess),
-			styles.S(" · "+cli.ApplySummary(finished, failed, stopped), styles.ToneFaint)}
+			styles.S(" · "+cli.ApplySummary(finished, failed, stopped, 0), styles.ToneFaint)}
 	}
 	return []string{" " + renderCell(line, column{width: width - 1}, nil)}
 }

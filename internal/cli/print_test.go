@@ -101,6 +101,35 @@ func TestPrintPlanColumns(t *testing.T) {
 	}
 }
 
+// TestPrintPlanNotes checks a change a deploy left unfinished says whether this one finishes it
+// or deletes or leaves it, and a plan of code alone says so of one function or of several.
+func TestPrintPlanNotes(t *testing.T) {
+	code := func(id string) engine.Change {
+		return engine.Change{ID: id, Action: engine.Update, Fields: []string{"code"},
+			Before: map[string]any{"code": map[string]any{"sha256": "1bc46bee5fd2aa"}}, After: map[string]any{"code": map[string]any{"sha256": "acd5326a6c33bb"}}}
+	}
+	tests := []struct {
+		name    string
+		changes []engine.Change
+		want    string
+	}{
+		{name: "update finished", changes: []engine.Change{{ID: "resource/jobs", Action: engine.Update, Resume: true}}, want: "resource/jobs  (finishing what a deploy started)"},
+		{name: "delete of an unfinished one", changes: []engine.Change{{ID: "resource/jobs", Action: engine.Delete, Resume: true}}, want: "resource/jobs  (a deploy left it unfinished)"},
+		{name: "kept unfinished", changes: []engine.Change{{ID: "resource/jobs", Action: engine.Keep, Resume: true}}, want: "resource/jobs  (a deploy left it unfinished)"},
+		{name: "code of one function", changes: []engine.Change{code("function/api")}, want: "only code changes: the function's code is replaced in place"},
+		{name: "code of two", changes: []engine.Change{code("function/api"), code("function/worker")}, want: "only code changes: the functions' code is replaced in place"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var out bytes.Buffer
+			printPlanTo(&out, "orders", "dev", "eu-west-1", "123456789012", &engine.Plan{Changes: tt.changes})
+			if !strings.Contains(out.String(), tt.want) {
+				t.Errorf("the plan lacks %q:\n%s", tt.want, out.String())
+			}
+		})
+	}
+}
+
 // TestPrintPlanNoChanges checks a plan without changes says what it compared, with refresh and
 // without.
 func TestPrintPlanNoChanges(t *testing.T) {

@@ -42,6 +42,15 @@ func PastTense(a engine.Action) string { return pastTenses[a] }
 // Participle says what an action is doing, as creating or leaving in place.
 func Participle(a engine.Action) string { return participles[a] }
 
+// ResumeNote says what a change does with a node a deploy left unfinished: finishes it, or, as
+// it deletes or leaves it, only that it was left so.
+func ResumeNote(a engine.Action) string {
+	if a == engine.Delete || a == engine.Keep {
+		return "a deploy left it unfinished"
+	}
+	return "finishing what a deploy started"
+}
+
 // ActionCount is how many changes of a plan take an action.
 type ActionCount struct {
 	Action engine.Action
@@ -65,8 +74,8 @@ func PlanCounts(plan *engine.Plan) []ActionCount {
 }
 
 // ApplySummary counts what applying a plan did, as 8 created, 1 updated, with how many failed
-// and how many were stopped, or says nothing changed.
-func ApplySummary(done map[engine.Action]int, failed, stopped int) string {
+// and how many were stopped, and after either how many never started, or says nothing changed.
+func ApplySummary(done map[engine.Action]int, failed, stopped, notStarted int) string {
 	var parts []string
 	for _, a := range actionOrder {
 		if done[a] > 0 {
@@ -78,6 +87,9 @@ func ApplySummary(done map[engine.Action]int, failed, stopped int) string {
 	}
 	if stopped > 0 {
 		parts = append(parts, fmt.Sprintf("%d stopped", stopped))
+	}
+	if notStarted > 0 {
+		parts = append(parts, fmt.Sprintf("%d not started", notStarted))
 	}
 	if len(parts) == 0 {
 		return "nothing changed"
@@ -137,7 +149,7 @@ func printPlanTo(w io.Writer, app, stage, region, account string, plan *engine.P
 		}
 		switch {
 		case c.Resume:
-			line += "  " + colour.paint(sgrFaint, "(finishing what a deploy started)")
+			line += "  " + colour.paint(sgrFaint, "("+ResumeNote(c.Action)+")")
 		case c.Gone:
 			line += "  " + colour.paint(sgrFaint, "(deleted outside koldstart)")
 		}
@@ -153,7 +165,11 @@ func printPlanTo(w io.Writer, app, stage, region, account string, plan *engine.P
 	}
 	_, _ = fmt.Fprintf(w, "\n%s\n", planCounts(plan))
 	if plan.OnlyCode() {
-		_, _ = fmt.Fprintln(w, "only code changes: the functions' code is replaced in place")
+		whose := "the functions'"
+		if counts := plan.Counts(); counts[engine.Update] == 1 {
+			whose = "the function's"
+		}
+		_, _ = fmt.Fprintf(w, "only code changes: %s code is replaced in place\n", whose)
 	}
 }
 

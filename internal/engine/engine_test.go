@@ -295,6 +295,47 @@ func checkConverged(t *testing.T, name string, h *harness, nodes []Node) {
 	}
 }
 
+// TestUnresolvedNodeIsTold checks a node whose inputs cannot be resolved once what it depends
+// on is applied is told as failed, though it never started, so progress counts it.
+func TestUnresolvedNodeIsTold(t *testing.T) {
+	tests := []struct {
+		name      string
+		attribute string
+		wantErr   bool
+	}{
+		{name: "attribute there", attribute: "Arn"},
+		{name: "attribute missing", attribute: "QueueArn", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHarness(t)
+			var events []Event
+			h.engine.Concurrency = 1
+			h.engine.OnEvent = func(ev Event) { events = append(events, ev) }
+			nodes := []Node{
+				{ID: "loggroup/api", Type: fakeType, Name: "loggroup", Inputs: map[string]any{"retention": 30}},
+				{ID: "role/api", Type: fakeType, Name: "role", Inputs: map[string]any{"logGroup": Ref("loggroup/api", tt.attribute)}},
+			}
+			_, err := h.deploy(nodes)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("deploy = %v, want an error: %t", err, tt.wantErr)
+			}
+			var done *Event
+			for i := range events {
+				if events[i].ID == "role/api" && events[i].Done {
+					done = &events[i]
+				}
+			}
+			if done == nil {
+				t.Fatalf("no done event for role/api in %+v", events)
+			}
+			if (done.Err != nil) != tt.wantErr || done.Action != Create {
+				t.Errorf("done event = %+v, want action create and an error: %t", *done, tt.wantErr)
+			}
+		})
+	}
+}
+
 // TestFailureKeepsWhatWasDone checks a failing node stops the deploy after its level, keeps
 // what was done in the state, and the next deploy picks up from there.
 func TestFailureKeepsWhatWasDone(t *testing.T) {

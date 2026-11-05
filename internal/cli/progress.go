@@ -228,11 +228,19 @@ func (p *progress) clear() {
 	p.drawn = false
 }
 
-// summary counts what was done, as 8 created, 1 updated, with what failed or was stopped.
+// summary counts what was done, as 8 created, 1 updated, with what failed or was stopped and,
+// after either, what never started.
 func (p *progress) summary() string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return ApplySummary(p.done, p.failed, p.stopped)
+	notStarted := 0
+	if p.failed > 0 || p.stopped > 0 {
+		notStarted = p.total - p.failed - p.stopped - len(p.running)
+		for _, n := range p.done {
+			notStarted -= n
+		}
+	}
+	return ApplySummary(p.done, p.failed, p.stopped, max(notStarted, 0))
 }
 
 // padRight pads s with spaces to width runes.

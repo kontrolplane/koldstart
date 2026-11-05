@@ -462,6 +462,31 @@ func TestEscapesNeverReachTheTerminal(t *testing.T) {
 	check("status", o)
 }
 
+// TestPlanResumeNotes checks a change of a node a deploy left unfinished says it finishes it, or,
+// as it deletes or leaves it, only that it was left unfinished.
+func TestPlanResumeNotes(t *testing.T) {
+	tests := []struct {
+		name   string
+		action engine.Action
+		want   string
+		not    string
+	}{
+		{name: "update", action: engine.Update, want: "finishing what a deploy started", not: "left it unfinished"},
+		{name: "delete", action: engine.Delete, want: "a deploy left it unfinished", not: "finishing"},
+		{name: "keep", action: engine.Keep, want: "a deploy left it unfinished", not: "finishing"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFake(t)
+			f.plan = &engine.Plan{App: "orders", Stage: "dev", Changes: []engine.Change{{ID: "resource/jobs", Action: tt.action, Resume: true}}}
+			v := screen(pressKeys(t, started(t, f), "d"))
+			if !strings.Contains(v, tt.want) || strings.Contains(v, tt.not) {
+				t.Errorf("the plan does not say %q, or says %q:\n%s", tt.want, tt.not, v)
+			}
+		})
+	}
+}
+
 // TestRefreshPlan checks r on a plan plans again with every resource read from aws, and shows
 // what was deleted and what was changed outside koldstart.
 func TestRefreshPlan(t *testing.T) {

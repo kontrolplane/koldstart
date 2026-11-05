@@ -131,7 +131,8 @@ func (e *Engine) tags(id string, app, stage string) map[string]string {
 // applyNode creates or updates one node, its refs resolved against the state as it is now that
 // what it depends on is applied. When its inputs come out the same as before, nothing is done.
 // The operation is recorded as pending before the call, so a deploy that dies during it knows
-// the resource may exist.
+// the resource may exist. A node whose inputs cannot be resolved is told as failed, though it
+// never started, so what shows progress counts it.
 func (e *Engine) applyNode(ctx context.Context, n Node, c Change, store *Store) (err error) {
 	start := time.Now()
 	p, err := e.provider(n.Type)
@@ -141,7 +142,9 @@ func (e *Engine) applyNode(ctx context.Context, n Node, c Change, store *Store) 
 	snap := store.Snapshot()
 	in, err := e.prepare(ctx, n, snap)
 	if err != nil {
-		return fmt.Errorf("%s: %w", n.ID, err)
+		err = fmt.Errorf("%s: %w", n.ID, err)
+		e.event(Event{ID: n.ID, Action: c.Action, Done: true, Err: err, Duration: time.Since(start)})
+		return err
 	}
 	prior := snap.Resources[n.ID]
 	if prior == nil {

@@ -42,10 +42,12 @@ func testProgress(live bool) (*progress, *bytes.Buffer, *time.Time) {
 // what was done, failed or stopped, and that the summary counts them.
 func TestProgressLines(t *testing.T) {
 	tests := []struct {
-		name    string
-		events  []engine.Event
-		want    []string
-		summary string
+		name   string
+		events []engine.Event
+		// unstarted is the node whose event comes only as done, as one that could not be resolved.
+		unstarted string
+		want      []string
+		summary   string
 	}{
 		{
 			name: "done",
@@ -63,7 +65,17 @@ func TestProgressLines(t *testing.T) {
 				{ID: "function/api", Action: engine.Update, Done: true, Err: fmt.Errorf("calling lambda: %w", context.Canceled), Duration: 2 * time.Minute},
 			},
 			want:    []string{"  ✗ url/api          create failed after 3s", "  ✗ function/api     update stopped after 2m"},
-			summary: "1 failed, 1 stopped",
+			summary: "1 failed, 1 stopped, 1 not started",
+		},
+		{
+			name: "failed before it started",
+			events: []engine.Event{
+				{ID: "resource/orders", Action: engine.Create, Done: true, Duration: 8 * time.Millisecond},
+				{ID: "url/api", Action: engine.Create, Done: true, Err: errors.New("resource/orders has no attribute Arn")},
+			},
+			unstarted: "url/api",
+			want:      []string{"  ✓ resource/orders  created in 8ms", "  ✗ url/api          create failed after 0ms"},
+			summary:   "1 created, 1 failed, 1 not started",
 		},
 		{
 			name:    "nothing",
@@ -76,7 +88,9 @@ func TestProgressLines(t *testing.T) {
 			for _, ev := range tt.events {
 				start := ev
 				start.Done, start.Err = false, nil
-				p.event(start)
+				if ev.ID != tt.unstarted {
+					p.event(start)
+				}
 				p.event(ev)
 			}
 			p.end()
