@@ -76,7 +76,7 @@ func TestSchema(t *testing.T) {
 }
 
 // TestStageFile checks a stage's own file, which amends the main one, changes what it sets and
-// keeps the rest.
+// keeps the rest, an output of a stage elsewhere among it.
 func TestStageFile(t *testing.T) {
 	ev := evaluator(t)
 	p, err := config.Load(context.Background(), ev, filepath.Join("testdata", "orders", "koldstart.prod.pkl"), "prod")
@@ -88,6 +88,9 @@ func TestStageFile(t *testing.T) {
 	}
 	if p.Functions["api"].Environment["PAYMENTS_URL"].Output.Stage != "prod" {
 		t.Errorf("the stage did not reach the main file: %+v", p.Functions["api"].Environment["PAYMENTS_URL"])
+	}
+	if o := p.Functions["api"].Environment["LEDGER_URL"].Output; o == nil || o.Region != "us-east-1" || o.Role != "arn:aws:iam::210987654321:role/koldstart-outputs" || o.Account != "" {
+		t.Errorf("LEDGER_URL = %+v, want the output of ledger/prod in us-east-1 as the role", p.Functions["api"].Environment["LEDGER_URL"])
 	}
 }
 
@@ -104,6 +107,7 @@ func TestSchemaRefuses(t *testing.T) {
 		{name: "misspelled property", body: `functions { ["api"] { runtime = "nodejs22.x"; handlr = "x.y" } }`, want: "handlr"},
 		{name: "url without auth", body: `functions { ["api"] { runtime = "nodejs22.x"; handler = "x.y"; url = new {} } }`, want: "auth"},
 		{name: "stage set", body: `stage = "prod"`, want: "fixed"},
+		{name: "output of a short account", body: `functions { ["api"] { runtime = "nodejs22.x"; handler = "x.y"; environment { ["X"] = new StageOutput { app = "a"; stage = "b"; output = "c"; account = "1234" } } } }`, want: `\d{12}`},
 	}
 	dir := t.TempDir()
 	schema, err := filepath.Abs(filepath.Join("..", "..", "pkl", "Project.pkl"))

@@ -58,7 +58,7 @@ func openStage(ctx context.Context, opts *Options, create bool) (*stage, error) 
 // engine returns the engine for the stage, reading the outputs of other stages from its bucket.
 func (s *stage) engine() *engine.Engine {
 	e := s.sess.engine(s.Tags)
-	e.Outputs = &resolve.Outputs{Backend: s.backend}
+	e.Outputs = &resolve.Outputs{Backend: s.backend, Elsewhere: s.sess.stateIn}
 	return e
 }
 

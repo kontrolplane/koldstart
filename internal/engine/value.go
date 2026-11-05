@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 
 	"github.com/kontrolplane/koldstart/internal/config"
 )
@@ -35,20 +36,47 @@ func SecretValue(s config.Secret) map[string]any {
 }
 
 // StageOutput stands for an output of another app's stage, read from its state while planning
-// and applying.
-func StageOutput(app, stage, output string) map[string]any {
-	return map[string]any{marker: kindOutput, "app": app, "stage": stage, "output": output}
+// and applying. Its region, account and role are left out when they are not set, so a value of
+// one in the same account and region hashes as before they were known.
+func StageOutput(o config.OutputRef) map[string]any {
+	m := map[string]any{marker: kindOutput, "app": o.App, "stage": o.Stage, "output": o.Output}
+	for k, v := range map[string]string{"region": o.Region, "account": o.Account, "role": o.Role} {
+		if v != "" {
+			m[k] = v
+		}
+	}
+	return m
 }
 
-func asOutput(v any) (app, stage, output string, ok bool) {
+func asOutput(v any) (config.OutputRef, bool) {
 	m, isMap := v.(map[string]any)
 	if !isMap || m[marker] != kindOutput {
-		return "", "", "", false
+		return config.OutputRef{}, false
 	}
-	app, _ = m["app"].(string)
-	stage, _ = m["stage"].(string)
-	output, _ = m["output"].(string)
-	return app, stage, output, true
+	str := func(k string) string {
+		s, _ := m[k].(string)
+		return s
+	}
+	return config.OutputRef{App: str("app"), Stage: str("stage"), Output: str("output"), Region: str("region"), Account: str("account"), Role: str("role")}, true
+}
+
+// DescribeOutput names an output of a stage, with where it is when that is set.
+func DescribeOutput(o config.OutputRef) string {
+	out := o.App + "/" + o.Stage + "." + o.Output
+	var where []string
+	if o.Account != "" {
+		where = append(where, "account "+o.Account)
+	}
+	if o.Region != "" {
+		where = append(where, o.Region)
+	}
+	if o.Role != "" {
+		where = append(where, "as "+o.Role)
+	}
+	if where != nil {
+		out += " in " + strings.Join(where, ", ")
+	}
+	return out
 }
 
 // Join stands for its parts, strings and refs, joined into one string once the refs are known,
@@ -222,8 +250,8 @@ func Describe(v any) string {
 		}
 		return out
 	}
-	if app, stage, output, ok := asOutput(v); ok {
-		return "output " + app + "/" + stage + "." + output
+	if o, ok := asOutput(v); ok {
+		return "output " + DescribeOutput(o)
 	}
 	if r, ok := asRef(v); ok {
 		return "ref " + r.Node + "." + r.Attribute

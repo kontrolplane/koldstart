@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+
+	"github.com/kontrolplane/koldstart/internal/config"
 )
 
 // Request is what a provider is asked to do for one node.
@@ -74,5 +76,5 @@ type Secrets interface {
 
 // Outputs reads the outputs of other apps' stages.
 type Outputs interface {
-	Output(ctx context.Context, app, stage, name string) (string, error)
+	Output(ctx context.Context, o config.OutputRef) (string, error)
 }

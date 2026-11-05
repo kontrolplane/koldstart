@@ -122,7 +122,7 @@ func (b *builder) value(v config.Value) any {
 	case v.Secret != nil:
 		return engine.SecretValue(*v.Secret)
 	case v.Output != nil:
-		return engine.StageOutput(v.Output.App, v.Output.Stage, v.Output.Output)
+		return engine.StageOutput(*v.Output)
 	case v.Join != nil:
 		return b.join(v.Join)
 	case v.Pseudo != "":

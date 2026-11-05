@@ -465,7 +465,7 @@ const changedMarker = "\x00koldstart: changed secret\x00"
 // a secret, or an output of another stage.
 func isExternal(v any) bool {
 	_, secret := asSecret(v)
-	_, _, _, output := asOutput(v)
+	_, output := asOutput(v)
 	return secret || output
 }
 

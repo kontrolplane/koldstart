@@ -32,7 +32,12 @@ function ssm(parameterName: String): Project.Secret = new { source = "ssm"; name
 /// secret.
 function secretsmanager(secretName: String): Project.Secret = new { source = "secretsmanager"; name = secretName }
 
-/// An output of another app's stage, read from its state while deploying.
+/// An output of another app's stage, read from its state while deploying. One in another region
+/// or account amends it:
+///
+/// ```
+/// (kdst.stageOutput("payments", "prod", "apiUrl")) { region = "us-east-1" }
+/// ```
 function stageOutput(appName: String, stageName: String, outputName: String): Project.StageOutput =
   new { app = appName; stage = stageName; output = outputName }
 

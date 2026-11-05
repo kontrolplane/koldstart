@@ -166,16 +166,27 @@ func (c *converter) variable(inner string) value {
 			return notConverted("${" + inner + "}: ssm with a region or another form")
 		}
 		return value{expr: fmt.Sprintf("kdst.ssm(%s)", quote(name)), ok: true}
-	case source == "cf":
-		stack, output, ok := strings.Cut(path, ".")
-		i := strings.LastIndex(stack, "-")
-		if !ok || i <= 0 {
-			return notConverted("${" + inner + "}: a stack name that is not <service>-<stage>")
-		}
-		return value{expr: fmt.Sprintf("kdst.stageOutput(%s, %s, %s)", quote(stack[:i]), quote(stack[i+1:]), quote(output)), ok: true}
+	case source == "cf" || strings.HasPrefix(source, "cf(") || strings.HasPrefix(source, "cf."):
+		return stackOutput(source, path, inner)
 	default:
 		return notConverted("${" + inner + "} has no equivalent: an import, a read() or a value of your own")
 	}
+}
+
+// stackOutput converts ${cf:stack.output}, the output of a stack of <service>-<stage>, to the
+// output of that stage. ${cf(region):...} and ${cf.region:...} are of a stage in that region.
+func stackOutput(source, path, inner string) value {
+	stack, output, ok := strings.Cut(path, ".")
+	i := strings.LastIndex(stack, "-")
+	if !ok || i <= 0 {
+		return notConverted("${" + inner + "}: a stack name that is not <service>-<stage>")
+	}
+	expr := fmt.Sprintf("kdst.stageOutput(%s, %s, %s)", quote(stack[:i]), quote(stack[i+1:]), quote(output))
+	region := strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(source, "cf("), "cf."), ")")
+	if region != "cf" {
+		expr = fmt.Sprintf("(%s) { region = %s }", expr, quote(region))
+	}
+	return value{expr: expr, ok: true}
 }
 
 // splitFallback splits ${a, b} into a and its fallback b.

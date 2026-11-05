@@ -16,6 +16,7 @@ functions {
       // TODO: ${file(./config.json):key}: there is no ./config.json next to serverless.yml
       // was: ${file(./config.json):key}
       ["SHARED"] = kdst.stageOutput("shared", "prod", "QueueUrl")
+      ["PAYMENTS"] = (kdst.stageOutput("payments", "prod", "ApiUrl")) { region = "us-east-1" }
       ["LOG_LEVEL"] = read?("env:LOG_LEVEL") ?? "info"
     }
   }
@@ -28,6 +29,7 @@ functions {
       // TODO: ${file(./config.json):key}: there is no ./config.json next to serverless.yml
       // was: ${file(./config.json):key}
       ["SHARED"] = kdst.stageOutput("shared", "prod", "QueueUrl")
+      ["PAYMENTS"] = (kdst.stageOutput("payments", "prod", "ApiUrl")) { region = "us-east-1" }
       ["LOG_LEVEL"] = read?("env:LOG_LEVEL") ?? "info"
     }
     layers {
@@ -51,6 +53,7 @@ functions {
       // TODO: ${file(./config.json):key}: there is no ./config.json next to serverless.yml
       // was: ${file(./config.json):key}
       ["SHARED"] = kdst.stageOutput("shared", "prod", "QueueUrl")
+      ["PAYMENTS"] = (kdst.stageOutput("payments", "prod", "ApiUrl")) { region = "us-east-1" }
       ["LOG_LEVEL"] = read?("env:LOG_LEVEL") ?? "info"
     }
   }
@@ -65,6 +68,7 @@ functions {
       // TODO: ${file(./config.json):key}: there is no ./config.json next to serverless.yml
       // was: ${file(./config.json):key}
       ["SHARED"] = kdst.stageOutput("shared", "prod", "QueueUrl")
+      ["PAYMENTS"] = (kdst.stageOutput("payments", "prod", "ApiUrl")) { region = "us-east-1" }
       ["LOG_LEVEL"] = read?("env:LOG_LEVEL") ?? "info"
     }
     // TODO: a go function has no layers: build what they hold into the binary
@@ -80,6 +84,7 @@ functions {
       // TODO: ${file(./config.json):key}: there is no ./config.json next to serverless.yml
       // was: ${file(./config.json):key}
       ["SHARED"] = kdst.stageOutput("shared", "prod", "QueueUrl")
+      ["PAYMENTS"] = (kdst.stageOutput("payments", "prod", "ApiUrl")) { region = "us-east-1" }
       ["LOG_LEVEL"] = read?("env:LOG_LEVEL") ?? "info"
       ["TOPIC"] = kdst.join(List("arn:aws:sns:\(module.region):", kdst.accountId, ":alerts"))
     }

@@ -136,6 +136,8 @@ func TestText(t *testing.T) {
 		{in: "${env:LEVEL, 'info'}", want: `read?("env:LEVEL") ?? "info"`, ok: true},
 		{in: "${env:LEVEL}", want: `read("env:LEVEL")`, ok: true},
 		{in: "${cf:payments-prod.ApiUrl}", want: `kdst.stageOutput("payments", "prod", "ApiUrl")`, ok: true},
+		{in: "${cf(us-east-1):payments-prod.ApiUrl}", want: `(kdst.stageOutput("payments", "prod", "ApiUrl")) { region = "us-east-1" }`, ok: true},
+		{in: "${cf.us-east-1:payments-prod.ApiUrl}", want: `(kdst.stageOutput("payments", "prod", "ApiUrl")) { region = "us-east-1" }`, ok: true},
 		{in: "key-${ssm:/orders/key}", ok: false},
 		{in: "${file(./x.json)}", ok: false},
 		{in: "${self:custom.${sls:stage}.url}", ok: false},

@@ -86,6 +86,15 @@ class StageOutput {
   app: String
   stage: String
   output: String
+  /// The region the stage is deployed in, when it is not this stage's.
+  region: String?
+  /// The account the stage is deployed in, when it is not this stage's. Its state bucket is read
+  /// with this stage's credentials, which its bucket policy must let in, or with `role`.
+  account: String(matches(Regex(#"\d{12}"#)))?
+  /// A role koldstart assumes to read the stage's state, such as
+  /// `arn:aws:iam::123456789012:role/koldstart-outputs`. The stage is in the role's account,
+  /// unless `account` says another.
+  role: String(startsWith("arn:"))?
 }
 
 class Function {

@@ -143,7 +143,7 @@ func (v *validator) value(where string, val Value) {
 	if val.Ref != nil && !v.exists(val.Ref.Resource) {
 		v.errorf("%s: kdst.ref(%q, %q) refers to no function or resource", where, val.Ref.Resource, val.Ref.Attribute)
 	}
-	if val.Output != nil && val.Output.App == v.p.App && val.Output.Stage == v.p.Stage {
+	if val.Output != nil && val.Output.App == v.p.App && val.Output.Stage == v.p.Stage && !val.Output.Elsewhere(v.p.Region) {
 		v.errorf("%s: kdst.stageOutput() of this app and stage: use kdst.ref() instead", where)
 	}
 }

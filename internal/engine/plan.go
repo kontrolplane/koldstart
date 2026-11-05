@@ -318,11 +318,11 @@ func resolveRefs(v any, st *state.State, unknownNodes map[string]bool) (any, err
 // with theirs.
 func (e *Engine) resolveExternal(ctx context.Context, v any) (any, error) {
 	return transform(v, func(x any) (any, bool, error) {
-		if app, stage, name, ok := asOutput(x); ok {
+		if o, ok := asOutput(x); ok {
 			if e.Outputs == nil {
-				return nil, true, fmt.Errorf("no way to read the output %s of %s/%s", name, app, stage)
+				return nil, true, fmt.Errorf("no way to read the output %s", DescribeOutput(o))
 			}
-			val, err := e.Outputs.Output(ctx, app, stage, name)
+			val, err := e.Outputs.Output(ctx, o)
 			return val, true, err
 		}
 		s, ok := asSecret(x)

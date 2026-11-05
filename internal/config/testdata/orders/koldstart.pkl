@@ -25,6 +25,10 @@ functions {
       ["API_KEY"] = kdst.ssm("/orders/api-key")
       ["DB_PASSWORD"] = kdst.secretsmanager("db").field("password").readAtRuntime()
       ["PAYMENTS_URL"] = kdst.stageOutput("payments", kdst.stage, "apiUrl")
+      ["LEDGER_URL"] = (kdst.stageOutput("ledger", "prod", "apiUrl")) {
+        region = "us-east-1"
+        role = "arn:aws:iam::210987654321:role/koldstart-outputs"
+      }
       ["LOG_LEVEL"] = "info"
     }
     events {

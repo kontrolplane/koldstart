@@ -223,11 +223,20 @@ const (
 	SourceSecretsManager = "secretsmanager"
 )
 
-// OutputRef is an output of another app's stage, from its state.
+// OutputRef is an output of another app's stage, from its state: in the account and region of
+// the stage that reads it, or in Region and Account, read with the credentials of Role.
 type OutputRef struct {
-	App    string `json:"app"`
-	Stage  string `json:"stage"`
-	Output string `json:"output"`
+	App     string `json:"app"`
+	Stage   string `json:"stage"`
+	Output  string `json:"output"`
+	Region  string `json:"region,omitempty"`
+	Account string `json:"account,omitempty"`
+	Role    string `json:"role,omitempty"`
+}
+
+// Elsewhere reports whether the output is of a stage in another region or account.
+func (o OutputRef) Elsewhere(region string) bool {
+	return (o.Region != "" && o.Region != region) || o.Account != "" || o.Role != ""
 }
 
 // UnmarshalJSON reads a plain string, or one of koldstart's values.

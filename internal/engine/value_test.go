@@ -17,7 +17,7 @@ func TestDescribe(t *testing.T) {
 		{name: "string", in: "orders", want: "orders"},
 		{name: "secret", in: SecretValue(config.Secret{Source: "ssm", Name: "/orders/key"}), want: "ssm:/orders/key"},
 		{name: "secret field", in: SecretValue(config.Secret{Source: "secretsmanager", Name: "db", Key: "password"}), want: "secretsmanager:db#password"},
-		{name: "output", in: StageOutput("billing", "prod", "url"), want: "output billing/prod.url"},
+		{name: "output", in: StageOutput(config.OutputRef{App: "billing", Stage: "prod", Output: "url"}), want: "output billing/prod.url"},
 		{name: "ref", in: Ref("resource/table", "Arn"), want: "ref resource/table.Arn"},
 		{name: "unknown", in: unknown(), want: "known after apply"},
 		{name: "number", in: 256.0, want: "256"},
