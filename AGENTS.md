@@ -5,7 +5,8 @@
 ```
 cmd/koldstart/              the binary; main calls internal/cli. kdst is a link to it
 pkl/                        the schema package: Project.pkl, the shape of koldstart.pkl, and kdst.pkl, its helpers and events; embedded in the binary by schema.go
-internal/cli/               the cobra commands, the global flags and the aws session
+internal/cli/               the cobra commands, the global flags and the aws session; Console, what kdst ui works with
+internal/tui/               kdst ui, with styles/ for relay's palette and keys/ for the key map
 internal/pkl/               finds or downloads pkl, and evaluates configuration to json
 internal/config/            decodes what pkl renders, and checks what the schema cannot
 internal/build/             node bundled with esbuild, go cross-compiled; deterministic zips
@@ -52,11 +53,12 @@ The packages still to come, and the milestones they land in, are in [#1](https:/
 
 `kdst ui` follows relay (kontrolplane/relay), the newest of the kontrolplane tuis. read its `pkg/tui` before adding a view.
 
-- it lives in `internal/tui`, with `internal/tui/styles` and `internal/tui/keys`. cobra never imports it: `cli.Root` takes the tui's run function, as konverge does, and runs it with `tea.WithContext`.
-- charm.land v2: bubbletea, bubbles, lipgloss and huh.
+- it lives in `internal/tui`, with `internal/tui/styles` and `internal/tui/keys`. cobra never imports it: `cli.Root` takes `tui.Run`, as konverge does, which runs it with `tea.WithContext`. everything it reads and changes goes through `cli.Console`, behind the tui's `backend` interface.
+- charm.land v2: bubbletea, bubbles and lipgloss.
 - one model with a `page` enum and a state struct per page, each with its switch, update, view and go back. a confirmation is a page drawn over the one it came from.
 - keys are `key.Binding`s in one key map. `ctrl+c` quits, `q` goes back and quits only on the app overview, `esc` goes back or cancels and never quits. letters are off while a text input has focus.
 - styles are relay's palette, `--theme auto|dark|light` and `styles.Clean`. every string from aws, and every error, goes through `Clean` before it reaches the terminal.
-- every load is a `tea.Cmd` with a timeout, and its message carries the generation it was asked for; a stale one is dropped. refresh is a tick that pause lets lapse.
-- tests drive `Update` and `View` directly, with relay's layout sweep over terminal sizes and its escape test. no teatest.
+- every load is a `tea.Cmd` with a timeout, and its message carries the generation it was asked for; a stale one is dropped. `Init` cannot change the model, so `newModel` numbers the first load. refresh is a tick that pause lets lapse.
+- a deploy or remove runs in a goroutine that sends its progress on a channel, and quitting stops it and waits for it, so its lock is released.
+- tests drive `Update` and `View` directly against a fake backend, with relay's layout sweep over terminal sizes and its escape test. no teatest.
 - the header shows the profile, region and account, from sts `GetCallerIdentity`, and the state bucket.
