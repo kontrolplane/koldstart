@@ -18,13 +18,13 @@ The header shows the aws profile, account, region and state bucket in use, the p
   - functions, with their invocations, errors and p99 duration of the last hour
   - resources, as a tree: each function with its role, log group, url, permissions, routes and events, each resource with the notifications of a bucket and the depth of a queue, and the http api with its domain and authorizers
   - outputs; a value of more than one line shows its first, and `c` copies all of it
-  - history: the deploys, each the versions of the state it wrote; one shows what it changed from the deploy before, and each change opens for its full diff
+  - history: the deploys, each the versions of the state it wrote; one shows the resources and outputs it changed from the deploy before, and each changed resource opens for its full diff
 - `function`, in tabs:
   - overview: its configuration; what lambda says of it now, its state and its last update, with a notice on top when code or configuration was changed outside koldstart; sparklines of its invocations, errors, throttles, p99 duration and concurrency in the last hour; its environment, values that look like secrets hidden; and what invokes it, its url too
   - logs: the last half hour, followed with a live tail, or read again every few seconds where there is none; json and logfmt tinted so the message stands out; `/` filters the lines, and ↑ at the top reads the hour before
   - invocations: the requests in the logs read, with their duration, billed duration, memory, cold start, and whether they failed or timed out; one opens with its lines of the log
-  - invoke: the events kept for it, and what the last invocation with each returned
-- `resource`: what koldstart applied, its id in aws, its attributes and inputs, and on a second tab its properties in aws now, from cloud control, with the ones changed outside koldstart
+  - invoke: the events kept for it, with the ones that are not json marked, and what the last invocation with each returned or failed with, and its log
+- `resource`: what koldstart applied, its id in aws, its attributes and inputs, and on a second tab its properties in aws now, from cloud control, with the ones changed outside koldstart, what each was applied with and what it is now
 - `plan`: what a deploy or remove does, and the progress of each resource while it applies; each change opens for its full diff of inputs, with secrets and refs shown by what they stand for
 
 The page on screen is read again every five seconds; `p` pauses that. The live data, metrics, lambda's own view of a function, a queue's depth and a resource's properties in aws, needs the permissions to read them; where it cannot be read, as on an emulator, the page says so and shows the rest.
@@ -36,7 +36,7 @@ The page on screen is read again every five seconds; `p` pauses that. The live d
 - `ctrl+c`: quit
 - `↑`, `k` and `↓`, `j`: up and down
 - `g`, `home` and `G`, `end`: first and last row, top and bottom of the logs
-- `pgup`, `pgdn`: page up and down
+- `pgup`, `pgdn`: page up and down; on the invoke tab, scroll what the invocation returned
 - `tab`, `shift+tab`: switch between functions, resources, outputs and history; on a function between its overview, logs, invocations and invoke; on a resource between what was applied and what is in aws
 - `enter`: open: a stage, a function, a resource, a deploy, an invocation, or a change's diff
 - `/`: filter a table, or the lines of the logs
@@ -46,7 +46,7 @@ The page on screen is read again every five seconds; `p` pauses that. The live d
 - `ctrl+d`: remove the stage
 - `ctrl+x`: release a lock
 - `i`: invoke the function in aws, `shift+i` to run it on this machine
-- `e`: edit the event to invoke with in `$VISUAL` or `$EDITOR`
+- `e`: edit the event to invoke with in `$VISUAL`, `$EDITOR` or `vi`
 - `f`: follow the newest log lines, or stop following
 - `y`, `n`: answer a yes/no dialog
 - `c`: copy the arn, id, output or payload under the cursor
@@ -58,7 +58,7 @@ The page on screen is read again every five seconds; `p` pauses that. The live d
 
 Quitting while a deploy or remove runs stops it, as ctrl+c does on the command line: the lock is released, and the state says what was done, so running it again finishes it.
 
-Events to invoke a function with are kept in `.koldstart/events/<function>/` in the project, as json files, so they can be committed and shared. Without any, the function is invoked with `{}`, and `e` creates `event.json` to edit.
+Events to invoke a function with are kept in `.koldstart/events/<function>/` in the project, as json files, so they can be committed and shared. Without any, the function is invoked with `{}`, and `e` creates `event.json` to edit. An event that is not json is not sent.
 
 ## flags
 
