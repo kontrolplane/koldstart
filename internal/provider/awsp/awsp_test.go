@@ -2,6 +2,7 @@ package awsp
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -43,5 +44,32 @@ func TestPartition(t *testing.T) {
 		if got := Partition(region); got != want {
 			t.Errorf("Partition(%s) = %s, want %s", region, got, want)
 		}
+	}
+}
+
+// TestImageInputs checks a container image function has no runtime, handler or layers, and its
+// image as its code, and a zip function its layers, an empty list to remove them.
+func TestImageInputs(t *testing.T) {
+	zip := FunctionInputs{Runtime: "python3.12", Handler: "src/app.handler", Code: Code{Bucket: "b", Key: "k", SHA256: "a"}}
+	img := FunctionInputs{Code: Code{ImageURI: "r/x:t", SHA256: "a"}, ImageConfig: &ImageConfig{Command: []string{"app.handler"}}}
+	if zip.packageType() != "Zip" || zip.runtime() != "python3.12" || *zip.handler() != "src/app.handler" || zip.code().ImageUri != nil {
+		t.Errorf("a zip function: %v %v %v", zip.packageType(), zip.runtime(), zip.code())
+	}
+	if l := zip.layers(); l == nil || len(l) != 0 {
+		t.Errorf("a zip function without layers sends %v, want an empty list", l)
+	}
+	if img.packageType() != "Image" || img.runtime() != "" || img.handler() != nil || *img.code().ImageUri != "r/x:t" || img.layers() != nil {
+		t.Errorf("an image function: %v %q %v %v", img.packageType(), img.runtime(), img.handler(), img.layers())
+	}
+	if c := img.imageConfig(); len(c.Command) != 1 || zip.imageConfig() != nil {
+		t.Errorf("image config: %v, %v", c, zip.imageConfig())
+	}
+	a, _ := json.Marshal(zip)
+	b, _ := json.Marshal(img)
+	if !(Function{}).Replaces(a, b) {
+		t.Error("a zip function turned into an image is not replaced")
+	}
+	if strings.Contains(string(a), "layers") || strings.Contains(string(a), "imageConfig") || strings.Contains(string(a), "imageUri") {
+		t.Errorf("a function without them writes them: %s", a)
 	}
 }

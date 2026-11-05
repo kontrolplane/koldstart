@@ -34,6 +34,9 @@ type Target struct {
 	Bucket string
 	// Archives are the built functions, by name.
 	Archives map[string]build.Archive
+	// ImageRegistry is the ecr registry of the account and region, such as
+	// 123456789012.dkr.ecr.eu-west-1.amazonaws.com, which container images are pushed to.
+	ImageRegistry string
 }
 
 // The ids of a function's nodes, and of a resource's.
@@ -243,28 +246,62 @@ func (b *builder) functionNode(name string, fn config.Function, env map[string]a
 		vpc = map[string]any{"subnetIds": b.values(fn.VPC.SubnetIDs), "securityGroupIds": b.values(fn.VPC.SecurityGroupIDs)}
 	}
 	lambdaName := FunctionName(b.project, name)
-	return engine.Node{
-		ID: FunctionID(name), Type: awsp.TypeFunction, Name: lambdaName, After: []string{LogGroupID(name)},
-		Inputs: map[string]any{
-			inputName:             lambdaName,
-			"runtime":             fn.Runtime,
-			"handler":             handler,
-			"memory":              fn.Memory,
-			"timeout":             fn.Timeout,
-			"architecture":        fn.Architecture,
-			"ephemeralStorage":    fn.EphemeralStorage,
-			"reservedConcurrency": fn.ReservedConcurrency,
-			"environment":         env,
-			"role":                engine.Ref(RoleID(name), attrArn),
-			"logGroup":            logGroupName(b.project, name),
-			"code": map[string]any{
-				"bucket": b.target.Bucket,
-				"key":    state.ZipKey(b.project.App, b.project.Stage, archive.SHA256),
-				"sha256": archive.SHA256,
-			},
-			"vpc": vpc,
+	inputs := map[string]any{
+		inputName:             lambdaName,
+		"runtime":             fn.Runtime,
+		"handler":             handler,
+		"memory":              fn.Memory,
+		"timeout":             fn.Timeout,
+		"architecture":        fn.Architecture,
+		"ephemeralStorage":    fn.EphemeralStorage,
+		"reservedConcurrency": fn.ReservedConcurrency,
+		"environment":         env,
+		"role":                engine.Ref(RoleID(name), attrArn),
+		"logGroup":            logGroupName(b.project, name),
+		"code": map[string]any{
+			"bucket": b.target.Bucket,
+			"key":    state.ZipKey(b.project.App, b.project.Stage, archive.SHA256),
+			"sha256": archive.SHA256,
 		},
+		"vpc": vpc,
 	}
+	if len(fn.Layers) > 0 {
+		inputs["layers"] = b.values(fn.Layers)
+	}
+	if fn.IsImage() {
+		delete(inputs, "runtime")
+		delete(inputs, "handler")
+		inputs["code"] = map[string]any{"imageUri": ImageURI(b.target, b.project, name, archive.SHA256), "sha256": archive.SHA256}
+		if c := imageConfig(fn.Image); c != nil {
+			inputs["imageConfig"] = c
+		}
+	}
+	return engine.Node{ID: FunctionID(name), Type: awsp.TypeFunction, Name: lambdaName, After: []string{LogGroupID(name)}, Inputs: inputs}
+}
+
+// ImageURI is where a function's container image is pushed: its app's repository in the
+// target's registry, tagged by what it is built from.
+func ImageURI(t Target, p *config.Project, function, sha string) string {
+	return t.ImageRegistry + "/" + build.ImageRepository(p.App) + ":" + build.ImageTag(p.Stage, function, sha)
+}
+
+// imageConfig is what an image runs in place of its CMD, ENTRYPOINT and WORKDIR, or nil when it
+// runs what it says.
+func imageConfig(img *config.Image) map[string]any {
+	c := map[string]any{}
+	if len(img.Command) > 0 {
+		c["command"] = img.Command
+	}
+	if len(img.EntryPoint) > 0 {
+		c["entryPoint"] = img.EntryPoint
+	}
+	if img.WorkingDirectory != "" {
+		c["workingDirectory"] = img.WorkingDirectory
+	}
+	if len(c) == 0 {
+		return nil
+	}
+	return c
 }
 
 func (b *builder) urlNode(name string, url *config.FunctionURL) engine.Node {

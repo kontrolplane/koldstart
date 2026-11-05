@@ -2,6 +2,9 @@ package awsp_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -282,4 +285,72 @@ func invoke(t *testing.T, client *lambda.Client, name string) string {
 func isNotFound(err error) bool {
 	_, ok := errors.AsType[*types.ResourceNotFoundException](err)
 	return ok
+}
+
+// TestLayersEmulator creates a python function with a layer, and takes the layer off it again.
+func TestLayersEmulator(t *testing.T) {
+	cfg := awstest.Emulator(t)
+	ctx := context.Background()
+	ident, err := sts.NewFromConfig(cfg).GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend, err := state.Open(ctx, s3.NewFromConfig(cfg, func(o *s3.Options) { o.UsePathStyle = true }), *ident.Account, awstest.Region)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := awstest.Name("layers")
+	code, err := build.Zip([]build.File{{Name: "app.py", Data: []byte("def handler(event, context):\n    return 1\n")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(code)
+	sha := hex.EncodeToString(sum[:])
+	if err := backend.PutZip(ctx, app, "dev", sha, code); err != nil {
+		t.Fatal(err)
+	}
+	content, err := build.Zip([]build.File{{Name: "python/shared.py", Data: []byte("X = 1\n")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := lambda.NewFromConfig(cfg)
+	layer, err := client.PublishLayerVersion(ctx, &lambda.PublishLayerVersionInput{LayerName: aws.String(app), Content: &types.LayerVersionContentInput{ZipFile: content}})
+	if err != nil {
+		t.Fatalf("PublishLayerVersion: %v", err)
+	}
+	p := awsp.Function{Client: client, Wait: time.Minute, RetryEvery: 200 * time.Millisecond}
+	in := awsp.FunctionInputs{
+		Name: app, Runtime: config.RuntimePy312, Handler: "app.handler", Role: "arn:aws:iam::" + *ident.Account + ":role/" + app,
+		Memory: 128, Timeout: 5, Architecture: config.ArchARM64, EphemeralStorage: 512, LogGroup: "/aws/lambda/" + app,
+		Code:   awsp.Code{Bucket: backend.Bucket, Key: state.ZipKey(app, "dev", sha), SHA256: sha},
+		Layers: []string{aws.ToString(layer.LayerVersionArn)},
+	}
+	with, _ := json.Marshal(in)
+	if _, err := p.Create(ctx, engine.Request{ID: "function/x", Inputs: with}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	t.Cleanup(func() { _ = p.Delete(context.Background(), engine.Request{PhysicalID: app}) })
+	layers := func() []string {
+		t.Helper()
+		out, err := client.GetFunctionConfiguration(ctx, &lambda.GetFunctionConfigurationInput{FunctionName: &app})
+		if err != nil {
+			t.Fatal(err)
+		}
+		arns := make([]string, 0, len(out.Layers))
+		for _, l := range out.Layers {
+			arns = append(arns, aws.ToString(l.Arn))
+		}
+		return arns
+	}
+	if got := layers(); len(got) != 1 || got[0] != aws.ToString(layer.LayerVersionArn) {
+		t.Fatalf("layers after create: %v", got)
+	}
+	in.Layers = nil
+	without, _ := json.Marshal(in)
+	if _, err := p.Update(ctx, engine.Request{ID: "function/x", PhysicalID: app, Inputs: without, Prior: with}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if got := layers(); len(got) != 0 {
+		t.Errorf("layers after taking them off: %v", got)
+	}
 }

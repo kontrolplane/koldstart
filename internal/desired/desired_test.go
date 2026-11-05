@@ -370,3 +370,39 @@ func TestJoinAndPseudo(t *testing.T) {
 		t.Errorf("TopicName = %v", props["TopicName"])
 	}
 }
+
+// TestImageAndLayers checks an image function's node has its image as its code and no runtime or
+// handler, a function with layers has them, and one without has no layers at all, so a function
+// deployed before layers keeps its hash.
+func TestImageAndLayers(t *testing.T) {
+	p := project(t)
+	p.Functions["img"] = config.Function{Image: &config.Image{Command: []string{"app.handler"}}, Memory: 512, Timeout: 10, Architecture: config.ArchARM64}
+	api := p.Functions["api"]
+	api.Layers = []config.Value{{Literal: "arn:aws:lambda:eu-west-1:123456789012:layer:shared:3"}}
+	p.Functions["api"] = api
+	tgt := target()
+	tgt.ImageRegistry = "123456789012.dkr.ecr.eu-west-1.amazonaws.com"
+	tgt.Archives["img"] = build.Archive{Function: "img", SHA256: strings.Repeat("c", 64), Image: true}
+	nodes, err := Build(p, tgt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := byID(nodes)
+	img := got[FunctionID("img")].Inputs
+	if _, ok := img["runtime"]; ok {
+		t.Error("an image function has a runtime")
+	}
+	code := img["code"].(map[string]any)
+	if want := "123456789012.dkr.ecr.eu-west-1.amazonaws.com/koldstart/orders:dev-img-" + strings.Repeat("c", 32); code["imageUri"] != want {
+		t.Errorf("imageUri = %v, want %s", code["imageUri"], want)
+	}
+	if !reflect.DeepEqual(img["imageConfig"], map[string]any{"command": []string{"app.handler"}}) {
+		t.Errorf("imageConfig = %v", img["imageConfig"])
+	}
+	if layers := got[FunctionID("api")].Inputs["layers"].([]any); len(layers) != 1 {
+		t.Errorf("layers = %v", layers)
+	}
+	if _, ok := got[FunctionID("worker")].Inputs["layers"]; ok {
+		t.Error("a function without layers has a layers input")
+	}
+}

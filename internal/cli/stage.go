@@ -31,6 +31,8 @@ type stage struct {
 	exists bool
 	state  *state.State
 	etag   string
+	// registry is the ecr registry container images go in, read when a function has one.
+	registry registry
 }
 
 // openStage loads the configuration, connects to aws, and reads the state. With create, the
@@ -110,11 +112,23 @@ func (s *stage) buildAll(ctx context.Context, names []string, upload bool) (map[
 	b := build.Builder{Root: s.Root, Stage: s.Stage}
 	archives := map[string]build.Archive{}
 	for _, name := range names {
-		arc, err := b.Build(ctx, name, s.Functions[name])
+		fn := s.Functions[name]
+		arc, err := b.Build(ctx, name, fn)
 		if err != nil {
 			return nil, err
 		}
 		archives[name] = arc
+		if arc.Image {
+			if _, err := s.imageRegistry(ctx); err != nil {
+				return nil, err
+			}
+			if upload {
+				if err := s.pushImage(ctx, name, fn, arc); err != nil {
+					return nil, err
+				}
+			}
+			continue
+		}
 		if !upload {
 			continue
 		}
@@ -133,6 +147,7 @@ func (s *stage) buildAll(ctx context.Context, names []string, upload bool) (map[
 func (s *stage) nodes(archives map[string]build.Archive) ([]engine.Node, error) {
 	return desired.Build(s.Project, desired.Target{
 		Account: s.sess.Account, Region: s.Region, Bucket: state.BucketName(s.sess.Account, s.Region), Archives: archives,
+		ImageRegistry: s.registry.host,
 	})
 }
 

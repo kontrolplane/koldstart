@@ -33,13 +33,84 @@ type FunctionInputs struct {
 	LogGroup            string            `json:"logGroup"`
 	Code                Code              `json:"code"`
 	VPC                 *VPCConfig        `json:"vpc"`
+	// Layers and ImageConfig are left out of the inputs when a function has none, so a function
+	// deployed before they were known keeps its hash.
+	Layers      []string     `json:"layers,omitempty"`
+	ImageConfig *ImageConfig `json:"imageConfig,omitempty"`
 }
 
-// Code is where a function's zip is.
+// Code is where a function's code is: its zip in the state bucket, or its container image.
 type Code struct {
-	Bucket string `json:"bucket"`
-	Key    string `json:"key"`
-	SHA256 string `json:"sha256"`
+	Bucket   string `json:"bucket,omitempty"`
+	Key      string `json:"key,omitempty"`
+	ImageURI string `json:"imageUri,omitempty"`
+	SHA256   string `json:"sha256"`
+}
+
+// ImageConfig is what a container image runs, in place of its CMD, ENTRYPOINT and WORKDIR.
+type ImageConfig struct {
+	Command          []string `json:"command,omitempty"`
+	EntryPoint       []string `json:"entryPoint,omitempty"`
+	WorkingDirectory string   `json:"workingDirectory,omitempty"`
+}
+
+// isImage reports whether the function runs a container image.
+func (in FunctionInputs) isImage() bool { return in.Code.ImageURI != "" }
+
+// code is the function's code as lambda takes it on create.
+func (in FunctionInputs) code() *types.FunctionCode {
+	if in.isImage() {
+		return &types.FunctionCode{ImageUri: &in.Code.ImageURI}
+	}
+	return &types.FunctionCode{S3Bucket: &in.Code.Bucket, S3Key: &in.Code.Key}
+}
+
+// runtime, handler and packageType are what lambda takes for a zip, or for an image, which has
+// neither runtime nor handler.
+func (in FunctionInputs) runtime() types.Runtime {
+	if in.isImage() {
+		return ""
+	}
+	return types.Runtime(in.Runtime)
+}
+
+func (in FunctionInputs) handler() *string {
+	if in.isImage() {
+		return nil
+	}
+	return &in.Handler
+}
+
+func (in FunctionInputs) packageType() types.PackageType {
+	if in.isImage() {
+		return types.PackageTypeImage
+	}
+	return types.PackageTypeZip
+}
+
+// layers are the function's layers, an empty list to remove them all, or none for an image.
+func (in FunctionInputs) layers() []string {
+	if in.isImage() {
+		return nil
+	}
+	if in.Layers == nil {
+		return []string{}
+	}
+	return in.Layers
+}
+
+func (in FunctionInputs) imageConfig() *types.ImageConfig {
+	if !in.isImage() {
+		return nil
+	}
+	c := &types.ImageConfig{}
+	if in.ImageConfig != nil {
+		c.Command, c.EntryPoint = in.ImageConfig.Command, in.ImageConfig.EntryPoint
+		if in.ImageConfig.WorkingDirectory != "" {
+			c.WorkingDirectory = &in.ImageConfig.WorkingDirectory
+		}
+	}
+	return c
 }
 
 // VPCConfig puts a function in subnets.
@@ -96,15 +167,18 @@ func (p Function) Create(ctx context.Context, req engine.Request) (engine.Result
 		var err error
 		out, err = p.Client.CreateFunction(ctx, &lambda.CreateFunctionInput{
 			FunctionName:     &in.Name,
-			Runtime:          types.Runtime(in.Runtime),
-			Handler:          &in.Handler,
+			Runtime:          in.runtime(),
+			Handler:          in.handler(),
+			PackageType:      in.packageType(),
+			ImageConfig:      in.imageConfig(),
+			Layers:           in.Layers,
 			Role:             &in.Role,
 			MemorySize:       &in.Memory,
 			Timeout:          &in.Timeout,
 			Architectures:    architectures(in.Architecture),
 			EphemeralStorage: &types.EphemeralStorage{Size: &in.EphemeralStorage},
 			Environment:      &types.Environment{Variables: in.Environment},
-			Code:             &types.FunctionCode{S3Bucket: &in.Code.Bucket, S3Key: &in.Code.Key},
+			Code:             in.code(),
 			LoggingConfig:    &types.LoggingConfig{LogGroup: &in.LogGroup, LogFormat: types.LogFormatText},
 			VpcConfig:        vpcConfig(in.VPC),
 			Tags:             req.Tags,
@@ -235,9 +309,13 @@ func (p Function) Update(ctx context.Context, req engine.Request) (engine.Result
 // updateCode points the function at its new zip, and waits for lambda to take it.
 func (p Function) updateCode(ctx context.Context, in FunctionInputs) error {
 	err := p.retry(ctx, func() error {
-		_, err := p.Client.UpdateFunctionCode(ctx, &lambda.UpdateFunctionCodeInput{
-			FunctionName: &in.Name, S3Bucket: &in.Code.Bucket, S3Key: &in.Code.Key, Architectures: architectures(in.Architecture),
-		})
+		update := &lambda.UpdateFunctionCodeInput{FunctionName: &in.Name, Architectures: architectures(in.Architecture)}
+		if in.isImage() {
+			update.ImageUri = &in.Code.ImageURI
+		} else {
+			update.S3Bucket, update.S3Key = &in.Code.Bucket, &in.Code.Key
+		}
+		_, err := p.Client.UpdateFunctionCode(ctx, update)
 		return err
 	})
 	if err != nil {
@@ -251,8 +329,10 @@ func (p Function) updateConfiguration(ctx context.Context, in FunctionInputs) er
 	err := p.retry(ctx, func() error {
 		_, err := p.Client.UpdateFunctionConfiguration(ctx, &lambda.UpdateFunctionConfigurationInput{
 			FunctionName:     &in.Name,
-			Runtime:          types.Runtime(in.Runtime),
-			Handler:          &in.Handler,
+			Runtime:          in.runtime(),
+			Handler:          in.handler(),
+			ImageConfig:      in.imageConfig(),
+			Layers:           in.layers(),
 			Role:             &in.Role,
 			MemorySize:       &in.Memory,
 			Timeout:          &in.Timeout,
@@ -290,8 +370,9 @@ func (p Function) Delete(ctx context.Context, req engine.Request) error {
 	return nil
 }
 
-// Replaces implements engine.Provider: a function cannot be renamed.
+// Replaces implements engine.Provider: a function cannot be renamed, or turned from a zip into a
+// container image or back.
 func (Function) Replaces(prior, desired json.RawMessage) bool {
 	a, b := decodeBoth[FunctionInputs](prior, desired)
-	return a.Name != b.Name
+	return a.Name != b.Name || a.isImage() != b.isImage()
 }

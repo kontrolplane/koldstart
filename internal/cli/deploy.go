@@ -136,9 +136,14 @@ func (s *stage) planFunction(ctx context.Context, function string, upload bool) 
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	for other := range s.Functions {
+	for other, fn := range s.Functions {
 		if other != function {
-			archives[other] = build.Archive{Function: other, SHA256: deployedSHA(s.state, other)}
+			archives[other] = build.Archive{Function: other, SHA256: deployedSHA(s.state, other), Image: fn.IsImage()}
+			if fn.IsImage() {
+				if _, err := s.imageRegistry(ctx); err != nil {
+					return nil, nil, nil, err
+				}
+			}
 		}
 	}
 	nodes, err := s.nodes(archives)
