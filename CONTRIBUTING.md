@@ -4,15 +4,17 @@ by participating you agree to the [code of conduct](CODE_OF_CONDUCT.md).
 
 ## setup
 
-needs go 1.26+ and make. `make lint` installs the golangci-lint it pins into `bin/`.
+needs go 1.26+ and make. the tools `make` runs, golangci-lint and the rest, are pinned in the Makefile and built by `go run` the first time. the schema tests need [pkl](https://pkl-lang.org/); without it they skip. the tests that talk to aws need docker, for [floci](https://github.com/floci-io/floci).
 
 ```sh
 git clone https://github.com/kontrolplane/koldstart.git
 cd koldstart
 make test
-make build   # bin/koldstart and its bin/kdst link
-make check   # what CI runs
 ```
+
+- `make build` builds `bin/koldstart` and `bin/kdst`.
+- `make emulator test-emulator` runs the tests that talk to aws against floci; `make emulator-down` stops it.
+- `make check` runs what ci runs.
 
 [AGENTS.md](AGENTS.md) has the layout and the rules. [#1](https://github.com/kontrolplane/koldstart/issues/1) has the design and the milestones.
 

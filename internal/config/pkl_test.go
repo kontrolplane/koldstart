@@ -12,13 +12,18 @@ import (
 	"github.com/kontrolplane/koldstart/internal/pkl"
 )
 
-// evaluator returns pkl from the PATH, or skips: these tests run the schema in pkl/ through the
-// real binary, and ci installs it.
+// evaluator returns the pkl koldstart would use, to run the schema in pkl/ through the real
+// binary. Outside ci it does not download one: without pkl installed, the tests skip.
 func evaluator(t *testing.T) pkl.Evaluator {
 	t.Helper()
-	binary, err := exec.LookPath("pkl")
+	if os.Getenv("CI") == "" && os.Getenv(pkl.EnvBinary) == "" {
+		if _, err := exec.LookPath("pkl"); err != nil {
+			t.Skip("no pkl on the PATH")
+		}
+	}
+	binary, err := pkl.Find(context.Background())
 	if err != nil {
-		t.Skip("no pkl on the PATH")
+		t.Fatalf("finding pkl: %v", err)
 	}
 	return pkl.Evaluator{Binary: binary}
 }

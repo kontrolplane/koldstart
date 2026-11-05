@@ -1,101 +1,62 @@
-# `make` lists the targets. `make check` runs what CI runs.
+# The tasks of developing koldstart. `make check` runs what ci runs.
 
-SHELL = /usr/bin/env bash -o pipefail
-.SHELLFLAGS = -ec
-.DEFAULT_GOAL := help
+version := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+commit  := $(shell git rev-parse HEAD 2>/dev/null || echo none)
+date    := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+stamp   := github.com/kontrolplane/koldstart/internal/version
+ldflags := -s -w -X $(stamp).buildVersion=$(version) -X $(stamp).buildCommit=$(commit) -X $(stamp).buildDate=$(date)
 
-IMG ?= ghcr.io/kontrolplane/koldstart:main
-VERSION ?= $(shell { git describe --tags --always --dirty 2>/dev/null || echo dev; } | sed 's/^v//')
-COMMIT ?= $(shell git rev-parse --verify -q HEAD 2>/dev/null || echo none)
-DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
-VERSION_PKG = github.com/kontrolplane/koldstart/internal/version
-LDFLAGS = -s -w \
-	-X $(VERSION_PKG).buildVersion=$(VERSION) \
-	-X $(VERSION_PKG).buildCommit=$(COMMIT) \
-	-X $(VERSION_PKG).buildDate=$(DATE)
+# The tools, at the versions ci uses. go run builds each once and caches it.
+golangci-lint := go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
+govulncheck   := go run golang.org/x/vuln/cmd/govulncheck@v1.9.0
+actionlint    := go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+goreleaser    := go run github.com/goreleaser/goreleaser/v2@v2.20.0
 
-# Tools run at pinned versions with go run, which caches the binaries. golangci-lint is installed
-# instead, so it can lint for another GOOS than it runs on.
-GOLANGCI_LINT_VERSION = v2.14.0
-GOLANGCI_LINT = bin/golangci-lint-$(GOLANGCI_LINT_VERSION)
-GOVULNCHECK   = go run golang.org/x/vuln/cmd/govulncheck@v1.9.0
-ACTIONLINT    = go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
-GORELEASER    = go run github.com/goreleaser/goreleaser/v2@v2.20.0
+.PHONY: check test lint vuln build image snapshot schema emulator emulator-down test-emulator
 
-# pkl, at the version and with the checksums internal/pkl pins, for the schema tests and the
-# package of the schema.
-PKL_VERSION = 0.32.2
-PKL_ASSET = pkl-$(if $(filter Darwin,$(shell uname -s)),macos,linux)-$(if $(filter arm64 aarch64,$(shell uname -m)),aarch64,amd64)
-PKL_SHA256_pkl-macos-aarch64 = 466952f0b30c93dfa36393a5b3695159917ce4291e3c936a18a0a240cfbe98e9
-PKL_SHA256_pkl-macos-amd64   = 3c4c914a75210d3f3292740b4a8d447f9f832e81b60720bec57221e884717eee
-PKL_SHA256_pkl-linux-aarch64 = e60744e17d4ddc0257a35260998b5f98387b5d6a5e868317cccfbebe8d962ae3
-PKL_SHA256_pkl-linux-amd64   = 874c75484c79add77fb2346ea4ab2e8875eea35fb707894bf5457a2df5d03def
-PKL = bin/pkl-$(PKL_VERSION)
+# Everything ci checks.
+check: lint vuln test
+	$(goreleaser) check
 
-.PHONY: help fmt lint vuln test test-emulator emulator emulator.down check build image snapshot release.check pkl pkl.package
-
-##@ development
-
-help: ## list the targets
-	@awk 'BEGIN {FS = ":.*##"; printf "\nusage:\n  make \033[36m<target>\033[0m\n"} /^[a-zA-Z_0-9.-]+:.*?##/ { printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
-
-fmt: ## format the code
-	go fmt ./...
-
-lint: $(GOLANGCI_LINT) ## lint the code for linux and darwin, and the workflows, and check go.mod is tidy
-	go mod tidy -diff
-	GOOS=linux $(GOLANGCI_LINT) run
-	GOOS=darwin $(GOLANGCI_LINT) run
-	$(ACTIONLINT)
-
-$(GOLANGCI_LINT):
-	GOBIN=$(CURDIR)/bin go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
-	mv bin/golangci-lint $@
-
-pkl: $(PKL) ## download the pinned pkl into bin/ and check its sha256, for ci
-
-$(PKL):
-	@mkdir -p bin
-	curl -fsSL -o $@.tmp https://github.com/apple/pkl/releases/download/$(PKL_VERSION)/$(PKL_ASSET)
-	echo "$(PKL_SHA256_$(PKL_ASSET))  $@.tmp" | shasum -a 256 -c -
-	chmod +x $@.tmp && mv $@.tmp $@
-	ln -sf pkl-$(PKL_VERSION) bin/pkl
-
-pkl.package: ## package the schema in pkl/ into .pkl-out/, as a release attaches it
-	KOLDSTART_VERSION=$(VERSION) pkl project package --output-path .pkl-out pkl/
-
-vuln: ## check for known vulnerabilities
-	$(GOVULNCHECK) ./...
-
-test: ## run the unit tests
+# The unit tests.
+test:
 	go test -race -count=1 ./...
 
-# The emulator tests run against Floci. Without KOLDSTART_TEST_ENDPOINT they skip.
-EMULATOR ?= http://127.0.0.1:4566
+# The code, the workflows, and whether go.mod is tidy.
+lint:
+	go mod tidy -diff
+	$(golangci-lint) run
+	$(actionlint)
 
-emulator: ## start Floci on 127.0.0.1:4566 and wait for it
-	docker compose up -d
-	@for _ in $$(seq 1 60); do curl -fs -o /dev/null $(EMULATOR)/_localstack/health && exit 0; sleep 1; done; echo "floci did not become ready"; exit 1
+# Known vulnerabilities in what koldstart calls.
+vuln:
+	$(govulncheck) ./...
 
-emulator.down: ## stop Floci and drop what it held
-	docker compose down
-
-test-emulator: ## run the tests that talk to aws against Floci; make emulator first
-	KOLDSTART_TEST_ENDPOINT=$(EMULATOR) go test -race -count=1 -run 'Emulator' ./...
-
-check: lint vuln test release.check ## run what CI runs
-
-##@ build
-
-build: ## build bin/koldstart and its bin/kdst link
-	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/koldstart ./cmd/koldstart
+# bin/koldstart, and bin/kdst beside it.
+build:
+	CGO_ENABLED=0 go build -trimpath -ldflags "$(ldflags)" -o bin/koldstart ./cmd/koldstart
 	ln -sf koldstart bin/kdst
 
-image: ## build the image IMG
-	docker build --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg DATE=$(DATE) -t $(IMG) .
+# The container image, as koldstart:dev.
+image:
+	docker build --build-arg VERSION=$(version) --build-arg COMMIT=$(commit) --build-arg DATE=$(date) -t koldstart:dev .
 
-snapshot: ## build the release archives into dist/ without publishing them
-	$(GORELEASER) release --snapshot --clean
+# The release archives, the cask and the schema package in dist/, without publishing them.
+snapshot:
+	$(goreleaser) release --snapshot --clean
 
-release.check: ## check .goreleaser.yaml
-	$(GORELEASER) check
+# The pkl schema package in .pkl-out/, as a release attaches it, as version 0.0.0-dev.
+schema:
+	go run ./hack/schema -version 0.0.0-dev -out .pkl-out
+
+# Floci, the aws emulator, on 127.0.0.1:4566.
+emulator:
+	docker compose up --detach --wait
+
+# Stops floci, and drops what it held.
+emulator-down:
+	docker compose down
+
+# The tests that talk to aws, against floci. Start it with make emulator first.
+test-emulator:
+	KOLDSTART_TEST_ENDPOINT=http://127.0.0.1:4566 go test -race -count=1 -run Emulator ./...

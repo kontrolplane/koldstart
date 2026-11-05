@@ -26,9 +26,6 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Set up pkl
-        run: make pkl && echo "$PWD/bin" >> "$GITHUB_PATH"
-
       - name: Test
         run: make test
 

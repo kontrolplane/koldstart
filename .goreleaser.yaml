@@ -5,7 +5,7 @@ project_name: koldstart
 before:
   hooks:
     - rm -rf .pkl-out
-    - sh -c 'KOLDSTART_VERSION={{ .Version }} pkl project package --output-path .pkl-out pkl/'
+    - go run ./hack/schema -version {{ .Version }} -out .pkl-out
 
 builds:
   - main: ./cmd/koldstart
