@@ -172,6 +172,16 @@ resources {
 }
 ```
 
+Before anything is planned, the properties are checked against the type's schema in the cloudformation registry, as cloud control would check them on create, so a mistake in any resource stops the plan with all of them listed:
+
+```text
+resources[orders] does not fit the schema of AWS::DynamoDB::Table:
+  properties.BillingMod: no such property: did you mean BillingMode?
+  properties.KeySchema: required, and not set
+```
+
+It reports properties the type does not have, values of the wrong type, outside an enum, a pattern, a length or a range, required properties that are not set, and properties aws sets itself, such as `Arn`, which are read with `kdst.ref()` instead. A `kdst.ref()`, a secret or an output is known only while applying, so it is not checked. Where the registry cannot be read, as on an emulator, the check is left to cloud control.
+
 A change to a property is sent as a patch of what changed. A change to a property the type cannot change in place, such as a table's key schema, replaces the resource.
 
 ### keeping data

@@ -20,7 +20,7 @@ koldstart.pkl ──► pkl eval ──► build + zip ──► desired graph
 
 ## planning
 
-The configuration becomes a graph. Every function, event and resource is a node, together with the role, log group and permissions that come with it. Every `kdst.ref()` and every implicit dependency, such as a route needing its api, is an edge. Each node's inputs are resolved as far as they can be, secrets and outputs of other stages read, and the result is compared with the node's entry in the state:
+The resource types are looked up in the cloudformation registry first: a type cloud control cannot create, or properties its schema does not allow, stop the plan before anything else is read. The configuration then becomes a graph. Every function, event and resource is a node, together with the role, log group and permissions that come with it. Every `kdst.ref()` and every implicit dependency, such as a route needing its api, is an edge. Each node's inputs are resolved as far as they can be, secrets and outputs of other stages read, and the result is compared with the node's entry in the state:
 
 - `create`: in the configuration, not in the state
 - `update`: in both, and the inputs differ in a way aws can change in place
