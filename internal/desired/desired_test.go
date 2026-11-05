@@ -406,3 +406,73 @@ func TestImageAndLayers(t *testing.T) {
 		t.Error("a function without layers has a layers input")
 	}
 }
+
+// TestMoreEvents checks the nodes of an eventbridge rule, websocket routes and a load balancer
+// rule: each with its permission, the load balancer's registration after it, the websocket's
+// callback url and the right to post to connections, and a route's own request limit.
+func TestMoreEvents(t *testing.T) {
+	p := project(t)
+	api := p.Functions["api"]
+	api.Events = append(api.Events,
+		config.Event{Type: config.EventRule, Pattern: json.RawMessage(`{"source":["shop"]}`), Bus: config.Value{Literal: "shop"}},
+		config.Event{Type: config.EventWebSocket, Route: "$connect"},
+		config.Event{Type: config.EventWebSocket, Route: "sendMessage"},
+		config.Event{Type: config.EventALB, Listener: config.Value{Literal: "arn:aws:elasticloadbalancing:eu-west-1:1:listener/app/x/y/z"}, Priority: 10, Paths: []string{"/orders/*"}},
+		config.Event{Type: config.EventHTTPRoute, Method: "GET", Path: "/slow", Throttling: &config.Throttling{Rate: 5, Burst: 10}},
+	)
+	p.Functions["api"] = api
+	nodes, err := Build(p, target())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := byID(nodes)
+	for _, id := range []string{"rule/api/0", "permission/api/rule-0", WebSocketID, "wsintegration/api", "wsroute/$connect", "wsroute/sendMessage",
+		"permission/api/websocket", "targetgroup/api/0", "permission/api/alb-0", "lbtarget/api/0", "lbrule/api/0"} {
+		if _, ok := got[id]; !ok {
+			t.Errorf("no node %s", id)
+		}
+	}
+	if rule := got["rule/api/0"].Inputs; rule["pattern"] != `{"source":["shop"]}` || rule["bus"] != "shop" {
+		t.Errorf("rule inputs = %v", rule)
+	}
+	if after := got["lbtarget/api/0"].After; !slices.Contains(after, "permission/api/alb-0") {
+		t.Errorf("the function is registered before the load balancer may invoke it: %v", after)
+	}
+	if name := got["targetgroup/api/0"].Inputs["name"].(string); len(name) > 32 {
+		t.Errorf("target group name %q is longer than 32", name)
+	}
+	if ws := got[WebSocketID].Inputs; ws["protocol"] != "WEBSOCKET" || ws["stage"] != "dev" {
+		t.Errorf("websocket api inputs = %v", ws)
+	}
+	if _, ok := got[FunctionID("api")].Inputs["environment"].(map[string]any)["WEBSOCKET_CALLBACK_URL"]; !ok {
+		t.Error("a websocket function has no WEBSOCKET_CALLBACK_URL")
+	}
+	if _, ok := got[FunctionID("worker")].Inputs["environment"].(map[string]any)["WEBSOCKET_CALLBACK_URL"]; ok {
+		t.Error("a function without websocket routes has WEBSOCKET_CALLBACK_URL")
+	}
+	policy, _ := json.Marshal(got[RoleID("api")].Inputs["policy"])
+	if !strings.Contains(string(policy), "execute-api:ManageConnections") {
+		t.Error("a websocket function may not post to its connections")
+	}
+	if th := got["route/GET /slow"].Inputs["throttling"]; !reflect.DeepEqual(th, map[string]any{"rate": 5.0, "burst": 10}) {
+		t.Errorf("route throttling = %v", th)
+	}
+	if _, ok := got["route/GET /orders/{id}"].Inputs["throttling"]; ok {
+		t.Error("a route without throttling has it as an input, which changes its hash")
+	}
+	for _, n := range nodes {
+		if kind, _ := Group(n.ID, n.Deps()); kind == "" {
+			t.Errorf("%s belongs to nothing", n.ID)
+		}
+	}
+	resources := map[string]*state.Resource{}
+	for _, n := range nodes {
+		resources[n.ID] = &state.Resource{Dependencies: n.Deps()}
+	}
+	triggers := Triggers(resources, "api")
+	for _, want := range []string{"rule/api/0", "wsroute/$connect", "lbrule/api/0"} {
+		if !slices.Contains(triggers, want) {
+			t.Errorf("Triggers has no %s: %v", want, triggers)
+		}
+	}
+}

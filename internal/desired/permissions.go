@@ -151,6 +151,7 @@ func (b *builder) permissions(name string, fn config.Function) (map[string]any, 
 	}
 	statements = append(statements, b.sourceStatements(fn)...)
 	statements = append(statements, b.runtimeSecrets(fn)...)
+	statements = append(statements, b.webSocketStatements(fn)...)
 	linked, err := b.linkStatements(fn)
 	if err != nil {
 		return nil, nil, err

@@ -24,6 +24,8 @@ const (
 	inputName     = "name"
 	inputFunction = "function"
 	inputAPI      = "api"
+	inputCORS     = "cors"
+	authNone      = "NONE"
 )
 
 // Target is where the nodes are deployed.
@@ -86,6 +88,7 @@ func Build(p *config.Project, t Target) ([]engine.Node, error) {
 		nodes = append(nodes, fnNodes...)
 	}
 	nodes = append(nodes, b.httpAPI()...)
+	nodes = append(nodes, b.webSocketAPI()...)
 	for _, name := range slices.Sorted(maps.Keys(p.Functions)) {
 		nodes = append(nodes, b.events(name, p.Functions[name])...)
 	}
@@ -233,6 +236,7 @@ func (b *builder) environment(fn config.Function) (map[string]any, error) {
 	if fn.IsNode() && fn.Bundle.Sourcemap {
 		env["NODE_OPTIONS"] = "--enable-source-maps"
 	}
+	b.webSocketEnvironment(fn, env)
 	return env, nil
 }
 
@@ -307,11 +311,11 @@ func imageConfig(img *config.Image) map[string]any {
 func (b *builder) urlNode(name string, url *config.FunctionURL) engine.Node {
 	auth := "AWS_IAM"
 	if url.Auth == "none" {
-		auth = "NONE"
+		auth = authNone
 	}
 	return engine.Node{
 		ID: URLID(name), Type: awsp.TypeURL, Name: FunctionName(b.project, name),
-		Inputs: map[string]any{inputFunction: engine.Ref(FunctionID(name), "FunctionName"), "auth": auth, "cors": corsInputs(url.CORS)},
+		Inputs: map[string]any{inputFunction: engine.Ref(FunctionID(name), "FunctionName"), "auth": auth, inputCORS: corsInputs(url.CORS)},
 	}
 }
 

@@ -94,6 +94,9 @@ func (s *stage) urlOutputs(st *state.State) map[string]string {
 	if r := st.Resources[desired.HTTPAPIID]; r != nil {
 		out["httpApiUrl"] = r.Attributes["ApiEndpoint"]
 	}
+	if r := st.Resources[desired.WebSocketID]; r != nil {
+		out["webSocketUrl"] = r.Attributes["ApiEndpoint"] + "/" + r.Attributes["Stage"]
+	}
 	if r := st.Resources[desired.DomainID]; r != nil {
 		out["httpApiUrl"] = "https://" + r.PhysicalID
 		out["httpDomainTarget"] = r.Attributes["RegionalDomainName"]

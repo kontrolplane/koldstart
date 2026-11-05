@@ -100,10 +100,10 @@ func (b *builder) httpAPI() []engine.Node {
 	if !b.hasRoutes() {
 		return nil
 	}
-	inputs := map[string]any{inputName: Name(128, b.project.App, b.project.Stage), "cors": nil, "throttling": nil}
+	inputs := map[string]any{inputName: Name(128, b.project.App, b.project.Stage), inputCORS: nil, "throttling": nil}
 	h := b.project.HTTP
 	if h != nil {
-		inputs["cors"] = corsInputs(h.CORS)
+		inputs[inputCORS] = corsInputs(h.CORS)
 		if h.Throttling != nil {
 			inputs["throttling"] = map[string]any{"rate": h.Throttling.Rate, "burst": h.Throttling.Burst}
 		}
@@ -141,7 +141,7 @@ func (b *builder) httpAPI() []engine.Node {
 // to notifications, which gathers the functions of each bucket.
 func (b *builder) events(name string, fn config.Function) []engine.Node {
 	var nodes []engine.Node
-	schedules := 0
+	schedules, rules, balancers := 0, 0, 0
 	for _, e := range fn.Events {
 		switch e.Type {
 		case config.EventHTTPRoute:
@@ -149,6 +149,12 @@ func (b *builder) events(name string, fn config.Function) []engine.Node {
 		case config.EventSchedule:
 			nodes = append(nodes, b.schedule(name, e, schedules))
 			schedules++
+		case config.EventRule:
+			nodes = append(nodes, b.rule(name, e, rules)...)
+			rules++
+		case config.EventALB:
+			nodes = append(nodes, b.loadBalancer(name, e, balancers)...)
+			balancers++
 		case config.EventQueue, config.EventStream:
 			nodes = append(nodes, b.mapping(name, e))
 		case config.EventTopic:
@@ -161,6 +167,7 @@ func (b *builder) events(name string, fn config.Function) []engine.Node {
 	if hasEvent(fn, config.EventSchedule) {
 		nodes = append(nodes, b.schedulerRole(name))
 	}
+	nodes = append(nodes, b.webSocketRoutes(name, fn)...)
 	return nodes
 }
 
@@ -233,12 +240,15 @@ func (b *builder) route(fn string, e config.Event) engine.Node {
 		inputAPI:            engine.Ref(HTTPAPIID, "ApiId"),
 		"routeKey":          strings.ToUpper(e.Method) + " " + e.Path,
 		"target":            engine.Join("integrations/", engine.Ref(integrationID(fn), "IntegrationId")),
-		"authorizationType": "NONE",
+		"authorizationType": authNone,
 		"authorizer":        "",
 		"scopes":            e.Scopes,
 	}
 	if e.Path == "$default" {
 		in["routeKey"] = "$default"
+	}
+	if e.Throttling != nil {
+		in["throttling"] = map[string]any{"rate": e.Throttling.Rate, "burst": e.Throttling.Burst}
 	}
 	if e.Authorizer != "" {
 		in["authorizer"] = engine.Ref(authorizerID(e.Authorizer), "AuthorizerId")
@@ -317,11 +327,13 @@ func Triggers(resources map[string]*state.Resource, fn string) []string {
 	for id, r := range resources {
 		kind, rest, _ := strings.Cut(id, "/")
 		switch {
-		case kind == kindSchedule || kind == kindMapping || kind == kindSubscription:
+		case kind == kindSchedule || kind == kindMapping || kind == kindSubscription || kind == kindRule || kind == kindListenerRule:
 			if strings.HasPrefix(rest, fn+"/") {
 				out = append(out, id)
 			}
 		case kind == "route" && slices.Contains(r.Dependencies, integrationID(fn)):
+			out = append(out, id)
+		case kind == kindWSRoute && slices.Contains(r.Dependencies, wsIntegrationID(fn)):
 			out = append(out, id)
 		case kind == "notification" && slices.ContainsFunc(r.Dependencies, func(d string) bool { return strings.HasPrefix(d, permissionID(fn, "")) }):
 			out = append(out, id)
@@ -347,18 +359,22 @@ func Group(id string, deps []string) (kind, name string) {
 	first, _, _ := strings.Cut(rest, "/")
 	switch kind {
 	case kindOf(FunctionID("")), kindOf(RoleID("")), kindOf(LogGroupID("")), kindOf(URLID("")), kindOf(integrationID("")),
-		kindOf(schedulerRoleID("")), kindOf(permissionID("", "")), kindSchedule, kindMapping, kindSubscription:
+		kindOf(schedulerRoleID("")), kindOf(permissionID("", "")), kindSchedule, kindMapping, kindSubscription,
+		kindRule, kindWSIntegration, kindTargetGroup, kindTargets, kindListenerRule:
 		return GroupFunction, first
 	case kindOf(ResourceID("")), kindOf(notificationID("")):
 		return GroupResource, rest
-	case kindOf(routeID("", "")):
+	case kindOf(routeID("", "")), kindWSRoute:
 		for _, d := range deps {
 			if fn, ok := strings.CutPrefix(d, "integration/"); ok {
 				return GroupFunction, fn
 			}
+			if fn, ok := strings.CutPrefix(d, kindWSIntegration+"/"); ok {
+				return GroupFunction, fn
+			}
 		}
 		return GroupHTTP, ""
-	case HTTPAPIID, DomainID, kindOf(authorizerID("")):
+	case HTTPAPIID, DomainID, WebSocketID, kindOf(authorizerID("")):
 		return GroupHTTP, ""
 	}
 	return "", ""
