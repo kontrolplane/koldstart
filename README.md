@@ -9,7 +9,7 @@
 ---
 
 > [!NOTE]
-> koldstart is being built, and has no release yet. Deploying, events, resources, secrets, running functions locally and logs work; `migrate`, `init`, the terminal interface and the release come next. The plan is in [#1](https://github.com/kontrolplane/koldstart/issues/1).
+> koldstart is being built, and has no release yet. Deploying, events, resources, secrets, running functions locally, logs and `migrate` work; the terminal interface, `init` and the release come next. The plan is in [#1](https://github.com/kontrolplane/koldstart/issues/1).
 
 Here is an http api in typescript and a queue worker in go, sharing a table:
 
@@ -83,6 +83,8 @@ Functions are written in typescript, javascript or go. Typescript is bundled wit
 Functions are triggered by api gateway http routes, function urls, schedules, sqs queues, sns topics, kinesis and dynamodb streams, and s3 buckets. Anything else AWS offers goes in `resources`, with the same type names and properties as CloudFormation. Tables, buckets and other resources that hold data are kept when a stage is removed, and a resource made outside koldstart is taken over with `kdst import`.
 
 `kdst invoke --local` and `kdst offline` run functions on your machine against an emulator of the lambda runtime api, with the variables the stage deployed and your credentials, so a handler runs locally the way it runs in AWS.
+
+Coming from the serverless framework, `kdst migrate` converts a `serverless.yml` into a `koldstart.pkl`, and lists what it left to you.
 
 ## installation
 
@@ -241,6 +243,7 @@ Everything koldstart creates is tagged with its app, stage and node, together wi
 | `invoke -f <fn>`                 | invoke a function with `--data` or `--path`, `--local` to run it here            |
 | `offline`                        | serve the http routes on this machine                                           |
 | `logs -f <fn>`                   | print a function's logs, `--tail` to follow them                                |
+| `migrate [serverless.yml]`       | convert a serverless framework project                                          |
 | `unlock`                         | release a stage's lock left by a deploy that did not finish                     |
 | `version`                        | print the version                                                               |
 
@@ -263,7 +266,7 @@ Credentials come from the standard aws chain: environment variables, the shared 
 - [configuration](./docs/configuration.md): the pkl schema, functions, events, resources, references, stages and secrets
 - [how it works](./docs/how-it-works.md): planning, applying, state, locking and what happens when a deploy fails
 - [terminal interface](./docs/ui.md): the design of `kdst ui`, which comes next
-- [migrating from the serverless framework](./docs/migrating.md): the design of `kdst migrate`, which comes next
+- [migrating from the serverless framework](./docs/migrating.md): what `kdst migrate` converts and what it leaves to you
 
 ## development
 
