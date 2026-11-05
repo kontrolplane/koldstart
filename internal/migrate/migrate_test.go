@@ -9,7 +9,13 @@ import (
 	"strings"
 	"testing"
 
+	"go.yaml.in/yaml/v3"
+
+	"github.com/kontrolplane/koldstart/internal/build"
+	"github.com/kontrolplane/koldstart/internal/config"
+	"github.com/kontrolplane/koldstart/internal/desired"
 	"github.com/kontrolplane/koldstart/internal/pkl"
+	schema "github.com/kontrolplane/koldstart/pkl"
 )
 
 var update = flag.Bool("update", false, "write the expected files of the golden tests")
@@ -53,7 +59,7 @@ func compare(t *testing.T, path, got string) {
 // todos are the ones beside it.
 func TestGolden(t *testing.T) {
 	golden(t, func(t *testing.T, dir string, src []byte) {
-		res, err := Convert(src, "0.1.0")
+		res, err := Convert(src, "0.1.0", dir)
 		if err != nil {
 			t.Fatalf("Convert: %v", err)
 		}
@@ -82,21 +88,24 @@ func evaluator(t *testing.T) pkl.Evaluator {
 	return pkl.Evaluator{Binary: binary}
 }
 
-// TestGoldenEvaluates checks every converted file evaluates against the schema, and passes the
-// checks a deploy makes, so what migrate writes is valid even where it is not complete.
+// TestGoldenEvaluates checks every converted file evaluates against the schema, for its stage and
+// for prod, and passes the checks a deploy makes, so what migrate writes is valid even where it is
+// not complete.
 func TestGoldenEvaluates(t *testing.T) {
 	ev := evaluator(t)
 	golden(t, func(t *testing.T, dir string, src []byte) {
-		res, err := Convert(src, "0.1.0")
+		res, err := Convert(src, "0.1.0", dir)
 		if err != nil {
 			t.Fatal(err)
 		}
-		problems, err := Check(context.Background(), ev, res.Pkl, "0.1.0", res.Stage)
-		if err != nil {
-			t.Fatalf("Check: %v", err)
-		}
-		for _, p := range problems {
-			t.Errorf("a deploy would refuse it: %s", p)
+		for _, stage := range []string{res.Stage, "prod"} {
+			problems, err := Check(context.Background(), ev, res.Pkl, "0.1.0", stage)
+			if err != nil {
+				t.Fatalf("Check for %q: %v", stage, err)
+			}
+			for _, p := range problems {
+				t.Errorf("a deploy of %q would refuse it: %s", stage, p)
+			}
 		}
 	})
 }
@@ -104,7 +113,7 @@ func TestGoldenEvaluates(t *testing.T) {
 // TestConvertRefuses checks a serverless.yml for another cloud, or that is not yaml, is refused.
 func TestConvertRefuses(t *testing.T) {
 	for _, src := range []string{"provider:\n  name: azure\n", "- just\n- a list\n", "{nope"} {
-		if _, err := Convert([]byte(src), "0.1.0"); err == nil {
+		if _, err := Convert([]byte(src), "0.1.0", "."); err == nil {
 			t.Errorf("Convert(%q): want an error", src)
 		}
 	}
@@ -146,5 +155,93 @@ func TestLogicalID(t *testing.T) {
 		if got := logicalID(in); got != want {
 			t.Errorf("logicalID(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// TestIntrinsicsByStage loads the converted intrinsics for dev and prod, and checks each stage
+// gets what its conditions and params say, with the joins planned for the account.
+func TestIntrinsicsByStage(t *testing.T) {
+	ev := evaluator(t)
+	src, err := os.ReadFile(filepath.Join("testdata", "intrinsics", "koldstart.pkl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, cleanup, err := schema.Local(src, "0.1.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	tests := []struct {
+		stage    string
+		domain   string
+		alarms   bool
+		recovery bool
+	}{
+		{stage: "dev", domain: "dev.shop.example.com"},
+		{stage: "staging", domain: "dev.shop.example.com", alarms: true},
+		{stage: "prod", domain: "shop.example.com", alarms: true, recovery: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.stage, func(t *testing.T) {
+			p, err := config.Load(context.Background(), ev, path, tt.stage)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := p.Functions["api"].Environment["DOMAIN"].Literal; got != tt.domain {
+				t.Errorf("DOMAIN = %q, want %q", got, tt.domain)
+			}
+			if _, ok := p.Resources["Alarms"]; ok != tt.alarms {
+				t.Errorf("the Alarms topic: %v, want %v", ok, tt.alarms)
+			}
+			if _, ok := p.Resources["OrdersTable"].Properties["PointInTimeRecoverySpecification"]; ok != tt.recovery {
+				t.Errorf("point in time recovery: %v, want %v", ok, tt.recovery)
+			}
+			nodes, err := desired.Build(p, desired.Target{Account: "123456789012", Region: "eu-west-1", Bucket: "b",
+				Archives: map[string]build.Archive{"api": {Function: "api", SHA256: "x"}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, n := range nodes {
+				if n.ID != desired.ResourceID("Uploads") {
+					continue
+				}
+				name := n.Inputs["properties"].(map[string]any)["BucketName"]
+				if want := "shop-" + tt.stage + "-uploads-123456789012"; name != want {
+					t.Errorf("BucketName = %v, want %s", name, want)
+				}
+			}
+		})
+	}
+}
+
+// TestSub checks a Fn::Sub becomes a pkl string when every part is one, and a kdst.join() when a
+// ref or the account is among them.
+func TestSub(t *testing.T) {
+	tests := []struct {
+		name string
+		sub  string
+		want string
+	}{
+		{name: "pseudo region", sub: `!Sub "arn:aws:s3:::${AWS::Region}-x"`, want: `"arn:aws:s3:::\(module.region)-x"`},
+		{name: "a literal ${", sub: `!Sub "${!Literal}-${sls:stage}"`, want: `"${Literal}-\(kdst.stage)"`},
+		{name: "an attribute", sub: `!Sub "${Orders.Arn}/index/*"`, want: `kdst.join(List(kdst.ref("Orders", "Arn"), "/index/*"))`},
+		{name: "its own variables", sub: "!Sub [\"${A}-${B}\", {A: x, B: !Ref Orders}]", want: `kdst.join(List("x-", kdst.ref("Orders", "Identifier")))`},
+		{name: "the account", sub: `!Sub "${AWS::AccountId}"`, want: `kdst.join(List(kdst.accountId))`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var doc yaml.Node
+			src := "service: x\nprovider: {region: eu-west-1}\nresources: {Resources: {Orders: {Type: AWS::DynamoDB::Table}}}\nv: " + tt.sub + "\n"
+			if err := yaml.Unmarshal([]byte(src), &doc); err != nil {
+				t.Fatal(err)
+			}
+			c := &converter{doc: doc.Content[0], region: "eu-west-1", resourceNames: map[string]string{}}
+			c.nameFunctions()
+			c.nameResources()
+			got := c.nodeValue(get(doc.Content[0], "v"))
+			if !got.ok || got.expr != tt.want {
+				t.Errorf("got %q (%s), want %q", got.expr, got.todo, tt.want)
+			}
+		})
 	}
 }

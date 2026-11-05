@@ -2,12 +2,10 @@ functions.old_api: named old-api in koldstart.pkl, which also renames it and its
 functions.scraper: the runtime "python3.12" is not one koldstart builds yet: the function is left out
 functions.image: a container image function, which koldstart does not deploy yet: it is left out
 functions.worker.handler: a go function's handler is the package to build, such as ./cmd/worker
-provider.environment.FROM_FILE: ${file(./config.json):key} has no equivalent: an import, a read() or a value of your own
+provider.environment.FROM_FILE: ${file(./config.json):key}: there is no ./config.json next to serverless.yml
 functions.worker.layers: layers has no equivalent in koldstart yet
 functions.old_api: nodejs18.x is deprecated on lambda: it runs on nodejs22.x now
-functions.old_api.environment.TOPIC: Fn::Sub has no equivalent: write it as a pkl expression
 resources.Resources.Files.DeletionPolicy: Snapshot has no equivalent: the resource is retained
 resources.Resources.Files.DependsOn: DependsOn has no equivalent: koldstart orders resources by their refs
 resources.Resources.Seeder: Custom::Seed is not an aws type cloud control creates
 resources.Outputs.FilesArn.Export: exports have no equivalent: other apps read outputs with kdst.stageOutput()
-resources.Outputs.Joined: Fn::Join has no equivalent: write it as a pkl expression

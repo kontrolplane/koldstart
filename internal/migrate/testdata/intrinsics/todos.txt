@@ -1,0 +1,2 @@
+functions.api: nodejs20.x is deprecated on lambda: it runs on nodejs22.x now
+functions.api.environment.ZONE: Fn::Select of a list that is only known while deploying, such as Fn::GetAZs

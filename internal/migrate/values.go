@@ -13,6 +13,7 @@ import (
 const (
 	intrinsicRef       = "Ref"
 	intrinsicCondition = "Condition"
+	intrinsicIf        = "Fn::If"
 )
 
 // isTrue and isFalse report whether a yaml value is the boolean true or false.
@@ -35,11 +36,18 @@ type value struct {
 	expr string
 	ok   bool
 	todo string
-	// interpolable is a string value that can sit inside a "...\(x)..." string.
+	// interpolable is a string value that can sit inside a "...\(x)..." string, and joinable one
+	// that can be a part of a kdst.join(), as a ref can.
 	interpolable bool
+	joinable     bool
+	// noValue is AWS::NoValue: the property is left out.
+	noValue bool
 }
 
-func literal(expr string) value     { return value{expr: expr, ok: true, interpolable: true} }
+func literal(expr string) value {
+	return value{expr: expr, ok: true, interpolable: true, joinable: true}
+}
+func refValue(expr string) value    { return value{expr: expr, ok: true, joinable: true} }
 func notConverted(why string) value { return value{todo: why} }
 
 // scalar converts a scalar yaml value.
@@ -134,6 +142,12 @@ func (c *converter) variable(inner string) value {
 		return literal("kdst.stage")
 	case primary == "self:service":
 		return literal("module.app")
+	case primary == "aws:accountId":
+		return refValue("kdst.accountId")
+	case source == "param":
+		return c.param(path, inner)
+	case source == "file" || strings.HasPrefix(primary, "file("):
+		return c.file(primary, inner)
 	case primary == "aws:region" || primary == "opt:region" || primary == "self:provider.region":
 		if c.region == "" {
 			return notConverted("${" + inner + "}: no provider.region to refer to")
@@ -207,9 +221,278 @@ func (c *converter) intrinsic(n *yaml.Node) (value, bool) {
 			target, attribute, _ = strings.Cut(arg.Value, ".")
 		}
 		return c.getAtt(target, attribute), true
+	case "Fn::Sub":
+		return c.sub(arg), true
+	case "Fn::Join":
+		return c.join(arg), true
+	case intrinsicIf:
+		return c.ifValue(arg), true
+	case "Fn::FindInMap":
+		return c.findInMap(arg), true
+	case "Fn::Base64":
+		v := c.nodeValue(arg)
+		if !v.ok || !v.interpolable {
+			return notConverted("Fn::Base64 of something not known as a string while planning"), true
+		}
+		return literal("(" + v.expr + ").base64"), true
+	case "Fn::Select":
+		return c.selectValue(arg), true
 	default:
 		return notConverted(name + " has no equivalent: write it as a pkl expression"), true
 	}
+}
+
+// nodeValue converts a node that is one value: a scalar, or an intrinsic function.
+func (c *converter) nodeValue(n *yaml.Node) value {
+	if n == nil {
+		return notConverted("nothing to convert")
+	}
+	if v, ok := c.intrinsic(n); ok {
+		return v
+	}
+	if n.Kind == yaml.AliasNode {
+		return c.nodeValue(n.Alias)
+	}
+	if n.Kind != yaml.ScalarNode {
+		return notConverted("an object or a list where a single value goes")
+	}
+	return c.scalar(n)
+}
+
+// joinValues joins values into one string: a pkl string when every part is one, as
+// "arn:aws:s3:::\(kdst.stage)-uploads", else a kdst.join() of them, for refs and the account's
+// values.
+func joinValues(parts []value) value {
+	interpolable := true
+	for _, p := range parts {
+		switch {
+		case !p.ok:
+			return p
+		case p.noValue:
+			return notConverted("AWS::NoValue inside a string")
+		case !p.joinable:
+			return notConverted("a secret or an output inside a string, which cannot be joined")
+		case !p.interpolable:
+			interpolable = false
+		}
+	}
+	if interpolable {
+		return interpolate(parts)
+	}
+	var exprs []string
+	var run []value
+	flush := func() {
+		if len(run) == 0 {
+			return
+		}
+		if s := interpolate(run); s.expr != `""` {
+			exprs = append(exprs, s.expr)
+		}
+		run = nil
+	}
+	for _, p := range parts {
+		if p.interpolable {
+			run = append(run, p)
+			continue
+		}
+		flush()
+		exprs = append(exprs, p.expr)
+	}
+	flush()
+	return refValue("kdst.join(List(" + strings.Join(exprs, ", ") + "))")
+}
+
+// interpolate joins string values into one pkl string, each that is not a literal interpolated.
+func interpolate(parts []value) value {
+	var b strings.Builder
+	for _, p := range parts {
+		if inner, ok := stringLiteral(p.expr); ok {
+			b.WriteString(inner)
+			continue
+		}
+		expr := p.expr
+		if strings.HasPrefix(expr, "(if (") && strings.HasSuffix(expr, ")") {
+			expr = expr[1 : len(expr)-1]
+		}
+		b.WriteString(`\(` + expr + `)`)
+	}
+	return literal(`"` + b.String() + `"`)
+}
+
+// stringLiteral returns the inside of a pkl string literal, with its escapes and interpolations,
+// or false when expr is not one.
+func stringLiteral(expr string) (string, bool) {
+	if len(expr) < 2 || expr[0] != '"' || expr[len(expr)-1] != '"' || strings.HasPrefix(expr, `"""`) {
+		return "", false
+	}
+	return expr[1 : len(expr)-1], true
+}
+
+// text is a literal string as a value.
+func textValue(s string) value {
+	return literal(quote(s))
+}
+
+// sub converts a Fn::Sub: its ${Name}, ${Name.Attribute}, ${AWS::...} and serverless variables,
+// with the variables of its second argument when it has one.
+func (c *converter) sub(arg *yaml.Node) value {
+	template, vars := arg, (*yaml.Node)(nil)
+	if arg.Kind == yaml.SequenceNode && len(arg.Content) == 2 {
+		template, vars = arg.Content[0], arg.Content[1]
+	}
+	if template.Kind != yaml.ScalarNode {
+		return notConverted("Fn::Sub of something that is not a string")
+	}
+	s := template.Value
+	var parts []value
+	for {
+		i := strings.Index(s, "${")
+		if i < 0 {
+			if s != "" {
+				parts = append(parts, textValue(s))
+			}
+			break
+		}
+		if i > 0 {
+			parts = append(parts, textValue(s[:i]))
+		}
+		if strings.HasPrefix(s[i:], "${!") {
+			end := strings.Index(s[i:], "}")
+			if end < 0 {
+				return notConverted("a ${ without its } in Fn::Sub")
+			}
+			parts = append(parts, textValue("${"+s[i+3:i+end]+"}"))
+			s = s[i+end+1:]
+			continue
+		}
+		inner, rest, ok := innerVariable(s[i:])
+		if !ok {
+			return notConverted("a ${ without its } in Fn::Sub")
+		}
+		parts = append(parts, c.subVariable(inner, vars))
+		s = rest
+	}
+	if len(parts) == 0 {
+		return textValue("")
+	}
+	return joinValues(parts)
+}
+
+// innerVariable splits "${a}rest" into a and rest, the ${} nesting counted.
+func innerVariable(s string) (string, string, bool) {
+	depth := 0
+	for j := 0; j < len(s); j++ {
+		switch {
+		case strings.HasPrefix(s[j:], "${"):
+			depth++
+			j++
+		case s[j] == '}':
+			depth--
+			if depth == 0 {
+				return s[2:j], s[j+1:], true
+			}
+		}
+	}
+	return "", "", false
+}
+
+// subVariable converts a variable of a Fn::Sub: one of its own, a pseudo parameter, a
+// serverless variable, an attribute or a ref.
+func (c *converter) subVariable(inner string, vars *yaml.Node) value {
+	if v := get(vars, inner); v != nil {
+		return c.nodeValue(v)
+	}
+	switch {
+	case strings.HasPrefix(inner, "AWS::"):
+		return c.ref(inner)
+	case strings.Contains(inner, ":"):
+		return c.variable(inner)
+	case strings.Contains(inner, "."):
+		target, attribute, _ := strings.Cut(inner, ".")
+		return c.getAtt(target, attribute)
+	}
+	return c.ref(inner)
+}
+
+// join converts a Fn::Join of a list of values.
+func (c *converter) join(arg *yaml.Node) value {
+	if arg.Kind != yaml.SequenceNode || len(arg.Content) != 2 || arg.Content[1].Kind != yaml.SequenceNode {
+		return notConverted("Fn::Join of something other than a delimiter and a list")
+	}
+	delimiter := arg.Content[0].Value
+	var parts []value
+	for i, item := range arg.Content[1].Content {
+		if i > 0 && delimiter != "" {
+			parts = append(parts, textValue(delimiter))
+		}
+		parts = append(parts, c.nodeValue(item))
+	}
+	if len(parts) == 0 {
+		return textValue("")
+	}
+	return joinValues(parts)
+}
+
+// selectValue converts a Fn::Select of a list written out.
+func (c *converter) selectValue(arg *yaml.Node) value {
+	if arg.Kind != yaml.SequenceNode || len(arg.Content) != 2 || arg.Content[1].Kind != yaml.SequenceNode {
+		return notConverted("Fn::Select of a list that is only known while deploying, such as Fn::GetAZs")
+	}
+	i, ok := integer(arg.Content[0])
+	if !ok || i < 0 || i >= len(arg.Content[1].Content) {
+		return notConverted("Fn::Select with an index outside its list")
+	}
+	return c.nodeValue(arg.Content[1].Content[i])
+}
+
+// ifValue converts a Fn::If where one value goes: if (condition) a else b.
+func (c *converter) ifValue(arg *yaml.Node) value {
+	cond, a, b, todo := c.ifParts(arg)
+	if todo != "" {
+		return notConverted(todo)
+	}
+	va, vb := c.nodeValue(a), c.nodeValue(b)
+	switch {
+	case !va.ok:
+		return va
+	case !vb.ok:
+		return vb
+	case va.noValue || vb.noValue:
+		return notConverted("Fn::If with AWS::NoValue where a value goes")
+	}
+	return value{expr: fmt.Sprintf("(if (%s) %s else %s)", cond, va.expr, vb.expr), ok: true,
+		interpolable: va.interpolable && vb.interpolable, joinable: va.joinable && vb.joinable}
+}
+
+// ifParts reads a Fn::If: its condition as a pkl expression, and its two values.
+func (c *converter) ifParts(arg *yaml.Node) (string, *yaml.Node, *yaml.Node, string) {
+	if arg.Kind != yaml.SequenceNode || len(arg.Content) != 3 {
+		return "", nil, nil, "Fn::If takes a condition and two values"
+	}
+	cond, ok := c.conditionName(arg.Content[0].Value)
+	if !ok {
+		return "", nil, nil, "Fn::If of the condition " + arg.Content[0].Value + ", which is not converted"
+	}
+	return cond, arg.Content[1], arg.Content[2], ""
+}
+
+// findInMap converts a Fn::FindInMap into a lookup in the Mappings, written as a local.
+func (c *converter) findInMap(arg *yaml.Node) value {
+	if arg.Kind != yaml.SequenceNode || len(arg.Content) < 3 {
+		return notConverted("Fn::FindInMap takes a map, a key and a second key")
+	}
+	mapName := arg.Content[0].Value
+	if get(get(get(c.doc, "resources"), "Mappings"), mapName) == nil {
+		return notConverted("Fn::FindInMap of " + mapName + ", which Mappings does not have")
+	}
+	k1, k2 := c.nodeValue(arg.Content[1]), c.nodeValue(arg.Content[2])
+	for _, k := range []value{k1, k2} {
+		if !k.ok || !k.interpolable {
+			return notConverted("Fn::FindInMap with a key only known while deploying")
+		}
+	}
+	c.usesMappings = true
+	return literal(fmt.Sprintf("cfnMappings[%s][%s][%s]", quote(mapName), k1.expr, k2.expr))
 }
 
 // intrinsicOf returns the function a node calls and its argument: { Ref: x }, or !Ref x.
@@ -241,14 +524,24 @@ func (c *converter) ref(target string) value {
 			return notConverted("Ref AWS::Region: no provider.region to refer to")
 		}
 		return literal("module.region")
-	case "AWS::AccountId", "AWS::StackName", "AWS::Partition", "AWS::URLSuffix", "AWS::StackId", "AWS::NoValue":
+	case "AWS::AccountId":
+		return refValue("kdst.accountId")
+	case "AWS::Partition":
+		return refValue("kdst.partition")
+	case "AWS::URLSuffix":
+		return refValue("kdst.urlSuffix")
+	case "AWS::StackName":
+		return literal(`"\(module.app)-\(kdst.stage)"`)
+	case "AWS::NoValue":
+		return value{ok: true, noValue: true}
+	case "AWS::StackId", "AWS::NotificationARNs":
 		return notConverted("Ref " + target + " has no equivalent")
 	}
 	if fn, ok := c.functionOf(target); ok {
-		return value{expr: fmt.Sprintf(`kdst.ref(%s, "FunctionName")`, quote(fn)), ok: true}
+		return refValue(fmt.Sprintf(`kdst.ref(%s, "FunctionName")`, quote(fn)))
 	}
 	if name, ok := c.resourceNames[target]; ok {
-		return value{expr: fmt.Sprintf(`kdst.ref(%s, "Identifier")`, quote(name)), ok: true}
+		return refValue(fmt.Sprintf(`kdst.ref(%s, "Identifier")`, quote(name)))
 	}
 	return notConverted("Ref " + target + " names nothing koldstart deploys")
 }
@@ -256,10 +549,10 @@ func (c *converter) ref(target string) value {
 // getAtt converts a Fn::GetAtt to a ref of the same attribute.
 func (c *converter) getAtt(target, attribute string) value {
 	if fn, ok := c.functionOf(target); ok {
-		return value{expr: fmt.Sprintf("kdst.ref(%s, %s)", quote(fn), quote(attribute)), ok: true}
+		return refValue(fmt.Sprintf("kdst.ref(%s, %s)", quote(fn), quote(attribute)))
 	}
 	if name, ok := c.resourceNames[target]; ok {
-		return value{expr: fmt.Sprintf("kdst.ref(%s, %s)", quote(name), quote(attribute)), ok: true}
+		return refValue(fmt.Sprintf("kdst.ref(%s, %s)", quote(name), quote(attribute)))
 	}
 	return notConverted("Fn::GetAtt " + target + "." + attribute + " names nothing koldstart deploys")
 }
@@ -285,7 +578,19 @@ func (c *converter) property(w *writer, where, key string, n *yaml.Node) {
 
 // member writes a property or an element of a dynamic object: head = value, or head { ... }.
 func (c *converter) member(w *writer, where, head string, n *yaml.Node) {
+	if name, arg := intrinsicOf(n); name == intrinsicIf {
+		c.ifMember(w, where, head, arg)
+		return
+	}
+	if file, ok := c.wholeFile(n); ok {
+		w.comment("From " + n.Value + ".")
+		c.member(w, where, head, file)
+		return
+	}
 	if v, ok := c.intrinsic(n); ok {
+		if v.noValue {
+			return
+		}
 		c.assign(w, where, head, v, n)
 		return
 	}
@@ -316,7 +621,14 @@ func (c *converter) member(w *writer, where, head string, n *yaml.Node) {
 
 // element writes an element of a list.
 func (c *converter) element(w *writer, where string, n *yaml.Node) {
+	if name, arg := intrinsicOf(n); name == intrinsicIf {
+		c.ifMember(w, where, "new", arg)
+		return
+	}
 	if v, ok := c.intrinsic(n); ok {
+		if v.noValue {
+			return
+		}
 		c.elementValue(w, where, v, n)
 		return
 	}

@@ -16,7 +16,7 @@ functions {
     environment {
       ["REGION"] = module.region
       ["BUCKET"] = "\(module.app)-\(kdst.stage)-files"
-      // TODO: ${file(./config.json):key} has no equivalent: an import, a read() or a value of your own
+      // TODO: ${file(./config.json):key}: there is no ./config.json next to serverless.yml
       // was: ${file(./config.json):key}
       ["SHARED"] = kdst.stageOutput("shared", "prod", "QueueUrl")
       ["LOG_LEVEL"] = read?("env:LOG_LEVEL") ?? "info"
@@ -30,12 +30,11 @@ functions {
     environment {
       ["REGION"] = module.region
       ["BUCKET"] = "\(module.app)-\(kdst.stage)-files"
-      // TODO: ${file(./config.json):key} has no equivalent: an import, a read() or a value of your own
+      // TODO: ${file(./config.json):key}: there is no ./config.json next to serverless.yml
       // was: ${file(./config.json):key}
       ["SHARED"] = kdst.stageOutput("shared", "prod", "QueueUrl")
       ["LOG_LEVEL"] = read?("env:LOG_LEVEL") ?? "info"
-      // TODO: Fn::Sub has no equivalent: write it as a pkl expression
-      // was: !Sub arn:aws:sns:${AWS::Region}:${AWS::AccountId}:alerts
+      ["TOPIC"] = kdst.join(List("arn:aws:sns:\(module.region):", kdst.accountId, ":alerts"))
     }
   }
 }
@@ -61,6 +60,5 @@ resources {
 
 outputs {
   ["FilesArn"] = kdst.ref("Files", "Arn")
-  // TODO: Fn::Join has no equivalent: write it as a pkl expression
-  // was: !Join ["-", [a, b]]
+  ["Joined"] = "a-b"
 }

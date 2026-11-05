@@ -60,7 +60,7 @@ is not complete.`,
 			if err != nil {
 				return fmt.Errorf("reading %s: %w", in, err)
 			}
-			res, err := migrate.Convert(src, schemaVersion())
+			res, err := migrate.Convert(src, schemaVersion(), filepath.Dir(in))
 			if err != nil {
 				return err
 			}

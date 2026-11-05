@@ -50,6 +50,13 @@ type converter struct {
 	added     []addedResource
 	todos     []Todo
 	selfDepth int
+	// dir is the directory of serverless.yml, which ${file()} reads relative to.
+	dir string
+	// usesMappings and usesParams say the locals of the Mappings and the params are needed, and
+	// conditions are the conditions converted, by name.
+	usesMappings bool
+	usesParams   bool
+	conditions   map[string]string
 }
 
 // addedResource is a resource of an event that serverless.yml names but does not declare.
@@ -57,8 +64,9 @@ type addedResource struct {
 	name, typ, property, value string
 }
 
-// Convert converts a serverless.yml into a koldstart.pkl that amends the schema of version.
-func Convert(src []byte, version string) (*Result, error) {
+// Convert converts a serverless.yml into a koldstart.pkl that amends the schema of version. A
+// ${file()} is read relative to dir, the directory of serverless.yml.
+func Convert(src []byte, version, dir string) (*Result, error) {
 	var file yaml.Node
 	if err := yaml.Unmarshal(src, &file); err != nil {
 		return nil, fmt.Errorf("reading serverless.yml: %w", err)
@@ -66,7 +74,7 @@ func Convert(src []byte, version string) (*Result, error) {
 	if len(file.Content) == 0 || file.Content[0].Kind != yaml.MappingNode {
 		return nil, errors.New("serverless.yml is not a mapping")
 	}
-	c := &converter{doc: file.Content[0], version: version, resourceNames: map[string]string{}}
+	c := &converter{doc: file.Content[0], version: version, dir: dir, resourceNames: map[string]string{}}
 	return c.convert()
 }
 
@@ -88,6 +96,7 @@ func (c *converter) convert() (*Result, error) {
 	c.region = str(get(provider, "region"))
 	c.nameFunctions()
 	c.nameResources()
+	c.convertConditions()
 
 	var w writer
 	w.comment("Converted from serverless.yml by kdst migrate. Look for TODO: what it could not convert.")
@@ -121,6 +130,7 @@ func (c *converter) convert() (*Result, error) {
 	}
 	c.resources(&w)
 	c.outputs(&w)
+	c.locals(&w)
 	c.leftOver()
 
 	if !appName.MatchString(app) {
@@ -504,6 +514,15 @@ func (c *converter) resource(w *writer, id string, n *yaml.Node) {
 	if !functionName.MatchString(id) {
 		c.todo(where, "the logical id is not a name koldstart takes: letters, digits and dashes, at most 40")
 	}
+	if cond := get(n, intrinsicCondition); cond != nil {
+		condition, ok := c.conditionName(cond.Value)
+		if !ok {
+			c.leaveOut(w, where, "the condition "+cond.Value+" is not converted", n)
+			return
+		}
+		w.open(fmt.Sprintf("when (%s)", condition))
+		defer w.close()
+	}
 	w.open(fmt.Sprintf("[%s]", quote(id)))
 	w.line("type = %s", quote(typ))
 	switch strings.ToLower(str(get(n, "DeletionPolicy"))) {
@@ -518,7 +537,7 @@ func (c *converter) resource(w *writer, id string, n *yaml.Node) {
 	if props := get(n, "Properties"); props != nil {
 		c.property(w, where+".Properties", "properties", props)
 	}
-	for _, key := range []string{"DependsOn", intrinsicCondition, "Metadata", "CreationPolicy", "UpdatePolicy"} {
+	for _, key := range []string{"DependsOn", "Metadata", "CreationPolicy", "UpdatePolicy"} {
 		if v := get(n, key); v != nil {
 			c.todo(where+"."+key, key+" has no equivalent: koldstart orders resources by their refs")
 			w.comment("TODO: " + key + " has no equivalent. was: " + flow(v))
@@ -545,11 +564,18 @@ func (c *converter) outputs(w *writer) {
 		if get(o, "Export") != nil {
 			c.todo(where+".Export", "exports have no equivalent: other apps read outputs with kdst.stageOutput()")
 		}
-		val, isIntrinsic := c.intrinsic(v)
-		if !isIntrinsic {
-			val = c.scalar(v)
+		if cond := get(o, intrinsicCondition); cond != nil {
+			condition, ok := c.conditionName(cond.Value)
+			if !ok {
+				c.leaveOut(w, where, "the condition "+cond.Value+" is not converted", o)
+				continue
+			}
+			w.open(fmt.Sprintf("when (%s)", condition))
+			c.assign(w, where, "["+quote(name)+"]", c.nodeValue(v), v)
+			w.close()
+			continue
 		}
-		c.assign(w, where, "["+quote(name)+"]", val, v)
+		c.assign(w, where, "["+quote(name)+"]", c.nodeValue(v), v)
 	}
 	w.close()
 }
@@ -585,7 +611,7 @@ func (c *converter) leftOver() {
 			}
 		}
 	}
-	for _, key := range []string{"layers", "stepFunctions", "params", "useDotenv"} {
+	for _, key := range []string{"layers", "stepFunctions", "useDotenv"} {
 		if get(c.doc, key) != nil {
 			c.todo(key, key+" has no equivalent in koldstart")
 		}

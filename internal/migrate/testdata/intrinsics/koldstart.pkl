@@ -1,0 +1,113 @@
+// Converted from serverless.yml by kdst migrate. Look for TODO: what it could not convert.
+amends "package://github.com/kontrolplane/koldstart/releases/download/v0.1.0/koldstart@0.1.0#/Project.pkl"
+
+import "package://github.com/kontrolplane/koldstart/releases/download/v0.1.0/koldstart@0.1.0#/kdst.pkl"
+
+app = "shop"
+region = "eu-west-1"
+
+functions {
+  ["api"] {
+    runtime = "nodejs22.x"
+    handler = "src/api.handler"
+    environment {
+      ["DOMAIN"] = param("domain")
+      ["LOG_LEVEL"] = "debug"
+      ["ACCOUNT"] = kdst.accountId
+      ["TABLE_ARN"] = kdst.ref("OrdersTable", "Arn")
+      ["INDEX_ARN"] = kdst.join(List(kdst.ref("OrdersTable", "Arn"), "/index/*"))
+      ["TOPIC_ARN"] = kdst.join(List("arn:", kdst.partition, ":sns:\(module.region):", kdst.accountId, ":shop-alerts"))
+      ["STACK"] = "\(module.app)-\(kdst.stage)"
+      ["GREETING"] = "hello from \(cfnMappings["RegionNames"][module.region]["Name"]) on \(kdst.stage)"
+      ["IMAGE"] = "large"
+      // TODO: Fn::Select of a list that is only known while deploying, such as Fn::GetAZs
+      // was: !Select [0, !GetAZs ""]
+    }
+  }
+}
+
+resources {
+  ["OrdersTable"] {
+    type = "AWS::DynamoDB::Table"
+    properties {
+      TableName = "\(module.app)-\(kdst.stage)-orders"
+      BillingMode = "PAY_PER_REQUEST"
+      AttributeDefinitions {
+        new {
+          AttributeName = "id"
+          AttributeType = "S"
+        }
+      }
+      KeySchema {
+        new {
+          AttributeName = "id"
+          KeyType = "HASH"
+        }
+      }
+      when (conditionIsProd) {
+        PointInTimeRecoverySpecification {
+          PointInTimeRecoveryEnabled = true
+        }
+      }
+      // From ${file(./config.yml):tags}.
+      Tags {
+        team = "checkout"
+        cost = "shop"
+      }
+    }
+  }
+  when (conditionIsBig) {
+    ["Alarms"] {
+      type = "AWS::SNS::Topic"
+      properties {
+        TopicName = "shop-\(if (conditionIsProd) "alarms" else "test-alarms")"
+        DisplayName = ("shop alarms").base64
+      }
+    }
+  }
+  ["Uploads"] {
+    type = "AWS::S3::Bucket"
+    properties {
+      BucketName = kdst.join(List("\(module.app)-\(kdst.stage)-uploads-", kdst.accountId))
+      VersioningConfiguration {
+        Status = (if (conditionIsNotProd) "Suspended" else "Enabled")
+      }
+    }
+  }
+}
+
+outputs {
+  ["TableArn"] = kdst.ref("OrdersTable", "Arn")
+  when (conditionIsBig) {
+    ["AlarmsArn"] = kdst.ref("Alarms", "Identifier")
+  }
+}
+
+// The condition IsBig of serverless.yml.
+local conditionIsBig = (kdst.stage == "prod") || (kdst.stage == "staging")
+// The condition IsNotProd of serverless.yml.
+local conditionIsNotProd = !(kdst.stage == "prod")
+// The condition IsProd of serverless.yml.
+local conditionIsProd = kdst.stage == "prod"
+// The Mappings of serverless.yml.
+local cfnMappings = new Mapping {
+  ["RegionNames"] = new Mapping {
+    ["eu-west-1"] = new Mapping {
+      ["Name"] = "Ireland"
+    }
+    ["us-east-1"] = new Mapping {
+      ["Name"] = "Virginia"
+    }
+  }
+}
+// The params of serverless.yml, by stage; param() takes the stage's, or default's.
+local params = new Mapping {
+  ["default"] = new Mapping {
+    ["domain"] = "dev.shop.example.com"
+    ["retention"] = "14"
+  }
+  ["prod"] = new Mapping {
+    ["domain"] = "shop.example.com"
+  }
+}
+local function param(name: String) = params.getOrNull(kdst.stage)?.getOrNull(name) ?? params.getOrNull("default")?.getOrNull(name) ?? throw("no param \(name) for the stage \(kdst.stage)")
