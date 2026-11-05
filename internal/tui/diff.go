@@ -170,7 +170,7 @@ func (m model) diffUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 	if key.Matches(msg, m.keys.Back, m.keys.Quit) {
 		return m.switchPage(d.from), nil
 	}
-	d.scroll = min(scrollBy(msg, m.keys, d.scroll, contentHeight), max(0, len(m.diffLines())-contentHeight))
+	d.scroll = scrollBy(msg, m.keys, d.scroll, contentHeight, maxOffset(len(m.diffLines()), contentHeight))
 	return m, nil
 }
 

@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"cmp"
 	"slices"
 
 	"charm.land/bubbles/v2/key"
@@ -81,9 +80,7 @@ func (m model) withProject(stages []cli.StageSummary) []cli.StageSummary {
 		}
 	}
 	project := cli.StageSummary{StageRef: cli.StageRef{Region: m.ident.Region, App: m.project, Stage: m.projectStage}}
-	at, _ := slices.BinarySearchFunc(stages, project, func(a, b cli.StageSummary) int {
-		return cmp.Or(cmp.Compare(a.App, b.App), cmp.Compare(a.Stage, b.Stage), cmp.Compare(a.Region, b.Region))
-	})
+	at, _ := slices.BinarySearchFunc(stages, project, func(a, b cli.StageSummary) int { return a.Compare(b.StageRef) })
 	return slices.Insert(slices.Clone(stages), at, project)
 }
 

@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -121,7 +120,7 @@ func (m model) invocationUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Copy):
 		return m.copy(v.req.id)
 	}
-	v.scroll = min(scrollBy(msg, m.keys, v.scroll, contentHeight), max(0, len(m.invocationLines())-contentHeight))
+	v.scroll = scrollBy(msg, m.keys, v.scroll, contentHeight, maxOffset(len(m.invocationLines()), contentHeight))
 	return m, nil
 }
 
@@ -145,7 +144,7 @@ func (m model) invocationLines() []string {
 	}
 	facts := []string{}
 	if r.reported {
-		facts = append(facts, "duration "+formatMillis(r.duration), "billed "+formatMillis(r.billed), fmt.Sprintf("memory %d of %d mb", r.maxMemory, r.memory))
+		facts = append(facts, "duration "+formatMillis(r.duration), "billed "+formatMillis(r.billed), "memory "+formatInt(r.maxMemory)+" of "+formatInt(r.memory)+" mb")
 	}
 	if r.init > 0 {
 		facts = append(facts, "cold start "+formatMillis(r.init))

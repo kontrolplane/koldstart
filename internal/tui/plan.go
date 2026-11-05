@@ -8,7 +8,6 @@ import (
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
 
 	"github.com/kontrolplane/koldstart/internal/cli"
 	"github.com/kontrolplane/koldstart/internal/engine"
@@ -361,7 +360,7 @@ func (m model) planLines() ([]string, pickList) {
 		}
 		if pr := p.progress[c.ID]; pr.err != nil {
 			for _, l := range errorLines(c.ID, pr.err, width-8) {
-				body.lines = append(body.lines, "        "+styles.Render(styles.S(l, styles.ToneDanger)))
+				body.lines = append(body.lines, "        "+l)
 			}
 		}
 	}
@@ -375,12 +374,7 @@ func (m model) planLines() ([]string, pickList) {
 // at most maxErrorLines of them.
 func errorLines(id string, err error, width int) []string {
 	msg := strings.TrimPrefix(strings.Join(strings.Fields(err.Error()), " "), id+": ")
-	lines := strings.Split(ansi.Wrap(styles.Clean(msg), max(10, width), ""), "\n")
-	if len(lines) > maxErrorLines {
-		lines = lines[:maxErrorLines]
-		lines[maxErrorLines-1] = ansi.Truncate(lines[maxErrorLines-1], max(10, width)-1, "") + "…"
-	}
-	return lines
+	return wrapped(msg, styles.ToneDanger, max(10, width), maxErrorLines)
 }
 
 // applyLines say how the apply goes: how many nodes are done and for how long, and once it ended,

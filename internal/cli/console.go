@@ -58,6 +58,11 @@ type StageRef struct {
 
 func (r StageRef) String() string { return r.App + "/" + r.Stage }
 
+// Compare orders stages by app, stage and region, as Stages lists them.
+func (r StageRef) Compare(o StageRef) int {
+	return cmp.Or(cmp.Compare(r.App, o.App), cmp.Compare(r.Stage, o.Stage), cmp.Compare(r.Region, o.Region))
+}
+
 // StageSummary is what the list of stages shows of one.
 type StageSummary struct {
 	StageRef
@@ -233,9 +238,7 @@ func (c *Console) Stages(ctx context.Context) ([]StageSummary, error) {
 		})
 	}
 	wg.Wait()
-	slices.SortFunc(out, func(a, b StageSummary) int {
-		return cmp.Or(cmp.Compare(a.App, b.App), cmp.Compare(a.Stage, b.Stage), cmp.Compare(a.Region, b.Region))
-	})
+	slices.SortFunc(out, func(a, b StageSummary) int { return a.Compare(b.StageRef) })
 	return out, nil
 }
 

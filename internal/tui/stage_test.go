@@ -10,15 +10,6 @@ import (
 	"github.com/kontrolplane/koldstart/internal/tui/styles"
 )
 
-// cellText is the text of a cell, without its tones.
-func cellText(c cell) string {
-	var b strings.Builder
-	for _, s := range c {
-		b.WriteString(s.Text)
-	}
-	return b.String()
-}
-
 // TestStageCursorKept checks the cursor stays on its row when a refresh adds rows above it, on
 // the resources and the history.
 func TestStageCursorKept(t *testing.T) {
@@ -83,7 +74,7 @@ func TestOutputValue(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := cellText(outputValue(tt.in)); got != tt.want {
+			if got := plainText(outputValue(tt.in)); got != tt.want {
 				t.Errorf("outputValue(%q) = %q, want %q", tt.in, got, tt.want)
 			}
 		})
@@ -111,7 +102,7 @@ func TestMetricCells(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			s := stageState{metrics: tt.metrics, metricsErr: tt.err}
 			calls, errs, p99 := s.metricCells("fn")
-			if got := cellText(calls) + " " + cellText(errs) + " " + cellText(p99); got != tt.want {
+			if got := plainText(calls) + " " + plainText(errs) + " " + plainText(p99); got != tt.want {
 				t.Errorf("cells %q, want %q", got, tt.want)
 			}
 			if danger := errs[0].Tone == styles.ToneDanger; danger != tt.danger {

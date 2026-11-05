@@ -75,7 +75,7 @@ func (m model) versionUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 	}
 	l := m.versionLines()
 	if len(l.rows) == 0 {
-		v.scroll = min(scrollBy(msg, m.keys, v.scroll, contentHeight), max(0, len(l.lines)-contentHeight))
+		v.scroll = scrollBy(msg, m.keys, v.scroll, contentHeight, maxOffset(len(l.lines), contentHeight))
 		return m, nil
 	}
 	if cursor, ok := moveCursor(msg, m.keys, v.cursor, len(l.rows), contentHeight); ok {

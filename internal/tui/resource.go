@@ -96,7 +96,7 @@ func (m model) resourceUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 		m, queues = m.loadQueues()
 		return m, tea.Batch(live, queues)
 	}
-	r.scroll = min(scrollBy(msg, m.keys, r.scroll, contentHeight), max(0, len(m.resourceLines())-contentHeight))
+	r.scroll = scrollBy(msg, m.keys, r.scroll, contentHeight, maxOffset(len(m.resourceLines()), contentHeight))
 	return m, nil
 }
 
@@ -178,26 +178,26 @@ func (m model) appliedLines(width int) []string {
 func (m model) liveLinesOf(width int) []string {
 	r := m.state.resource
 	lines := []string{""}
-	wrapped := func(s string) {
-		lines = append(lines, cellLines(text(s, styles.ToneFaint), width)...)
+	say := func(s string) {
+		lines = append(lines, wrapped(s, styles.ToneFaint, width, 0)...)
 	}
 	reading := styles.Accent(m.spinner.View()) + " " + styles.Muted(readingNote("it from aws"))
 	switch {
 	case r.res.retained:
-		wrapped("a remove left it in place: koldstart does not read it until the next deploy takes it over")
+		say("a remove left it in place: koldstart does not read it until the next deploy takes it over")
 		return lines
 	case r.res.res.PhysicalID == "":
-		wrapped("it has no id in aws yet: the next deploy creates it")
+		say("it has no id in aws yet: the next deploy creates it")
 		return lines
 	case !r.liveLoaded && r.live == nil:
 		return append(lines, reading)
 	case errors.Is(r.liveErr, cli.ErrNotLive):
-		wrapped("cloud control cannot read a " + shortType(r.res.res.Type) + ": what koldstart applied is on the applied tab")
+		say("cloud control cannot read a " + shortType(r.res.res.Type) + ": what koldstart applied is on the applied tab")
 		return lines
 	case r.liveErr != nil && r.live == nil:
 		lines = append(lines, cellLines(m.couldNotRead("it from aws", r.liveErr.Error(), styles.ToneDanger), width)...)
 		lines = append(lines, "")
-		wrapped("reading it takes cloud control, which an emulator may not have, and cloudformation:GetResource with the read permissions of its type. what koldstart applied is on the applied tab")
+		say("reading it takes cloud control, which an emulator may not have, and cloudformation:GetResource with the read permissions of its type. what koldstart applied is on the applied tab")
 		return lines
 	case !r.liveLoaded:
 		lines = append(lines, reading, "")
@@ -206,7 +206,7 @@ func (m model) liveLinesOf(width int) []string {
 		lines = append(lines, "")
 	}
 	if len(r.live) == 0 {
-		wrapped("aws returned no properties for it")
+		say("aws returned no properties for it")
 		return lines
 	}
 	applied := appliedProperties(r.res)

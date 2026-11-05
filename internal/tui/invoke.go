@@ -225,7 +225,7 @@ func (m model) invokeUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.PageUp, m.keys.PageDown):
 		height := functionBodyHeight()
-		f.scroll = min(scrollBy(msg, m.keys, f.scroll, height), maxResultScroll(len(m.invokeLines(resultWidth())), height))
+		f.scroll = scrollBy(msg, m.keys, f.scroll, height, maxResultScroll(len(m.invokeLines(resultWidth())), height))
 	case f.events.move(msg, m.keys):
 		f.scroll = 0
 	}
@@ -247,18 +247,13 @@ func (m model) invokeLines(width int) []string {
 		return []string{styles.Accent(m.spinner.View()) + " " + styles.Muted(what)}
 	case !ok:
 		if _, err := m.eventPayload(); err != nil {
-			var lines []string
-			for _, c := range wrapCell(text("▲ "+err.Error(), styles.ToneWarning), width-2) {
-				lines = append(lines, renderCell(c, column{width: width - 2}, nil))
-			}
+			lines := wrapped("▲ "+err.Error(), styles.ToneWarning, width-2, 0)
 			return append(lines, "", styles.Faint("e edits it, and i sends it once it is json"))
 		}
 		return m.invokeHints(name)
 	case r.err != nil:
 		lines := []string{styles.Render(styles.S("✗ could not invoke "+f.name, styles.ToneDanger)), ""}
-		for _, c := range wrapCell(text(r.err.Error(), styles.ToneDanger), width-2) {
-			lines = append(lines, renderCell(c, column{width: width - 2}, nil))
-		}
+		lines = append(lines, wrapped(r.err.Error(), styles.ToneDanger, width-2, 0)...)
 		return append(lines, "", styles.Faint("i tries again"))
 	}
 	return resultLines(r, width)

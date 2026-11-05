@@ -209,15 +209,13 @@ func (m model) functionUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 	case invokeTab:
 		return m.invokeUpdate(msg)
 	}
-	f.scroll = scrollBy(msg, m.keys, f.scroll, functionBodyHeight())
-	if f.tab == overviewTab {
-		f.scroll = min(f.scroll, m.functionOverview().maxScroll())
-	}
+	f.scroll = scrollBy(msg, m.keys, f.scroll, functionBodyHeight(), m.functionOverview().maxScroll())
 	return m, nil
 }
 
-// scrollBy moves a scroll offset by the key: a line, a page, or to the top or the bottom.
-func scrollBy(msg tea.KeyPressMsg, k keys.KeyMap, offset, page int) int {
+// scrollBy moves a scroll offset by the key: a line, a page, or to the top or the bottom, which is
+// most, and keeps it between 0 and most.
+func scrollBy(msg tea.KeyPressMsg, k keys.KeyMap, offset, page, most int) int {
 	switch {
 	case key.Matches(msg, k.Up):
 		offset--
@@ -230,10 +228,13 @@ func scrollBy(msg tea.KeyPressMsg, k keys.KeyMap, offset, page int) int {
 	case key.Matches(msg, k.Top):
 		offset = 0
 	case key.Matches(msg, k.Bottom):
-		offset = 1 << 30
+		offset = most
 	}
-	return max(0, offset)
+	return max(0, min(offset, most))
 }
+
+// maxOffset is the furthest n lines scroll in height: to where the last is at the bottom.
+func maxOffset(n, height int) int { return max(0, n-height) }
 
 // functionCopyValue is what c copies: the request id of an invocation on the invocations tab, the
 // payload of the last invocation on the invoke tab, the arn elsewhere.
@@ -304,24 +305,22 @@ func row(label string, value cell, width int) string {
 
 // scrolled shows height lines of lines from offset, as far as there are.
 func scrolled(lines []string, offset, height int) string {
-	offset = max(0, min(offset, len(lines)-height))
+	offset = max(0, min(offset, maxOffset(len(lines), height)))
 	end := min(len(lines), offset+height)
 	return strings.Join(lines[offset:end], "\n")
 }
 
 func sep() styles.Span { return styles.S(" · ", styles.ToneFaint) }
 
-// wrapped breaks text into lines of width in one tone, at most limit of them, the last ending
-// in an ellipsis when there was more.
+// wrapped breaks text into lines of width in one tone, as cellLines does. With a limit above 0
+// there are at most limit of them, the last ending in an ellipsis when there was more.
 func wrapped(s string, tone styles.Tone, width, limit int) []string {
 	width = max(2, width)
-	lines := strings.Split(ansi.Wrap(styles.Clean(s), width, ""), "\n")
-	if len(lines) > limit {
+	lines := cellLines(text(s, tone), width)
+	if limit > 0 && len(lines) > limit {
 		lines = lines[:limit]
-		lines[limit-1] = ansi.Truncate(strings.TrimRight(lines[limit-1], " "), width-1, "") + "…"
-	}
-	for i, l := range lines {
-		lines[i] = styles.Fg(tone).Render(l)
+		last := strings.TrimRight(ansi.Strip(lines[limit-1]), " ")
+		lines[limit-1] = styles.Fg(tone).Render(ansi.Truncate(last, width-1, "") + "…")
 	}
 	return lines
 }
@@ -358,7 +357,7 @@ func (o functionOverview) height() int {
 
 // maxScroll is the furthest the columns scroll: to the end of the longer one.
 func (o functionOverview) maxScroll() int {
-	return max(0, max(len(o.left), len(o.right))-o.height())
+	return maxOffset(max(len(o.left), len(o.right)), o.height())
 }
 
 // functionOverview lays out the overview: the configuration and what lambda says of the

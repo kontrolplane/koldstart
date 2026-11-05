@@ -344,8 +344,8 @@ func (m model) updateStageTables() model {
 		rows = append(rows, tableRow{
 			text(name, styles.ToneText),
 			text(orDash(in.Runtime), styles.ToneBody),
-			text(formatInt(int(in.Memory))+" mb", styles.ToneBody),
-			text(formatInt(int(in.Timeout))+"s", styles.ToneBody),
+			text(orDash(megabytes(in.Memory)), styles.ToneBody),
+			text(orDash(seconds(in.Timeout)), styles.ToneBody),
 			calls, errs, p99,
 			text(shortSHA(in.Code.SHA256), styles.ToneFaint),
 			text(r.PhysicalID, styles.ToneMuted),
@@ -410,13 +410,9 @@ func (s stageState) metricCells(name string) (calls, errs, p99 cell) {
 	if sum.Errors > 0 {
 		errs = text(formatInt(int(sum.Errors)), styles.ToneDanger)
 	}
-	switch {
-	case sum.DurationP99 <= 0:
+	p99 = text(formatMillis(sum.DurationP99), styles.ToneBody)
+	if sum.DurationP99 <= 0 {
 		p99 = text("-", styles.ToneFaint)
-	case sum.DurationP99 < 1:
-		p99 = text("<1ms", styles.ToneBody)
-	default:
-		p99 = text(formatMillis(sum.DurationP99), styles.ToneBody)
 	}
 	return calls, errs, p99
 }

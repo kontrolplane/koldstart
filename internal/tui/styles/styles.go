@@ -341,12 +341,11 @@ func Fg(t Tone) lipgloss.Style {
 	return s
 }
 
-// Body, Muted, Faint, Accent and Bold paint text in a tone. The text must be clean already.
+// Body, Muted, Faint and Accent paint text in a tone. The text must be clean already.
 func Body(s string) string   { return Fg(ToneBody).Render(s) }
 func Muted(s string) string  { return Fg(ToneMuted).Render(s) }
 func Faint(s string) string  { return Fg(ToneFaint).Render(s) }
 func Accent(s string) string { return Fg(ToneAccent).Render(s) }
-func Bold(s string) string   { return Fg(ToneText).Bold(true).Render(s) }
 
 // Span is a run of text with a single tone. Cells and inline values are built from spans so they
 // can be repainted onto a selected row without the inner resets cutting through its background.

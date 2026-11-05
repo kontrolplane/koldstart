@@ -11,6 +11,8 @@ import (
 
 	"github.com/kontrolplane/koldstart/internal/cli"
 	"github.com/kontrolplane/koldstart/internal/state"
+	"github.com/kontrolplane/koldstart/internal/tui/keys"
+	"github.com/kontrolplane/koldstart/internal/tui/styles"
 )
 
 // TestSparklineScaling checks a sparkline keeps a lone spike, marks a small point apart from
@@ -61,6 +63,67 @@ func TestCutMiddle(t *testing.T) {
 			}
 			if tt.width >= 8 && ansi.StringWidth(got) > tt.width {
 				t.Errorf("cutMiddle is %d wide, want at most %d", ansi.StringWidth(got), tt.width)
+			}
+		})
+	}
+}
+
+// TestScrollBy checks a scroll stays between the top and the furthest it goes, so the key after
+// G or a page past the end moves it at once.
+func TestScrollBy(t *testing.T) {
+	tests := []struct {
+		name   string
+		key    string
+		offset int
+		most   int
+		want   int
+	}{
+		{name: "down", key: "j", offset: 3, most: 10, want: 4},
+		{name: "down at the end", key: "j", offset: 10, most: 10, want: 10},
+		{name: "up at the top", key: "k", offset: 0, most: 10, want: 0},
+		{name: "bottom", key: "G", offset: 0, most: 10, want: 10},
+		{name: "up from the bottom", key: "k", offset: 10, most: 10, want: 9},
+		{name: "a page past the end", key: "pgdown", offset: 8, most: 10, want: 10},
+		{name: "nothing to scroll", key: "G", offset: 0, most: 0, want: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg := press(tt.key)
+			if tt.key == "pgdown" {
+				msg = tea.KeyPressMsg{Code: tea.KeyPgDown}
+			}
+			if got := scrollBy(msg, keys.Keys, tt.offset, 5, tt.most); got != tt.want {
+				t.Errorf("scrollBy = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestWrapped checks text wraps to the width, and is cut to an ellipsis on the last line a limit
+// allows, but not without one.
+func TestWrapped(t *testing.T) {
+	long := "could not read it: the role cannot be assumed by lambda, check its trust policy"
+	tests := []struct {
+		name  string
+		limit int
+		want  int
+	}{
+		{name: "no limit", limit: 0, want: 4},
+		{name: "a limit", limit: 2, want: 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lines := wrapped(long, styles.ToneBody, 24, tt.limit)
+			if len(lines) != tt.want {
+				t.Fatalf("%d lines, want %d: %q", len(lines), tt.want, lines)
+			}
+			for _, l := range lines {
+				if ansi.StringWidth(l) > 24 {
+					t.Errorf("%q is wider than 24", ansi.Strip(l))
+				}
+			}
+			if last := ansi.Strip(lines[len(lines)-1]); (tt.limit > 0) != strings.HasSuffix(last, "…") {
+				t.Errorf("the last line is %q", last)
 			}
 		})
 	}
