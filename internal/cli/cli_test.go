@@ -14,7 +14,7 @@ import (
 // run executes the command named name with args, and returns what it printed.
 func run(t *testing.T, name string, args ...string) (string, error) {
 	t.Helper()
-	root := Root(name)
+	root := Root(name, nil)
 	var out bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&out)
@@ -94,7 +94,7 @@ func TestFlagDefaults(t *testing.T) {
 			for _, key := range []string{"KOLDSTART_STAGE", "KOLDSTART_CONFIG", "AWS_PROFILE", "AWS_REGION"} {
 				t.Setenv(key, tt.env[key])
 			}
-			root := Root(nameLong)
+			root := Root(nameLong, nil)
 			if err := root.PersistentFlags().Parse(tt.args); err != nil {
 				t.Fatalf("parsing %v: %v", tt.args, err)
 			}

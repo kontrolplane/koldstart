@@ -31,6 +31,10 @@ linters:
               desc: use the slices package
     misspell:
       locale: UK
+      # lipgloss and image/color are spelt the american way
+      ignore-rules:
+        - center
+        - color
     revive:
       rules:
         - name: comment-spacings

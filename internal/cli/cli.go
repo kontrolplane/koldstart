@@ -47,9 +47,10 @@ func Name(path string) string {
 	return nameLong
 }
 
-// Root builds the command, named name in its help. It defines --help and --version itself, so
-// cobra adds neither -v nor its own wording, and -v stays free.
-func Root(name string) *cobra.Command {
+// Root builds the command, named name in its help, with ui as its terminal interface, or no ui
+// command when it is nil. It defines --help and --version itself, so cobra adds neither -v nor
+// its own wording, and -v stays free.
+func Root(name string, ui UI) *cobra.Command {
 	opts := &Options{}
 	var logFile *os.File
 
@@ -101,6 +102,9 @@ func Root(name string) *cobra.Command {
 	root.AddCommand(offlineCommand(name, opts))
 	root.AddCommand(logsCommand(name, opts))
 	root.AddCommand(migrateCommand(name))
+	if ui != nil {
+		root.AddCommand(uiCommand(name, opts, ui))
+	}
 
 	return root
 }
