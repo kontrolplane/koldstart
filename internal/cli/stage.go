@@ -151,8 +151,17 @@ func (s *stage) nodes(archives map[string]build.Archive) ([]engine.Node, error) 
 	})
 }
 
+// planOptions change how a stage is planned.
+type planOptions struct {
+	// AllowReplace plans replacing retained resources, which leaves the old ones in place.
+	AllowReplace bool
+	// Refresh reads every resource as it is, to create again what was deleted outside koldstart
+	// and set back what was changed.
+	Refresh bool
+}
+
 // plan builds every function, uploading the zips when upload is set, and plans the stage.
-func (s *stage) plan(ctx context.Context, upload, allowReplace bool) (*engine.Engine, *engine.Plan, []engine.Node, error) {
+func (s *stage) plan(ctx context.Context, upload bool, opts planOptions) (*engine.Engine, *engine.Plan, []engine.Node, error) {
 	if err := s.checkResources(ctx); err != nil {
 		return nil, nil, nil, err
 	}
@@ -165,7 +174,7 @@ func (s *stage) plan(ctx context.Context, upload, allowReplace bool) (*engine.En
 		return nil, nil, nil, err
 	}
 	e := s.engine()
-	e.AllowReplace = allowReplace
+	e.AllowReplace, e.Refresh = opts.AllowReplace, opts.Refresh
 	plan, err := e.Plan(ctx, nodes, s.state)
 	if err != nil {
 		return nil, nil, nil, err

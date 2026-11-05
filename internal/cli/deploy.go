@@ -16,13 +16,18 @@ import (
 )
 
 func planCommand(name string, opts *Options) *cobra.Command {
-	var allowReplace bool
+	var plan planOptions
 	cmd := &cobra.Command{
 		Use:   "plan",
 		Short: "show what a deploy would create, change and delete",
 		Long: `plan builds every function and compares the configuration with the state, without changing
-anything in aws. It reads secrets, to tell whether they changed.`,
-		Example: fmt.Sprintf("  %[1]s plan\n  %[1]s plan --stage prod", name),
+anything in aws. It reads secrets, to tell whether they changed.
+
+With --refresh it also reads every resource as it is in aws: one deleted outside koldstart is
+created again, and one changed outside koldstart is set back to what the configuration says.
+It tells which inputs of functions and of resources were changed; of the rest, only whether
+they are still there.`,
+		Example: fmt.Sprintf("  %[1]s plan\n  %[1]s plan --stage prod --refresh", name),
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
@@ -30,20 +35,22 @@ anything in aws. It reads secrets, to tell whether they changed.`,
 			if err != nil {
 				return err
 			}
-			_, plan, _, err := s.plan(ctx, false, allowReplace)
+			_, p, _, err := s.plan(ctx, false, plan)
 			if err != nil {
 				return err
 			}
-			printPlan(cmd.OutOrStdout(), s, plan)
+			printPlan(cmd.OutOrStdout(), s, p)
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&allowReplace, "allow-replace", false, "plan replacing retained resources, which leaves the old ones in place")
+	cmd.Flags().BoolVar(&plan.AllowReplace, "allow-replace", false, "plan replacing retained resources, which leaves the old ones in place")
+	cmd.Flags().BoolVar(&plan.Refresh, "refresh", false, "read every resource as it is, to find what was deleted or changed outside koldstart")
 	return cmd
 }
 
 func deployCommand(name string, opts *Options) *cobra.Command {
-	var yes, allowReplace bool
+	var yes bool
+	var plan planOptions
 	cmd := &cobra.Command{
 		Use:   "deploy",
 		Short: "build, upload and apply the plan",
@@ -62,21 +69,22 @@ is written to the state as it is made: a deploy that fails or is stopped is fini
 				return err
 			}
 			defer unlock()
-			e, plan, nodes, err := s.plan(ctx, true, allowReplace)
+			e, p, nodes, err := s.plan(ctx, true, plan)
 			if err != nil {
 				return err
 			}
-			printPlan(cmd.OutOrStdout(), s, plan)
-			if plan.HasChanges() {
+			printPlan(cmd.OutOrStdout(), s, p)
+			if p.HasChanges() {
 				if err := confirm(cmd, yes, "apply this plan?"); err != nil {
 					return err
 				}
 			}
-			return s.apply(ctx, cmd, e, plan, nodes)
+			return s.apply(ctx, cmd, e, p, nodes)
 		},
 	}
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "apply without asking")
-	cmd.Flags().BoolVar(&allowReplace, "allow-replace", false, "replace retained resources, which leaves the old ones in place")
+	cmd.Flags().BoolVar(&plan.AllowReplace, "allow-replace", false, "replace retained resources, which leaves the old ones in place")
+	cmd.Flags().BoolVar(&plan.Refresh, "refresh", false, "read every resource as it is, and create again or set back what was deleted or changed outside koldstart")
 	cmd.AddCommand(deployFunctionCommand(name, opts))
 	return cmd
 }

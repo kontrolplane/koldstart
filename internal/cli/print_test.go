@@ -63,3 +63,20 @@ func TestPrintPlan(t *testing.T) {
 		t.Errorf("a node without changes is listed:\n%s", got)
 	}
 }
+
+// TestPrintRefreshedPlan checks a plan with refresh says what was deleted and changed outside
+// koldstart.
+func TestPrintRefreshedPlan(t *testing.T) {
+	plan := &engine.Plan{Refreshed: true, Changes: []engine.Change{
+		{ID: "loggroup/api", Action: engine.Create, Gone: true},
+		{ID: "function/api", Action: engine.Update, Drift: []string{"environment", "memory"}},
+	}}
+	var out bytes.Buffer
+	printPlanTo(&out, "orders", "dev", "eu-west-1", "123456789012", plan)
+	got := out.String()
+	for _, want := range []string{"+   loggroup/api  (deleted outside koldstart)", "~   function/api\n        changed outside koldstart: environment, memory", "1 to create, 1 to update"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the plan lacks %q:\n%s", want, got)
+		}
+	}
+}

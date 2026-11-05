@@ -39,7 +39,7 @@ type backend interface {
 	Metrics(ctx context.Context, ref cli.StageRef, names []string) (map[string]cli.Metrics, error)
 	Invoke(ctx context.Context, ref cli.StageRef, function string, payload []byte) (cli.Invocation, error)
 	InvokeLocal(ctx context.Context, ref cli.StageRef, function string, payload []byte) (cli.Invocation, error)
-	Plan(ctx context.Context, ref cli.StageRef, function string) (*engine.Plan, error)
+	Plan(ctx context.Context, ref cli.StageRef, function string, refresh bool) (*engine.Plan, error)
 	Deploy(ctx context.Context, ref cli.StageRef, function string, shown *engine.Plan, onEvent func(engine.Event)) (*engine.Plan, bool, error)
 	PlanRemove(ctx context.Context, ref cli.StageRef) (*engine.Plan, error)
 	Remove(ctx context.Context, ref cli.StageRef, shown *engine.Plan, onEvent func(engine.Event)) (*engine.Plan, bool, bool, error)

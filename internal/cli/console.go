@@ -362,7 +362,7 @@ func (c *Console) stored(ctx context.Context, ref StageRef) (*stage, error) {
 
 // Plan plans a deploy of a stage of the project here, or with function, of that function's
 // code. It builds the functions and uploads nothing.
-func (c *Console) Plan(ctx context.Context, ref StageRef, function string) (*engine.Plan, error) {
+func (c *Console) Plan(ctx context.Context, ref StageRef, function string, refresh bool) (*engine.Plan, error) {
 	s, err := c.stage(ctx, ref, false)
 	if err != nil {
 		return nil, err
@@ -371,12 +371,12 @@ func (c *Console) Plan(ctx context.Context, ref StageRef, function string) (*eng
 		_, plan, _, err := s.planFunction(ctx, function, false)
 		return plan, err
 	}
-	_, plan, _, err := s.plan(ctx, false, false)
+	_, plan, _, err := s.plan(ctx, false, planOptions{Refresh: refresh})
 	return plan, err
 }
 
-// Deploy takes the stage's lock, plans again with the zips uploaded, and applies the plan when
-// it is the one shown, telling onEvent as each node starts and finishes. When the configuration
+// Deploy takes the stage's lock, plans again with the zips uploaded, refreshed when the plan
+// shown was, and applies the plan when it is the one shown, telling onEvent as each node starts and finishes. When the configuration
 // or the state changed since, it applies nothing and returns the new plan, with applied false.
 func (c *Console) Deploy(ctx context.Context, ref StageRef, function string, shown *engine.Plan, onEvent func(engine.Event)) (plan *engine.Plan, applied bool, err error) {
 	s, err := c.stage(ctx, ref, true)
@@ -397,7 +397,7 @@ func (c *Console) Deploy(ctx context.Context, ref StageRef, function string, sho
 	if function != "" {
 		e, plan, nodes, err = s.planFunction(ctx, function, true)
 	} else {
-		e, plan, nodes, err = s.plan(ctx, true, false)
+		e, plan, nodes, err = s.plan(ctx, true, planOptions{Refresh: shown != nil && shown.Refreshed})
 	}
 	if err != nil || !samePlan(plan, shown) {
 		return plan, false, err

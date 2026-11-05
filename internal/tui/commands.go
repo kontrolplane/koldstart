@@ -337,7 +337,7 @@ func (m model) loadPlan() (model, tea.Cmd) {
 	gen := m.next()
 	p := &m.state.plan
 	p.gen = gen
-	ref, function, remove := p.ref, p.function, p.remove
+	ref, function, remove, refresh := p.ref, p.function, p.remove, p.refresh
 	ctx, cancel := m.withTimeout(10 * time.Minute)
 	return m, func() tea.Msg {
 		defer cancel()
@@ -346,7 +346,7 @@ func (m model) loadPlan() (model, tea.Cmd) {
 		if remove {
 			plan, err = m.b.PlanRemove(ctx, ref)
 		} else {
-			plan, err = m.b.Plan(ctx, ref, function)
+			plan, err = m.b.Plan(ctx, ref, function, refresh)
 		}
 		return planLoadedMsg{gen: gen, plan: plan, err: err}
 	}

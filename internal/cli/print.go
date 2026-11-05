@@ -57,10 +57,16 @@ func printPlanTo(w io.Writer, app, stage, region, account string, plan *engine.P
 			continue
 		}
 		line := fmt.Sprintf("  %-3s %s", symbols[c.Action], c.ID)
-		if c.Resume {
+		switch {
+		case c.Resume:
 			line += "  (finishing what a deploy started)"
+		case c.Gone:
+			line += "  (deleted outside koldstart)"
 		}
 		_, _ = fmt.Fprintln(w, line)
+		if len(c.Drift) > 0 {
+			_, _ = fmt.Fprintf(w, "        changed outside koldstart: %s\n", strings.Join(c.Drift, ", "))
+		}
 		if c.Action == engine.Update || c.Action == engine.Replace || c.Action == engine.Adopt {
 			for _, line := range FieldChanges(c) {
 				_, _ = fmt.Fprintf(w, "        %s\n", line)
