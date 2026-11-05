@@ -82,10 +82,10 @@ func AppName(dir string) string {
 // koldstart.pkl, which is refused unless o.Force is set.
 func Write(o Options) (Result, error) {
 	if !slices.Contains(Templates, o.Template) {
-		return Result{}, fmt.Errorf("no template %q: want %s", o.Template, strings.Join(Templates, " or "))
+		return Result{}, fmt.Errorf("no template %q: want %s or %s", o.Template, strings.Join(Templates[:len(Templates)-1], ", "), Templates[len(Templates)-1])
 	}
 	if !appPattern.MatchString(o.App) {
-		return Result{}, fmt.Errorf("app %q: lowercase letters, digits and dashes, at most 24, starting with a letter", o.App)
+		return Result{}, fmt.Errorf("app %q is not an app name: pass --app with lowercase letters, digits and dashes, starting with a letter, at most 24", o.App)
 	}
 	if _, err := os.Stat(filepath.Join(o.Dir, Config)); err == nil && !o.Force {
 		return Result{}, fmt.Errorf("%s is there already: pass --force to write over it", Config)

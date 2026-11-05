@@ -258,8 +258,8 @@ func TestLoad(t *testing.T) {
 		t.Errorf("Load with a stage the file overrides = %v", err)
 	}
 	for _, stage := range []string{"Prod", "1st", "a_b", strings.Repeat("a", 17), ""} {
-		if _, err := Load(context.Background(), ev, "koldstart.pkl", stage); err == nil {
-			t.Errorf("Load with stage %q: want an error", stage)
+		if _, err := Load(context.Background(), ev, "koldstart.pkl", stage); err == nil || !strings.Contains(err.Error(), "pass --stage") {
+			t.Errorf("Load with stage %q = %v, want an error that says to pass --stage", stage, err)
 		}
 	}
 }

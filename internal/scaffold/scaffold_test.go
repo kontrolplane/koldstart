@@ -142,14 +142,22 @@ func TestAppName(t *testing.T) {
 	}
 }
 
-// TestWriteRefuses checks an unknown template and an app name aws would refuse are refused.
+// TestWriteRefuses checks an unknown template and an app name aws would refuse are refused, each
+// saying what to pass instead.
 func TestWriteRefuses(t *testing.T) {
-	for _, o := range []Options{
-		{Dir: t.TempDir(), App: "orders", Template: "ruby"},
-		{Dir: t.TempDir(), App: "Orders", Template: Node},
-	} {
-		if _, err := Write(o); err == nil {
-			t.Errorf("Write(%+v): want an error", o)
-		}
+	tests := []struct {
+		name string
+		opts Options
+		want string
+	}{
+		{name: "template", opts: Options{Dir: t.TempDir(), App: "orders", Template: "ruby"}, want: `no template "ruby": want node, go or python`},
+		{name: "app", opts: Options{Dir: t.TempDir(), App: "Orders", Template: Node}, want: "pass --app with lowercase letters"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := Write(tt.opts); err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("Write = %v, want an error with %q", err, tt.want)
+			}
+		})
 	}
 }

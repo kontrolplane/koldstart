@@ -83,7 +83,7 @@ deletionPolicy says delete.`,
 			}
 			r, ok := s.Resources[resource]
 			if !ok {
-				return fmt.Errorf("no resource %q in %s; it has %s: add it to resources first", resource, s.Path, list(slices.Sorted(maps.Keys(s.Resources))))
+				return fmt.Errorf("no resource %q in %s; %s: add it to resources first", resource, s.shownPath(), has(slices.Sorted(maps.Keys(s.Resources))))
 			}
 			unlock, err := s.lockFor(cmd, "import "+resource)
 			if err != nil {

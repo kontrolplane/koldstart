@@ -376,8 +376,9 @@ func (c *Console) Plan(ctx context.Context, ref StageRef, function string, refre
 }
 
 // Deploy takes the stage's lock, plans again with the zips uploaded, refreshed when the plan
-// shown was, and applies the plan when it is the one shown, telling onEvent as each node starts and finishes. When the configuration
-// or the state changed since, it applies nothing and returns the new plan, with applied false.
+// shown was, and applies the plan when it is the one shown, telling onEvent as each node starts
+// and finishes. When the configuration or the state changed since, it applies nothing and
+// returns the new plan, with applied false. A failed apply says what to run to finish it.
 func (c *Console) Deploy(ctx context.Context, ref StageRef, function string, shown *engine.Plan, onEvent func(engine.Event)) (plan *engine.Plan, applied bool, err error) {
 	s, err := c.stage(ctx, ref, true)
 	if err != nil {
@@ -406,11 +407,7 @@ func (c *Console) Deploy(ctx context.Context, ref StageRef, function string, sho
 		_, err = s.applyPlan(ctx, e, plan, nodes, onEvent)
 		return plan, true, c.existsHint(err)
 	}
-	e.OnEvent = onEvent
-	if plan.HasChanges() {
-		err = e.Apply(ctx, plan, nodes, engine.NewStore(s.backend, s.state, s.etag, whoIsDeploying()))
-	}
-	return plan, true, err
+	return plan, true, s.applyFunction(ctx, e, plan, nodes, function, onEvent)
 }
 
 // existsHint says how to take over a resource that exists already, outside koldstart.

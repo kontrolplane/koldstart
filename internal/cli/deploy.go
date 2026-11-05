@@ -138,11 +138,7 @@ function is not deployed yet or its configuration changed too: run deploy for th
 			}
 			_, _ = fmt.Fprintf(out, "deploying the code of %s to %s/%s in %s, account %s\n", function, s.App, s.Stage, s.Region, s.sess.Account)
 			p := s.beginProgress(cmd, plan)
-			e.OnEvent = p.event
-			err = e.Apply(ctx, plan, nodes, engine.NewStore(s.backend, s.state, s.etag, whoIsDeploying()))
-			if err != nil {
-				err = applyFailed(ctx, err, "deploy function -f "+function)
-			}
+			err = s.applyFunction(ctx, e, plan, nodes, function, p.event)
 			return s.endProgress(cmd, p, plan, "deployed", err)
 		},
 	}
@@ -193,6 +189,19 @@ func (s *stage) planFunction(ctx context.Context, function string, upload bool) 
 	}
 	only.Changes = []engine.Change{change}
 	return e, only, nodes, nil
+}
+
+// applyFunction applies a plan of planFunction, telling onEvent as the function's code starts
+// and finishes being replaced. A failed or stopped apply says to deploy the function again.
+func (s *stage) applyFunction(ctx context.Context, e *engine.Engine, plan *engine.Plan, nodes []engine.Node, function string, onEvent func(engine.Event)) error {
+	if !plan.HasChanges() {
+		return nil
+	}
+	e.OnEvent = onEvent
+	if err := e.Apply(ctx, plan, nodes, engine.NewStore(s.backend, s.state, s.etag, whoIsDeploying())); err != nil {
+		return applyFailed(ctx, err, "deploy function -f "+function)
+	}
+	return nil
 }
 
 // deployedSHA is the hash of the code the state says a function has.

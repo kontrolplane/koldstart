@@ -29,7 +29,7 @@ var (
 // Load evaluates the configuration at path for stage, and checks it.
 func Load(ctx context.Context, ev Evaluator, path, stage string) (*Project, error) {
 	if !stagePattern.MatchString(stage) {
-		return nil, fmt.Errorf("stage %q: use lowercase letters, digits and dashes, starting with a letter, at most 16", stage)
+		return nil, fmt.Errorf("stage %q is not a stage name: pass --stage with lowercase letters, digits and dashes, starting with a letter, at most 16", stage)
 	}
 	out, err := ev.EvalJSON(ctx, path, map[string]string{"stage": stage})
 	if err != nil {

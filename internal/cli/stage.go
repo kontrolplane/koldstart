@@ -103,7 +103,7 @@ func (s *stage) function(name string) error {
 	if _, ok := s.Functions[name]; ok {
 		return nil
 	}
-	return fmt.Errorf("no function %q in %s; it has %s", name, s.Path, list(slices.Sorted(maps.Keys(s.Functions))))
+	return fmt.Errorf("no function %q in %s; %s", name, s.shownPath(), has(slices.Sorted(maps.Keys(s.Functions))))
 }
 
 // buildAll builds the functions named, or all of them, and uploads their zips when upload is set.
@@ -332,10 +332,11 @@ func lockInfo(operation string) state.LockInfo {
 	return state.LockInfo{Who: whoIsDeploying(), Where: where, Operation: operation, Since: time.Now().UTC()}
 }
 
-// list names things, or says there are none.
-func list(names []string) string {
+// has says what the configuration has of something, such as "it has api and worker", or "it
+// has none".
+func has(names []string) string {
 	if len(names) == 0 {
-		return "none"
+		return "it has none"
 	}
-	return strings.Join(names, ", ")
+	return "it has " + andList(names)
 }

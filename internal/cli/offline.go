@@ -8,7 +8,6 @@ import (
 	"maps"
 	"net"
 	"net/http"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -47,7 +46,7 @@ prod it asks first.`,
 			}
 			routes := s.routes()
 			if len(routes) == 0 {
-				return fmt.Errorf("no function in %s has an http route to serve: add a kdst.HttpRoute to its events, or run it with %s invoke --local", filepath.Base(s.Path), name)
+				return fmt.Errorf("no function in %s has an http route to serve: add a kdst.HttpRoute to its events, or run it with %s invoke --local", s.shownPath(), name)
 			}
 			return s.serve(ctx, cmd, routes, port)
 		},
