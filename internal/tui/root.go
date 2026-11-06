@@ -921,7 +921,7 @@ func helpSections(k keys.KeyMap) []helpSection {
 		{"function", [][2]string{
 			{name(k.Invoke), "invoke in aws"}, {name(k.RunLocal), "run on this machine"}, {name(k.EditEvent), "edit the event"},
 			{name(k.Deploy), "plan its code"}, {name(k.Follow), "follow the logs"}, {name(k.Filter), "filter the logs"},
-			{"↑ at top", "older logs"}, {name(k.View), "an invocation"},
+			{"↑ at top", "older logs"}, {name(k.View), "open the row"},
 		}},
 	}
 }

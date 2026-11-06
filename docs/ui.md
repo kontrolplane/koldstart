@@ -21,7 +21,7 @@ The header shows the aws profile, `default` without one, the account, the region
   - history: the deploys, each the versions of the state it wrote; one opens to show the resources and outputs it changed from the deploy before, and each changed resource opens for its full diff
   - an empty tab says `no functions yet`, `no resources yet`, `no outputs yet` or `no deploys yet`, and `no function matches <filter>: esc clears the filter` when the filter hides every row
 - `function`, in tabs:
-  - overview: its configuration; what lambda says of it now, its state and its last update, with a notice on top when its code, memory, timeout or runtime was changed outside koldstart; sparklines of its invocations, errors, throttles, p99 duration and concurrency in the last hour, or `not invoked in the last hour`; its environment, values that look like secrets hidden; and what invokes it, its url too
+  - overview: its name, and its runtime, architecture, memory, timeout, the stage's last deploy and its state in lambda on a line below, with a notice when its code, memory, timeout or runtime was changed outside koldstart; then its configuration; what lambda says of it now, its state and its last update, and each setting that differs from what koldstart deployed; sparklines of its invocations, errors, throttles, p99 duration and concurrency in the last hour, each with its total, its range and its last minute, or `not invoked in the last hour`; what invokes it, its url first, each by its kind; its environment, sorted, values that look like secrets hidden and secrets, refs and outputs by what they stand for; and its role, with its managed policies and what its policy allows. Two columns from a terminal 111 wide, one below it. Long arns, names and urls are cut in the middle; `c` copies the whole value of the row under the cursor, the name of a variable whose value is hidden, and `enter` opens its log group, role or a trigger on the resource page, or its url in the browser
   - logs: the last half hour, followed with a live tail, or read again every five seconds where there is none; json and logfmt tinted so the message and an error level stand out, long lines wrapped under their time; `/` filters the lines and marks what it looks for, and `↑` or `pgup` at the top reads the hour before. Without a log group: `no log group: deploy the function first`
   - invocations: the requests in the logs read, with their duration, billed duration, memory, cold start, and whether they failed or timed out; one opens with its lines of the log. Without any: `no invocations in the logs read: ↑ on the logs tab reads further back`
   - invoke: the `.json` events kept for it, with the ones that are not json marked, and what the last invocation with each returned or failed with, and its log
@@ -40,7 +40,7 @@ The stages, a stage and a function are read again every five seconds, and `p` pa
 - `pgup`, `pgdn`: page up and down; on the invoke tab, scroll what the invocation returned
 - `tab`, `shift+tab`: switch between functions, resources, outputs and history; on a function between its overview, logs, invocations and invoke; on a resource between what was applied and what is in aws; on a dialog between no and yes
 - `←`, `h` and `→`, `l`: switch the tabs of a stage, a function and a resource, as `tab` and `shift+tab` do; on a dialog, choose no or yes
-- `enter`: open a stage, a function, a resource, a deploy, an invocation, or a change's diff; apply a filter; answer a dialog with the button chosen
+- `enter`: open a stage, a function, a resource, a deploy, an invocation, or a change's diff; on a function's overview, the log group, role or trigger of the row, or its url in the browser; apply a filter; answer a dialog with the button chosen
 - `/`: filter the stages, the tabs of a stage, or the lines of the logs
 - `d`: plan a deploy of the project's stage, or on a function of its code
 - `ctrl+s`: apply the plan on screen
@@ -51,7 +51,7 @@ The stages, a stage and a function are read again every five seconds, and `p` pa
 - `e`: edit the event to invoke with in `$VISUAL`, `$EDITOR` or `vi`
 - `f`: on the logs, follow the newest lines, or stop following
 - `y`, `n`: answer the dialog to release a lock or to run against prod
-- `c`: copy what is under the cursor: an app and stage, a function's arn, a resource's id in aws, an output, a version, a request id, or what the last invocation returned
+- `c`: copy what is under the cursor: an app and stage, a function's arn, the whole value of a row of its overview, a resource's id in aws, an output, a version, a request id, or what the last invocation returned
 - `r`: read the page again
 - `p`: pause or resume reading the page again
 - `?`: help; any key closes it
