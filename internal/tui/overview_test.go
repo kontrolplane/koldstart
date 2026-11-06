@@ -230,10 +230,13 @@ func TestHelpFits(t *testing.T) {
 		m := newTestModel(t, newFake(t))
 		m, _ = update(t, m, tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 		m = settle(t, m, m.Init())
-		for name, want := range map[string]string{"stage": "plan a deploy", "function": "invoke in aws"} {
+		for name, want := range map[string]string{"stage": "plan a deploy", "function": "invoke in aws", "diff": "next / previous change"} {
 			p := m
-			if name == "function" {
+			switch name {
+			case "function":
 				p = pressKeys(t, p, "enter")
+			case "diff":
+				p, _ = p.openDiff("function/api", "update", map[string]any{"a": 1}, map[string]any{"a": 2})
 			}
 			p.showHelp = true
 			v := ansi.Strip(p.helpView())

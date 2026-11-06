@@ -947,8 +947,9 @@ type helpLayout struct {
 }
 
 // helpView draws the key reference in a card, in the roomiest layout the content area holds.
-// Where every section does not fit, it shows the first, the keys that work everywhere, beside
-// the one for the page on screen. The notes are left out before any keys are.
+// Where every section does not fit, it leaves out the function's on a diff and the diff's
+// elsewhere, and then shows the first, the keys that work everywhere, beside the one for the page
+// on screen. The notes are left out before any keys are.
 func (m model) helpView() string {
 	all := helpSections(m.keys)
 	pair := []helpSection{all[0], all[1]}
@@ -958,10 +959,17 @@ func (m model) helpView() string {
 	case diffPage:
 		pair[1] = all[3]
 	}
+	three := all[:3]
+	if m.page == diffPage {
+		three = []helpSection{all[0], all[1], all[3]}
+	}
 	layouts := []helpLayout{
 		{sections: all, gap: 4, padY: 1, padX: 3, notes: true, close: true},
 		{sections: all, gap: 4, padX: 2, notes: true},
 		{sections: all, gap: 3, padX: 1},
+		{sections: three, gap: 4, padY: 1, padX: 3, notes: true, close: true},
+		{sections: three, gap: 4, padX: 2, notes: true},
+		{sections: three, gap: 3, padX: 1},
 		{sections: pair, gap: 4, padY: 1, padX: 3, notes: true, close: true},
 		{sections: pair, gap: 4, padX: 2, notes: true},
 		{sections: pair, gap: 3, padX: 1},
