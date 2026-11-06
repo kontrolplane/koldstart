@@ -265,7 +265,7 @@ func (m model) openStage(ref cli.StageRef) (model, tea.Cmd) {
 		*s = fresh
 	}
 	m = m.switchPage(stagePage)
-	m.loading, m.loadingMsg = !s.loaded, "reading the state of "+ref.String()+"…"
+	m.loading, m.loadingMsg = !s.loaded, readingNote("the state of "+ref.String())
 	m, cmd := m.loadStage()
 	if s.tab == historyTab {
 		var history tea.Cmd
@@ -908,7 +908,7 @@ func (m model) stageUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 		return m.toggleFold(), nil
 	case key.Matches(msg, m.keys.Refresh):
 		if !s.loaded {
-			m.loading, m.loadingMsg = true, "reading the state of "+s.ref.String()+"…"
+			m.loading, m.loadingMsg = true, readingNote("the state of "+s.ref.String())
 		}
 		m, cmd := m.loadStage()
 		if s.tab == historyTab {

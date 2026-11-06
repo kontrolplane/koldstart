@@ -40,7 +40,7 @@ func (m model) openVersion(i int) (model, tea.Cmd) {
 		previous = d[i+1][0].ID
 	}
 	m = m.switchPage(versionPage)
-	m.loading, m.loadingMsg = true, "reading the deploy…"
+	m.loading, m.loadingMsg = true, readingNote("the deploy")
 	return m.loadVersion(d[i][0].ID, previous)
 }
 

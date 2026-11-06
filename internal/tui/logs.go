@@ -914,7 +914,7 @@ func (m model) logsHead() string {
 	}
 	switch {
 	case l.loadingOlder:
-		parts = append(parts, "reading the hour before "+formatTime(l.from)+"…")
+		parts = append(parts, readingNote("the hour before "+formatTime(l.from)))
 	case l.emptyOlder > 0:
 		parts = append(parts, "nothing logged in "+hoursBefore(l.emptyOlder)+" "+formatTime(l.from.Add(time.Duration(l.emptyOlder)*olderStep)), "↑ reads further back")
 	default:

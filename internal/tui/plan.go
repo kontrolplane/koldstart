@@ -243,7 +243,7 @@ func (m model) planUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 			return m, nil
 		}
 		p.refresh, p.earlier, p.plan, p.cursor, p.scroll = true, p.plan, nil, 0, 0
-		m.loading, m.loadingMsg = true, "reading every resource of "+p.ref.String()+" as it is in aws…"
+		m.loading, m.loadingMsg = true, readingNote("every resource of "+p.ref.String()+" as it is in aws")
 		return m.loadPlan()
 	case key.Matches(msg, m.keys.GroupBy):
 		return m.regroupPlan(), nil
