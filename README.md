@@ -29,35 +29,25 @@ functions {
     }
     link { ["orders"] = "read" }
     events {
-      new kdst.HttpRoute { method = "GET"; path = "/orders/{id}" }
-      new kdst.HttpRoute { method = "POST"; path = "/orders" }
+      kdst.get("/orders/{id}")
+      kdst.post("/orders")
     }
   }
   ["worker"] {
     link { ["orders"] = "readwrite" }
     events {
-      new kdst.Queue { queue = kdst.ref("jobs", "Arn"); batchSize = 10 }
+      kdst.fromQueue("jobs")
     }
   }
 }
 
 resources {
-  ["orders"] {
-    type = "AWS::DynamoDB::Table"
-    properties {
-      BillingMode = "PAY_PER_REQUEST"
-      AttributeDefinitions { new { AttributeName = "id"; AttributeType = "S" } }
-      KeySchema { new { AttributeName = "id"; KeyType = "HASH" } }
-    }
-  }
-  ["jobs"] {
-    type = "AWS::SQS::Queue"
-    properties { VisibilityTimeout = 60 }
-  }
+  ["orders"] = kdst.table("id")
+  ["jobs"] = (kdst.queue()) { properties { VisibilityTimeout = 60 } }
 }
 ```
 
-The file amends `Project.pkl`, which gives you type checking and completion in any editor with a pkl plugin, and imports `kdst.pkl` for what goes inside functions and resources: `kdst.stage`, `kdst.ref()`, the secrets and the events. Both come from the schema package of a koldstart release, which a `PklProject` beside the file names once:
+The file amends `Project.pkl`, which gives you type checking and completion in any editor with a pkl plugin, and imports `kdst.pkl` for what goes inside functions and resources: `kdst.stage`, `kdst.ref()`, the secrets, the events and the resource shorthands. Both come from the schema package of a koldstart release, which a `PklProject` beside the file names once:
 
 ```pkl
 amends "pkl:Project"
@@ -67,7 +57,7 @@ dependencies {
 }
 ```
 
-`kdst.stage` is whatever `--stage` was set to, so one file describes every stage; here the api gets more memory in `prod`. `link` lets a function use a resource: its role may read or write it, and its name and arn arrive as `ORDERS_NAME` and `ORDERS_ARN`. `resources` takes any `AWS::*` type, created through the cloud control api. `kdst.ref()` reads an attribute of a resource once it exists, and `kdst.param("api-key")` is read from parameter store during the deploy, as `/orders/prod/api-key` for `prod`.
+`kdst.stage` is whatever `--stage` was set to, so one file describes every stage; here the api gets more memory in `prod`. `kdst.get()` and `kdst.post()` are routes of the stage's http api, and `kdst.fromQueue("jobs")` reads the queue `jobs` of the project. `link` lets a function use a resource: its role may read or write it, and its name and arn arrive as `ORDERS_NAME` and `ORDERS_ARN`. `resources` takes any `AWS::*` type, created through the cloud control api; `kdst.table("id")` is an on-demand table keyed by `id`, with point-in-time recovery, and `kdst.queue()` a queue, here amended to hide a message for 60 seconds. `kdst.ref()` reads an attribute of a resource once it exists, and `kdst.param("api-key")` is read from parameter store during the deploy, as `/orders/prod/api-key` for `prod`.
 
 ```bash
 kdst plan --stage prod
