@@ -228,7 +228,9 @@ func TestResourceTreeOrphans(t *testing.T) {
 var sdFunctionNames = []string{"api", "checkout", "orders-worker", "invoice-render", "nightly-report", "webhooks", "search-indexer", "image-resize"}
 
 // sdARN is an arn of the fixture's account and region.
-func sdARN(service, rest string) string { return "arn:aws:" + service + ":eu-west-1:123456789012:" + rest }
+func sdARN(service, rest string) string {
+	return "arn:aws:" + service + ":eu-west-1:123456789012:" + rest
+}
 
 // sdStage is a fake with orders/dev as a real stage holds it: functions with their roles, log
 // groups, urls, routes and schedules, tables, queues, buckets and topics to make 200 resources,

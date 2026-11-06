@@ -24,8 +24,8 @@ func sdAt(t *testing.T, f *fakeBackend, w, h int) model {
 // sdLine is the line on screen that holds want, and the column it starts at, or -1.
 func sdLine(m model, want string) (string, int) {
 	for line := range strings.SplitSeq(screen(m), "\n") {
-		if i := strings.Index(line, want); i >= 0 {
-			return line, ansi.StringWidth(line[:i])
+		if before, _, ok := strings.Cut(line, want); ok {
+			return line, ansi.StringWidth(before)
 		}
 	}
 	return "", -1
@@ -44,7 +44,7 @@ func TestStageHead(t *testing.T) {
 	}{
 		{
 			name: "deployed and locked", width: 120,
-			want: []string{"stage    orders/dev · 200 resources · 1 kept", "account  123456789012 · eu-west-1", "deployed 3h ago by levi · " + formatTime(time.Now().Add(-3*time.Hour))[:9], "lock     ● ana on ana-mbp · deploy since ", ", 4m ago"},
+			want: []string{"stage    orders/dev · 200 resources · 1 kept", "account  123456789012 · eu-west-1", "deployed 3h ago by levi · " + formatTime(time.Now().Add(-3 * time.Hour))[:9], "lock     ● ana on ana-mbp · deploy since ", ", 4m ago"},
 		},
 		{
 			name: "narrow", width: 80,

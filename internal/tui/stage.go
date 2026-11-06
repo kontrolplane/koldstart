@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -33,11 +34,14 @@ const (
 
 var stageTabs = []string{"functions", resourcesWord, "outputs", "history"}
 
-// resourcesWord names the resources tab and the column of the overview that counts them, and
-// functionWord the column of the functions tab and a function where the filter hides them all.
+// resourcesWord names the resources tab and the column of the overview that counts them,
+// functionWord the column of the functions tab and a function where the filter hides them all, and
+// stageWord and deployedWord the facts of the stage's head, deployedWord the column of its history.
 const (
 	resourcesWord = "resources"
 	functionWord  = "function"
+	stageWord     = "stage"
+	deployedWord  = "deployed"
 )
 
 // stageState is one stage: its functions, resources, outputs and the history of its state.
@@ -174,7 +178,7 @@ var (
 		{title: "", width: 12, drop: 1},
 	}
 	historyColumns = []column{
-		{title: "deployed", width: 8},
+		{title: deployedWord, width: 8},
 		{title: "", width: 15, drop: 3},
 		{title: "by", width: 8, grow: 1, drop: 2},
 		{title: "changes", width: 14},
@@ -525,7 +529,7 @@ type groupKey struct {
 
 // fold is the key the group is folded by.
 func (k groupKey) fold() string {
-	return string(rune('0'+k.order)) + "/" + k.name
+	return strconv.Itoa(k.order) + "/" + k.name
 }
 
 // The kinds of group, by groupKey.order, and their headings.
@@ -788,12 +792,11 @@ func (s stageState) resourceRow(r stageResource, hidden int, attention bool) tab
 		}
 		name = cell{styles.S(branch, styles.ToneRule), styles.S(r.id, styles.ToneBody)}
 	case r.head && hidden > 0:
-		name = cell{styles.S("▸ ", styles.ToneFaint), styles.S(headName(r.id), styles.ToneText)}
 		count := styles.S("  +"+formatInt(hidden), styles.ToneFaint)
 		if attention {
 			count = styles.S("  ▲ +"+formatInt(hidden), styles.ToneWarning)
 		}
-		name = append(name, count)
+		name = cell{styles.S("▸ ", styles.ToneFaint), styles.S(headName(r.id), styles.ToneText), count}
 	case r.head && !r.last:
 		name = cell{styles.S("▾ ", styles.ToneFaint), styles.S(headName(r.id), styles.ToneText)}
 	case r.head:
@@ -1021,13 +1024,13 @@ func (m model) stageFacts() string {
 	if n == 1 {
 		noun = " resource"
 	}
-	where := headFact{label: "stage", value: cell{styles.S(s.ref.String(), styles.ToneText), sep(), styles.S(formatInt(n), styles.ToneBody), styles.S(noun, styles.ToneFaint)}}
+	where := headFact{label: stageWord, value: cell{styles.S(s.ref.String(), styles.ToneText), sep(), styles.S(formatInt(n), styles.ToneBody), styles.S(noun, styles.ToneFaint)}}
 	if kept := len(s.st.Retained); kept > 0 {
 		where.short = where.value
 		where.value = append(slices.Clone(where.value), sep(), styles.S(formatInt(kept), styles.ToneBody), styles.S(" kept", styles.ToneFaint))
 	}
 	account := cell{styles.S(orDash(s.st.Account), styles.ToneBody), sep(), styles.S(s.ref.Region, styles.ToneMuted)}
-	deployed := headFact{label: "deployed", value: text("not deployed yet", styles.ToneMuted)}
+	deployed := headFact{label: deployedWord, value: text("not deployed yet", styles.ToneMuted)}
 	if s.st.DeployedAt.IsZero() && m.b.Local(s.ref) {
 		deployed.value = append(deployed.value, styles.S(" · "+m.keys.Deploy.Help().Key+" plans its first deploy", styles.ToneFaint))
 		deployed.short = text("not deployed yet", styles.ToneMuted)

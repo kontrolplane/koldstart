@@ -117,13 +117,11 @@ func summarise(ctx context.Context, b backend, ref cli.StageRef, pairs []deployP
 	var wg sync.WaitGroup
 	slots := make(chan struct{}, summaryReads)
 	for id, r := range reads {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			slots <- struct{}{}
 			defer func() { <-slots }()
 			r.st, r.err = b.Version(ctx, ref, id)
-		}()
+		})
 	}
 	wg.Wait()
 	out := make(map[string]deploySummary, len(pairs))
@@ -190,9 +188,7 @@ func (m model) applySummaries(msg summariesLoadedMsg) (model, tea.Cmd) {
 	}
 	s.summariesAnswered = msg.gen
 	s.summaries = cloned(s.summaries)
-	for k, sum := range msg.summaries {
-		s.summaries[k] = sum
-	}
+	maps.Copy(s.summaries, msg.summaries)
 	return m.updateStageTables().loadSummaries()
 }
 
