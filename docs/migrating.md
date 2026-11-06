@@ -66,7 +66,9 @@ koldstart does not read `serverless.yml` itself, and does not run serverless fra
 | `Mappings` and `Fn::FindInMap`                              | a `local` Mapping, looked up by its keys                             |
 | `Fn::Base64` of a string, `Fn::Select` of a list written out | `.base64`, the item                                                 |
 | `<Function>LambdaFunction`, the logical id of a function    | that function                                                        |
-| `${ssm:/path}`                                              | `kdst.ssm("/path")`                                                  |
+| `${ssm:/${self:service}/${sls:stage}/<name>}`               | `kdst.param("<name>")`                                               |
+| `${ssm:/aws/reference/secretsmanager/${self:service}/${sls:stage}/<name>}` | `kdst.secret("<name>")`                                |
+| `${ssm:/path}`, any other path                              | `kdst.ssm("/path")`, its variables interpolated                      |
 | `${cf:<service>-<stage>.<Output>}`                          | `kdst.stageOutput("<service>", "<stage>", "<Output>")`               |
 | `${cf(<region>):...}`, `${cf.<region>:...}`                 | the same, amended with `{ region = "<region>" }`                     |
 | `${env:NAME}`, `${env:NAME, 'default'}`                     | `read("env:NAME")`, `read?("env:NAME") ?? "default"`                 |
@@ -77,7 +79,7 @@ koldstart does not read `serverless.yml` itself, and does not run serverless fra
 | `${self:service}`, `${self:provider.region}`, `${aws:region}` | `module.app`, `module.region`                                      |
 | `${self:...}` of anything else, such as `custom`            | the value it names                                                   |
 
-A variable inside a longer string becomes pkl interpolation: `orders-${sls:stage}` is `"orders-\(kdst.stage)"`.
+A variable inside a longer string becomes pkl interpolation: `orders-${sls:stage}` is `"orders-\(kdst.stage)"`. An ssm path is the app's and stage's when it starts with the service, by name or as `${self:service}`, then the stage, as `${sls:stage}` or `${opt:stage}`: `${ssm:/orders/${sls:stage}/api-key}` is `kdst.param("api-key")`, and `${ssm:/shared/${sls:stage}/key}` stays `kdst.ssm("/shared/\(kdst.stage)/key")`.
 
 ## what is left to you
 

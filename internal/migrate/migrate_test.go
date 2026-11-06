@@ -186,7 +186,11 @@ func TestWriteTodos(t *testing.T) {
 
 // TestText checks strings with serverless variables become pkl strings and expressions.
 func TestText(t *testing.T) {
-	c := &converter{region: "eu-west-1", resourceNames: map[string]string{}}
+	var doc yaml.Node
+	if err := yaml.Unmarshal([]byte("service: orders\n"), &doc); err != nil {
+		t.Fatal(err)
+	}
+	c := &converter{doc: doc.Content[0], region: "eu-west-1", resourceNames: map[string]string{}}
 	tests := []struct {
 		in, want string
 		ok       bool
@@ -198,6 +202,16 @@ func TestText(t *testing.T) {
 		{in: "${self:service}", want: "module.app", ok: true},
 		{in: "${aws:region}", want: "module.region", ok: true},
 		{in: "${ssm:/orders/key}", want: `kdst.ssm("/orders/key")`, ok: true},
+		{in: "${ssm:/${self:service}/${sls:stage}/api-key}", want: `kdst.param("api-key")`, ok: true},
+		{in: "${ssm:/orders/${opt:stage, 'dev'}/stripe/key~true}", want: `kdst.param("stripe/key")`, ok: true},
+		{in: "${ssm:/aws/reference/secretsmanager/${self:service}/${self:provider.stage}/db}", want: `kdst.secret("db")`, ok: true},
+		{in: "${ssm:/aws/reference/secretsmanager/orders/key}", want: `kdst.ssm("/aws/reference/secretsmanager/orders/key")`, ok: true},
+		{in: "${ssm:/shared/${sls:stage}/key}", want: `kdst.ssm("/shared/\(kdst.stage)/key")`, ok: true},
+		{in: "${ssm:/orders/dev/key}", want: `kdst.ssm("/orders/dev/key")`, ok: true},
+		{in: "${ssm:/${self:service}/${sls:stage}//key}", want: `kdst.ssm("/\(module.app)/\(kdst.stage)//key")`, ok: true},
+		{in: "${ssm:/${self:service}/${sls:stage}/key, 'none'}", want: `kdst.param("key")`, ok: true},
+		{in: "${ssm:/${env:PREFIX}/key}", want: `kdst.ssm("/\(read("env:PREFIX"))/key")`, ok: true},
+		{in: "${ssm:/${cf:shared-prod.Path}/key}", ok: false},
 		{in: "${env:LEVEL, 'info'}", want: `read?("env:LEVEL") ?? "info"`, ok: true},
 		{in: "${env:LEVEL}", want: `read("env:LEVEL")`, ok: true},
 		{in: "${cf:payments-prod.ApiUrl}", want: `kdst.stageOutput("payments", "prod", "ApiUrl")`, ok: true},

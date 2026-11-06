@@ -24,6 +24,9 @@ functions {
       ["TABLE_NAME"] = "orders-\(kdst.stage)"
       ["API_KEY"] = kdst.ssm("/orders/api-key")
       ["STAGE"] = kdst.stage
+      ["SIGNING_KEY"] = kdst.param("signing-key")
+      ["DB_PASSWORD"] = kdst.secret("db")
+      ["SENTRY_DSN"] = kdst.ssm("/shared/\(kdst.stage)/sentry-dsn")
     }
     permissions {
       // TODO: serverless.yml gave these statements to every function: keep what this one needs, or use link.

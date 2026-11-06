@@ -35,6 +35,10 @@ provider:
 functions:
   api:
     handler: src/api.handler
+    environment:
+      SIGNING_KEY: ${ssm:/${self:service}/${sls:stage}/signing-key}
+      DB_PASSWORD: ${ssm:/aws/reference/secretsmanager/orders/${opt:stage, 'dev'}/db~true}
+      SENTRY_DSN: ${ssm:/shared/${sls:stage}/sentry-dsn}
     events:
       - httpApi: GET /orders/{id}
       - httpApi:

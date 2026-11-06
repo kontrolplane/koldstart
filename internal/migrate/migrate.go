@@ -257,11 +257,16 @@ func section(where string) int {
 
 // service is the app's name: the service, lowercase.
 func (c *converter) service() string {
+	return strings.ToLower(str(c.serviceNode()))
+}
+
+// serviceNode is the service's name as serverless.yml gives it.
+func (c *converter) serviceNode() *yaml.Node {
 	service := get(c.doc, "service")
 	if name := get(service, "name"); name != nil {
 		service = name
 	}
-	return strings.ToLower(str(service))
+	return service
 }
 
 var functionName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9-]{0,39}$`)
