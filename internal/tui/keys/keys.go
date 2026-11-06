@@ -33,13 +33,13 @@ type KeyMap struct {
 	Stamps key.Binding
 	// Request opens the invocation a line of the logs belongs to, a page with no plan to group, so
 	// it shares o with GroupBy.
-	Request   key.Binding
-	Fold      key.Binding
-	Copy      key.Binding
-	NextDiff  key.Binding
-	PrevDiff  key.Binding
-	Unfold    key.Binding
-	GroupBy   key.Binding
+	Request  key.Binding
+	Fold     key.Binding
+	Copy     key.Binding
+	NextDiff key.Binding
+	PrevDiff key.Binding
+	Unfold   key.Binding
+	GroupBy  key.Binding
 	// Pane switches the invoke tab between an event's payload and what it returned.
 	Pane key.Binding
 	// Next and Previous step through the invocations from one of them, or the lines of the logs

@@ -221,7 +221,7 @@ func lgLayoutPages(t *testing.T, w, h int) map[string]model {
 	m, _ = update(t, m, tea.WindowSizeMsg{Width: w, Height: h})
 	m = settle(t, m, m.Init())
 	m = pressKeys(t, m, "enter", "tab")
-	filtered := pressKeys(t, m, "v", "v", "/")
+	filtered := pressKeys(t, m, "s", "s", "/")
 	filtered = typeText(t, filtered, "card")
 	pages := map[string]model{
 		"logs":               m,
@@ -231,7 +231,7 @@ func lgLayoutPages(t *testing.T, w, h int) map[string]model {
 		"logs without times": pressKeys(t, m, "t", "t", "g"),
 		"logs filtered":      pressKeys(t, filtered, "enter"),
 		"logs typing":        filtered,
-		"logs at error":      pressKeys(t, m, "v", "v", "v", "b"),
+		"logs at error":      pressKeys(t, m, "s", "s", "s", "b"),
 	}
 	for i := range logs {
 		p := lgOpen(t, m, i)
@@ -280,7 +280,7 @@ func TestLogLineEscapes(t *testing.T) {
 		{Time: at.Add(4 * time.Millisecond), Stream: evil, Message: "REPORT RequestId: " + evil + "\tDuration: 1.00 ms"},
 	}
 	m := pressKeys(t, started(t, f), "enter", "tab")
-	pages := map[string]model{"logs": m, "grouped": pressKeys(t, m, "b"), "at warn": pressKeys(t, m, "v", "v")}
+	pages := map[string]model{"logs": m, "grouped": pressKeys(t, m, "b"), "at warn": pressKeys(t, m, "s", "s")}
 	for i := range f.logs {
 		pages["line "+formatInt(i)] = lgOpen(t, m, i)
 	}

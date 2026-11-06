@@ -168,17 +168,17 @@ func TestLogsCursorStays(t *testing.T) {
 	if got := lgCursor(m); got != want {
 		t.Errorf("after reading older lines the cursor is on %q, want %q", got, want)
 	}
-	m = pressKeys(t, m, "v", "v")
+	m = pressKeys(t, m, "s", "s")
 	if got := lgCursor(m); !strings.Contains(got, "stock is low") {
 		t.Errorf("at warn the cursor is on %q, want the first line shown, as none before its own is", got)
 	}
-	m = pressKeys(t, m, "v", "v")
+	m = pressKeys(t, m, "s", "s")
 	if got := lgCursor(m); got != want {
 		t.Errorf("with every level again the cursor is on %q, want %q", got, want)
 	}
 }
 
-// TestLogsLevel checks v cycles the level the lines are shown from, the frame says it, the head
+// TestLogsLevel checks s cycles the level the lines are shown from, the frame says it, the head
 // counts the lines kept, and the filter and the level both keep a line.
 func TestLogsLevel(t *testing.T) {
 	tests := []struct {
@@ -190,13 +190,13 @@ func TestLogsLevel(t *testing.T) {
 		empty  string
 	}{
 		{name: "every level", shown: 16},
-		{name: "info", keys: []string{"v"}, shown: 15, meta: "level ≥ info"},
-		{name: "warn", keys: []string{"v", "v"}, shown: 5, meta: "level ≥ warn"},
-		{name: "error", keys: []string{"v", "v", "v"}, shown: 3, meta: "level ≥ error"},
-		{name: "all again", keys: []string{"v", "v", "v", "v"}, shown: 16},
-		{name: "warn and a filter", keys: []string{"v", "v"}, filter: "card", shown: 1, meta: "filter card · level ≥ warn"},
+		{name: "info", keys: []string{"s"}, shown: 15, meta: "level ≥ info"},
+		{name: "warn", keys: []string{"s", "s"}, shown: 5, meta: "level ≥ warn"},
+		{name: "error", keys: []string{"s", "s", "s"}, shown: 3, meta: "level ≥ error"},
+		{name: "all again", keys: []string{"s", "s", "s", "s"}, shown: 16},
+		{name: "warn and a filter", keys: []string{"s", "s"}, filter: "card", shown: 1, meta: "filter card · level ≥ warn"},
 		{name: "a filter alone", filter: "card", shown: 2, meta: "filter card"},
-		{name: "error and a filter of none", keys: []string{"v", "v", "v"}, filter: "stock", shown: 0, meta: "filter stock · level ≥ error", empty: "no line at error or above matches stock: esc clears the filter"},
+		{name: "error and a filter of none", keys: []string{"s", "s", "s"}, filter: "stock", shown: 0, meta: "filter stock · level ≥ error", empty: "no line at error or above matches stock: esc clears the filter"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -228,8 +228,8 @@ func TestLogsLevel(t *testing.T) {
 // when none is.
 func TestLogsLevelOnly(t *testing.T) {
 	m, _ := onLogs(t, logSeries(time.Now().Add(-time.Minute), 3, "line"))
-	m = pressKeys(t, m, "v", "v")
-	if v := screen(m); !strings.Contains(v, "no line at warn or above: v changes the level") {
+	m = pressKeys(t, m, "s", "s")
+	if v := screen(m); !strings.Contains(v, "no line at warn or above: s changes the level") {
 		t.Errorf("the tab does not say no line is at warn:\n%s", v)
 	}
 }
@@ -252,7 +252,7 @@ func TestLogsGrouped(t *testing.T) {
 			"START RequestId: " + lgPythonID, "charging the card", "the card was declined", "END RequestId: " + lgPythonID, "REPORT RequestId: " + lgPythonID, "rule bbbbbbbb",
 			"cache miss", "the database is down", "a slow query", "listening for events", "connected to the queue", "panic:",
 		}},
-		{name: "grouped at error", keys: []string{"b", "v", "v", "v"}, want: []string{"the card was declined", "rule bbbbbbbb", "the database is down", "panic:"}},
+		{name: "grouped at error", keys: []string{"b", "s", "s", "s"}, want: []string{"the card was declined", "rule bbbbbbbb", "the database is down", "panic:"}},
 		{name: "grouped and back", keys: []string{"b", "b"}, want: []string{"START RequestId: " + lgNodeID, "START RequestId: " + lgPythonID}},
 	}
 	for _, tt := range tests {
@@ -327,9 +327,9 @@ func BenchmarkLogsShown(b *testing.B) {
 		keys []string
 	}{
 		{name: "grouped", keys: []string{"b"}},
-		{name: "at warn", keys: []string{"v", "v"}},
+		{name: "at warn", keys: []string{"s", "s"}},
 		{name: "without times", keys: []string{"t", "t"}},
-		{name: "up grouped at warn", keys: []string{"b", "v", "v", "k"}},
+		{name: "up grouped at warn", keys: []string{"b", "s", "s", "k"}},
 		{name: "top grouped", keys: []string{"b", "g"}},
 		{name: "a line", keys: []string{"k", "enter"}},
 	}
