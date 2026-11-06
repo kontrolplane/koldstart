@@ -221,7 +221,7 @@ func TestLogLineJSON(t *testing.T) {
 			if m.status != tt.status {
 				t.Errorf("status %q, want %q", m.status, tt.status)
 			}
-			if _, foot := m.frameMeta(); tt.path != "" && !strings.HasPrefix(ansi.Strip(foot), tt.path) {
+			if _, foot := m.frameMeta(); tt.path != "" && tt.path != "." && !strings.HasPrefix(ansi.Strip(foot), tt.path) {
 				t.Errorf("the frame's foot is %q, want the path %q", ansi.Strip(foot), tt.path)
 			}
 		})

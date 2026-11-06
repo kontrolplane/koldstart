@@ -33,9 +33,9 @@ func sdLine(m model, want string) (string, int) {
 }
 
 // TestStageHead checks the head above the tabs, as the function's overview has its own: the
-// stage's name, and on one line below its resources and what a remove kept, its account and
-// region, when it was deployed and by whom, and its lock, the shorter forms where the whole line
-// does not fit, the date, the account and the region the header shows left out.
+// stage's name, and on one line below its resources and what a remove kept, when it was deployed
+// and by whom, and its lock, without the account and region the header shows, and the shorter
+// forms where the whole line does not fit.
 func TestStageHead(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -46,11 +46,12 @@ func TestStageHead(t *testing.T) {
 	}{
 		{
 			name: "deployed and locked", width: 160,
-			facts: []string{"200 resources · 1 kept · 123456789012 · eu-west-1 · deployed 3h ago by levi · " + formatTime(time.Now().Add(-3 * time.Hour))[:9], " · ● ana on ana-mbp · deploy since ", ", 4m ago"},
+			facts: []string{"200 resources · 1 kept · deployed 3h ago by levi · " + formatTime(time.Now().Add(-3 * time.Hour))[:9], " · ● ana on ana-mbp · deploy since ", ", 4m ago"},
+			not:   []string{"123456789012", "eu-west-1"},
 		},
 		{
 			name: "narrow", width: 80,
-			facts: []string{"200 resources · 1 kept · 3h ago by levi · ● ana on ana-mbp, 4m ago"},
+			facts: []string{"200 resources · 1 kept · deployed 3h ago by levi · ● ana on ana-mbp, 4m ago"},
 			not:   []string{"deploy since", "123456789012", "eu-west-1"},
 		},
 		{
@@ -68,7 +69,7 @@ func TestStageHead(t *testing.T) {
 				st := state.New("orders", "dev", "eu-west-1", "123456789012")
 				f.states[ordersDev] = st
 			},
-			facts: []string{"0 resources · 123456789012 · eu-west-1 · not deployed yet · d plans its first deploy · ● ana on ana-mbp, 4m ago"},
+			facts: []string{"0 resources · not deployed yet · d plans its first deploy · ● ana on ana-mbp"},
 			not:   []string{"kept"},
 		},
 	}

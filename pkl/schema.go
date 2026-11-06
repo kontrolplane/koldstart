@@ -77,6 +77,14 @@ func (d Dependency) String() string {
 	return d.Version
 }
 
+// Name is d by its version, or dev for the schema of a build, without the directory String gives.
+func (d Dependency) Name() string {
+	if d.Local() {
+		return "dev"
+	}
+	return d.Version
+}
+
 // Entry is d as a line of a PklProject's dependencies.
 func (d Dependency) Entry() string {
 	if d.Local() {

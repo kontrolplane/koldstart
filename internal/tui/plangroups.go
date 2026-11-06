@@ -179,7 +179,7 @@ func (m model) planLines() ([]string, pickList) {
 	if p.plan == nil {
 		return nil, pickList{}
 	}
-	head := m.planHead(contentWidth - 4)
+	head := m.planHead(detailWidth())
 	f, groups, rows := planRows(p)
 	var body pickList
 	if len(f.changes) == 0 {

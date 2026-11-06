@@ -125,7 +125,9 @@ works on a stage works on the one --stage names, dev without it.`, name),
 		},
 	}
 	root.SetVersionTemplate(name + " {{.Version}}\n")
-	root.SetUsageTemplate(strings.Replace(root.UsageTemplate(), "{{if .Runnable}}", "{{if and .Runnable .HasParent}}", 1))
+	usage := strings.Replace(root.UsageTemplate(), "{{if .Runnable}}", "{{if and .Runnable .HasParent}}", 1)
+	usage = strings.Replace(usage, `Use "{{.CommandPath}} [command] --help" for more information about a command.`, `{{.CommandPath}} <command> --help prints the help of a command.`, 1)
+	root.SetUsageTemplate(usage)
 	root.SetFlagErrorFunc(flagError)
 
 	flags := root.PersistentFlags()

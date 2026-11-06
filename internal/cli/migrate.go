@@ -101,7 +101,7 @@ when it has none.`,
 // schema it names, and whether it is resolved.
 func printProject(w io.Writer, path string, dep schema.Dependency, written, resolved bool, note string) {
 	if written {
-		_, _ = fmt.Fprintf(w, "wrote %s, with the schema of koldstart %s\n", path, dep)
+		_, _ = fmt.Fprintf(w, "wrote %s, with the schema of koldstart %s\n", path, dep.Name())
 	} else {
 		_, _ = fmt.Fprintf(w, "kept %s, which names the schema already\n", path)
 	}

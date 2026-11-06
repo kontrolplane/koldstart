@@ -164,10 +164,10 @@ func (m model) invokeLayout() invokeLayout {
 	height := functionBodyHeight()
 	if contentWidth >= invokeWideWidth {
 		w := min(48, contentWidth*2/5)
-		return invokeLayout{wide: true, showEvents: true, eventsW: w, eventsH: height - tableHeaderRows, paneW: contentWidth - 3 - w - 2, paneH: height}
+		return invokeLayout{wide: true, showEvents: true, eventsW: w, eventsH: height - tableHeaderRows, paneW: contentWidth - 2 - w - 2, paneH: height}
 	}
 	rows := max(1, min(len(f.events.rows), (height-1)/3))
-	l := invokeLayout{showEvents: true, eventsW: contentWidth - 3, eventsH: rows, paneW: contentWidth - 3, paneH: height - rows - tableHeaderRows - 1}
+	l := invokeLayout{showEvents: true, eventsW: contentWidth - 2, eventsH: rows, paneW: contentWidth - 2, paneH: height - rows - tableHeaderRows - 1}
 	if f.pane.focused {
 		l.showEvents, l.paneH = false, height
 	}
@@ -666,7 +666,8 @@ func (m model) paneCopyValue() string {
 }
 
 // invokeKeys are the footer's keys on the invoke tab: those of the json while it has them, with
-// esc back to the events, and otherwise enter into the json, v, e, scrolling and copying.
+// esc back to the events, and otherwise i first, as what the tab is for, then enter into the
+// json, v, e, scrolling and copying.
 func (m model) invokeKeys() [][2]string {
 	k := m.keys
 	f := m.state.function
@@ -675,7 +676,7 @@ func (m model) invokeKeys() [][2]string {
 		return append(h, hint(k.Help))
 	}
 	r, ok := f.results[m.selectedEvent()]
-	var h [][2]string
+	h := [][2]string{hint(k.Invoke)}
 	if m.paneScrolls() {
 		h = append(h, [2]string{k.PageUp.Help().Key + "/" + k.PageDown.Help().Key, "scroll"})
 	}
@@ -686,7 +687,7 @@ func (m model) invokeKeys() [][2]string {
 	if m.b.EventsDir(f.name) != "" {
 		h = append(h, hint(k.EditEvent))
 	}
-	h = append(h, hint(k.NextTab), hint(k.Invoke))
+	h = append(h, hint(k.NextTab))
 	if m.b.Local(m.state.stage.ref) {
 		h = append(h, hint(k.RunLocal), hint(k.Deploy, "plan its code"))
 	}
@@ -847,7 +848,7 @@ func resultHead(r invocationResult, width int) []string {
 	if r.local {
 		where = "on this machine"
 	}
-	lines := cellLines(cell{status, styles.S("  "+where, styles.ToneMuted), sep(), styles.S(formatAgo(r.at), styles.ToneFaint)}, width)
+	lines := cellLines(cell{status, sep(), styles.S(where, styles.ToneMuted), sep(), styles.S(formatAgo(r.at), styles.ToneFaint)}, width)
 	return append(lines, packFacts(resultFacts(r), width)...)
 }
 

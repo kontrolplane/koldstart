@@ -139,7 +139,7 @@ func (m model) lineRequest(e cli.LogEvent) (request, bool) {
 }
 
 // logLineWidth is the width of the page of a line.
-func logLineWidth() int { return contentWidth - 4 }
+func logLineWidth() int { return detailWidth() }
 
 // logLineLines are the lines of the page of a line: its head, and what it says, drawn only where
 // they are in sight.

@@ -167,7 +167,7 @@ func (m model) followResourceCursor(msg tea.KeyPressMsg, before int) model {
 }
 
 // resourceWidth is the width the resource page draws its lines in.
-func resourceWidth() int { return contentWidth - 4 }
+func resourceWidth() int { return detailWidth() }
 
 // appliedProperties are the inputs a resource was applied with, or its properties for one of
 // cloud control's.

@@ -132,7 +132,7 @@ func TestVersionHead(t *testing.T) {
 	m := openNewestDeploy(t, testState(ordersDev), current)
 	v := screen(m)
 	at := -1
-	for _, want := range []string{"deploy of ", "by", "levi", "when", "ago", "serial", "7", "version", m.state.version.version.ID, "resources", "writes"} {
+	for _, want := range []string{"deploy of ", "by", "levi", "when", "just now", "serial", "7", "version", m.state.version.version.ID, "resources", "writes"} {
 		i := strings.Index(v[max(0, at):], want)
 		if i < 0 {
 			t.Fatalf("no %q after the %d bytes before it in:\n%s", want, at, v)

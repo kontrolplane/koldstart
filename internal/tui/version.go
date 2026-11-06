@@ -183,7 +183,7 @@ func outputChanges(before, after *state.State) []cell {
 // versionLines are the lines of the version, each change one that can be chosen.
 func (m model) versionLines() pickList {
 	v := m.state.version
-	width := contentWidth - 4
+	width := detailWidth()
 	if !v.loaded || v.current == nil {
 		return pickList{}
 	}
@@ -212,12 +212,12 @@ func (m model) versionLines() pickList {
 		row("serial", text(formatInt(int(cur.Serial)), styles.ToneBody), width),
 		row("version", text(v.version.ID, styles.ToneFaint), width),
 		row("resources", text(formatInt(len(cur.Resources)), styles.ToneBody), width),
-		row("writes", text(plural(v.writes, "write")+" of the state, the last shown", styles.ToneMuted), width),
+		row("writes", text(formatInt(v.writes)+", the last shown here", styles.ToneMuted), width),
 		"",
 		countedHeader(title, changeCounts(added, changed, removed), width),
 	}
 	l := pickList{lines: lazyOf(lines), head: len(lines)}
-	cols := []column{{width: width}}
+	cols := []column{{width: width - 1}}
 	cells := make([]cell, len(changes))
 	for i, c := range changes {
 		cells[i] = c.line
