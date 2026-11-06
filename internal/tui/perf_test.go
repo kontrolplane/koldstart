@@ -365,7 +365,7 @@ func perfPages(tb testing.TB, w, h int) map[string]model {
 	pages["stage history"] = m
 	pages["version"] = perfKeys(m, "enter")
 	res := perfKeys(m, "tab", "tab")
-	for res.state.stage.tables[resourcesTab].cursor < len(res.state.stage.resources) && res.state.stage.resources[res.state.stage.tables[resourcesTab].cursor].id != "resource/table" {
+	for r, ok := res.state.stage.selectedRow(); ok && (r.res < 0 || res.state.stage.resources[r.res].id != "resource/table") && res.state.stage.tables[resourcesTab].cursor < len(res.state.stage.tree)-1; r, ok = res.state.stage.selectedRow() {
 		res = perfKeys(res, "down")
 	}
 	res = perfKeys(res, "enter")

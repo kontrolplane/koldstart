@@ -26,6 +26,7 @@ type KeyMap struct {
 	RunLocal  key.Binding
 	EditEvent key.Binding
 	Follow    key.Binding
+	Fold      key.Binding
 	Copy      key.Binding
 	NextDiff  key.Binding
 	PrevDiff  key.Binding
@@ -63,6 +64,7 @@ var Keys = KeyMap{
 	RunLocal:  key.NewBinding(key.WithKeys("I", "shift+i"), key.WithHelp("shift+i", "run here")),
 	EditEvent: key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit event")),
 	Follow:    key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "follow")),
+	Fold:      key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "fold")),
 	Copy:      key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "copy")),
 	NextDiff:  key.NewBinding(key.WithKeys("]"), key.WithHelp("]", "next change")),
 	PrevDiff:  key.NewBinding(key.WithKeys("["), key.WithHelp("[", "previous change")),

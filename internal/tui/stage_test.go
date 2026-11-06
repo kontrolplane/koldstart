@@ -1,11 +1,17 @@
 package tui
 
 import (
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/kontrolplane/koldstart/internal/cli"
+	"github.com/kontrolplane/koldstart/internal/provider/awsp"
 	"github.com/kontrolplane/koldstart/internal/state"
 	"github.com/kontrolplane/koldstart/internal/tui/styles"
 )
@@ -27,8 +33,8 @@ func TestStageCursorKept(t *testing.T) {
 				f.states[ordersDev].Resources["function/aaa"] = &state.Resource{Type: "koldstart::Lambda::Function", PhysicalID: "orders-dev-aaa"}
 			},
 			cursor: func(m model) string {
-				s := m.state.stage
-				return s.resources[s.tables[resourcesTab].cursor].id
+				r, _ := m.state.stage.selectedResource()
+				return r.id
 			},
 			want: "resource/table",
 		},
@@ -59,23 +65,36 @@ func TestStageCursorKept(t *testing.T) {
 	}
 }
 
-// TestOutputValue checks an output is drawn on one line, with how many lines more it has.
+// TestOutputValue checks an output is drawn on one line with a hint of what more it holds: json
+// compacted, with its keys or items, and text with how many lines more it has.
 func TestOutputValue(t *testing.T) {
 	tests := []struct {
 		name string
 		in   string
 		want string
+		hint string
 	}{
 		{name: "one line", in: "https://api.example.com", want: "https://api.example.com"},
 		{name: "empty", in: "", want: "empty"},
 		{name: "a trailing newline", in: "abc\n", want: "abc"},
-		{name: "three lines", in: "-----BEGIN-----\nMIIB\n-----END-----", want: "-----BEGIN-----  +2 lines"},
-		{name: "windows lines", in: "a\r\nb\r\n", want: "a  +1 line"},
+		{name: "three lines", in: "-----BEGIN-----\nMIIB\n-----END-----", want: "-----BEGIN-----", hint: "+2 lines"},
+		{name: "windows lines", in: "a\r\nb\r\n", want: "a", hint: "+1 line"},
+		{name: "an object", in: `{"host": "db", "port": 5432, "tags": {"a": 1}, "on": true}`, want: `{"host":"db","port":5432,"tags":{"a":1},"on":true}`, hint: "{…} 4 keys"},
+		{name: "an object on lines", in: "{\n  \"a\": [1, 2]\n}\n", want: `{"a":[1,2]}`, hint: "{…} 1 key"},
+		{name: "a list", in: `["a", "b", "c"]`, want: `["a","b","c"]`, hint: "[…] 3 items"},
+		{name: "an empty list", in: `[]`, want: `[]`, hint: "[…] 0 items"},
+		{name: "broken json", in: `{"a":`, want: `{"a":`},
+		{name: "a json string", in: `"quoted"`, want: `"quoted"`},
+		{name: "a number", in: `42`, want: `42`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := plainText(outputValue(tt.in)); got != tt.want {
-				t.Errorf("outputValue(%q) = %q, want %q", tt.in, got, tt.want)
+			value, hint := outputValue(tt.in)
+			if got := plainText(value); got != tt.want {
+				t.Errorf("value %q, want %q", got, tt.want)
+			}
+			if got := plainText(hint); got != tt.hint {
+				t.Errorf("hint %q, want %q", got, tt.hint)
 			}
 		})
 	}
@@ -202,5 +221,132 @@ func TestResourceTreeOrphans(t *testing.T) {
 	}
 	if v := screen(m); !strings.Contains(v, "retained · 12 queued") {
 		t.Errorf("the queue's depth and note:\n%s", v)
+	}
+}
+
+// sdFunctionNames are the names the fixture of a stage gives its first functions.
+var sdFunctionNames = []string{"api", "checkout", "orders-worker", "invoice-render", "nightly-report", "webhooks", "search-indexer", "image-resize"}
+
+// sdARN is an arn of the fixture's account and region.
+func sdARN(service, rest string) string { return "arn:aws:" + service + ":eu-west-1:123456789012:" + rest }
+
+// sdStage is a fake with orders/dev as a real stage holds it: functions with their roles, log
+// groups, urls, routes and schedules, tables, queues, buckets and topics to make 200 resources,
+// one of them pending and one kept by a remove, outputs that are urls, arns, json and a
+// certificate, 50 deploys in its history, some unfinished, and a lock.
+func sdStage(t *testing.T, functions int) *fakeBackend {
+	t.Helper()
+	f := newFake(t)
+	st := testState(ordersDev)
+	for _, id := range []string{"function/api", "role/api", "loggroup/api"} {
+		delete(st.Resources, id)
+	}
+	f.metrics = map[string]cli.Metrics{}
+	for i := range functions {
+		name := fmt.Sprintf("fn-%02d", i)
+		if i < len(sdFunctionNames) {
+			name = sdFunctionNames[i]
+		}
+		sdFunction(st, f.metrics, i, name)
+	}
+	st.Resources["httpapi"] = &state.Resource{Type: awsp.TypeHTTPAPI, PhysicalID: "a1b2c3d4e5"}
+	st.Resources["domain"] = &state.Resource{Type: awsp.TypeDomain, PhysicalID: "api.orders.example.com"}
+	st.Resources["authorizer/jwt"] = &state.Resource{Type: awsp.TypeAuthorizer, PhysicalID: "auth01"}
+	for i := 0; len(st.Resources) < 200; i++ {
+		switch i % 4 {
+		case 0:
+			st.Resources[fmt.Sprintf("resource/table-%02d", i)] = &state.Resource{Type: "AWS::DynamoDB::Table", PhysicalID: fmt.Sprintf("orders-dev-table-%02d", i)}
+		case 1:
+			st.Resources[fmt.Sprintf("resource/jobs-%02d", i)] = &state.Resource{Type: "AWS::SQS::Queue", PhysicalID: fmt.Sprintf("https://sqs.eu-west-1.amazonaws.com/123456789012/orders-dev-jobs-%02d", i)}
+		case 2:
+			bucket := fmt.Sprintf("orders-dev-uploads-%02d-123456789012-eu-west-1", i)
+			st.Resources[fmt.Sprintf("resource/uploads-%02d", i)] = &state.Resource{Type: "AWS::S3::Bucket", PhysicalID: bucket}
+			st.Resources[fmt.Sprintf("notification/uploads-%02d", i)] = &state.Resource{Type: awsp.TypeNotification, PhysicalID: bucket}
+		default:
+			st.Resources[fmt.Sprintf("resource/events-%02d", i)] = &state.Resource{Type: "AWS::SNS::Topic", PhysicalID: sdARN("sns", fmt.Sprintf("orders-dev-events-%02d", i))}
+		}
+	}
+	st.Resources["resource/table"].Pending = &state.Pending{Operation: "update", StartedAt: time.Now().Add(-3 * time.Hour)}
+	st.Retained = map[string]*state.Resource{"resource/archive": {Type: "AWS::S3::Bucket", PhysicalID: "orders-dev-archive-123456789012-eu-west-1"}}
+	st.Outputs = map[string]string{
+		"apiUrl":       "https://a1b2c3d4e5.execute-api.eu-west-1.amazonaws.com",
+		"tableArn":     sdARN("dynamodb", "table/orders-dev-table-00"),
+		"workflowArn":  sdARN("states", "stateMachine:orders-dev-checkout-fulfilment-workflow-with-a-long-name"),
+		"queueUrls":    `["https://sqs.eu-west-1.amazonaws.com/123456789012/orders-dev-jobs-01","https://sqs.eu-west-1.amazonaws.com/123456789012/orders-dev-jobs-05"]`,
+		"database":     `{"host":"orders.cluster-c9akciq32.eu-west-1.rds.amazonaws.com","port":5432,"name":"orders","tags":{"team":"payments"}}`,
+		"certificate":  "-----BEGIN CERTIFICATE-----\nMIIBszCCAVmgAwIBAgIUQ\n-----END CERTIFICATE-----",
+		"dashboardUrl": "https://eu-west-1.console.aws.amazon.com/cloudwatch/home?region=eu-west-1#dashboards/dashboard/orders-dev-overview?start=PT3H&end=null",
+		"emptyNote":    "",
+	}
+	st.DeployedAt, st.DeployedBy, st.Serial = time.Now().Add(-3*time.Hour), "levi", 212
+	f.states[ordersDev] = st
+	f.locks[ordersDev] = &state.LockInfo{Who: "ana", Where: "ana-mbp", Operation: "deploy", Since: time.Now().Add(-4 * time.Minute)}
+	sdHistory(f, st, 50)
+	return f
+}
+
+// sdFunction adds the i-th function of the fixture, its role and log group, a url to every
+// third, a route to every second and a schedule to every fifth, and its metrics: every fourth
+// not invoked, and every fourth from the second failing in the last ten minutes.
+func sdFunction(st *state.State, metrics map[string]cli.Metrics, i int, name string) {
+	physical := "orders-dev-" + name
+	in, _ := json.Marshal(map[string]any{
+		"name": physical, "runtime": []string{"nodejs22.x", "provided.al2023", "python3.13"}[i%3], "handler": "src/" + name + ".handler",
+		"memory": []int{128, 512, 1024, 3008}[i%4], "timeout": []int{6, 30, 900}[i%3],
+		"code": map[string]any{"bucket": "b", "key": "k", "sha256": fmt.Sprintf("%x", sha256.Sum256([]byte(name)))},
+	})
+	st.Resources["function/"+name] = &state.Resource{Type: awsp.TypeFunction, PhysicalID: physical, Inputs: in, Attributes: map[string]string{"Arn": sdARN("lambda", "function:"+physical)}}
+	st.Resources["role/"+name] = &state.Resource{Type: awsp.TypeRole, PhysicalID: physical}
+	st.Resources["loggroup/"+name] = &state.Resource{Type: awsp.TypeLogGroup, PhysicalID: "/aws/lambda/" + physical}
+	if i%3 == 0 {
+		st.Resources["url/"+name] = &state.Resource{Type: awsp.TypeURL, PhysicalID: sdARN("lambda", "function:"+physical), Attributes: map[string]string{"FunctionUrl": "https://" + name + ".lambda-url.eu-west-1.on.aws/"}}
+	}
+	if i%2 == 0 {
+		st.Resources["integration/"+name] = &state.Resource{Type: awsp.TypeIntegration, PhysicalID: fmt.Sprintf("int%04d", i)}
+		st.Resources["route/GET /"+name] = &state.Resource{Type: awsp.TypeRoute, PhysicalID: fmt.Sprintf("rt%04d", i), Dependencies: []string{"httpapi", "integration/" + name}}
+		st.Resources["permission/"+name+"/httpapi"] = &state.Resource{Type: awsp.TypePermission, PhysicalID: physical + "-httpapi"}
+	}
+	if i%5 == 4 {
+		st.Resources["schedule/"+name+"/nightly"] = &state.Resource{Type: awsp.TypeSchedule, PhysicalID: physical + "-nightly"}
+	}
+	calls, errs := make([]float64, 60), make([]float64, 60)
+	for j := range calls {
+		calls[j] = float64((j*(i+3))%17) * float64(i%4)
+		if i%4 == 1 && j > 50 {
+			errs[j] = 2
+		}
+	}
+	metrics[physical] = cli.Metrics{Invocations: calls, Errors: errs, Throttles: make([]float64, 60), DurationP99: calls, Concurrency: calls}
+}
+
+// sdHistory gives the fake n deploys of st, five hours apart and newest first, each of one to
+// four writes. Every second deploy adds three resources, every fourth removes one the deploy
+// before added, and each changes a table; the newest, and every sixth from the third, left a
+// table pending.
+func sdHistory(f *fakeBackend, st *state.State, n int) {
+	ids := slices.Sorted(maps.Keys(st.Resources))
+	f.history, f.versions = nil, map[string]*state.State{}
+	for k := range n {
+		at := st.DeployedAt.Add(-time.Duration(k) * 5 * time.Hour)
+		writes := 1 + k%4
+		for w := range writes {
+			f.history = append(f.history, state.ObjectVersion{ID: fmt.Sprintf("d%02d-%d", k, writes-1-w), LastModified: at.Add(-time.Duration(w) * 20 * time.Second), Latest: k == 0 && w == 0})
+		}
+		v := st.Clone()
+		for _, id := range ids[max(0, len(ids)-3*((k+1)/2)):] {
+			delete(v.Resources, id)
+		}
+		if k%4 == 1 {
+			v.Resources[fmt.Sprintf("resource/gone-%02d", k)] = &state.Resource{Type: "AWS::SQS::Queue", PhysicalID: "gone"}
+		}
+		if r := v.Resources["resource/table"]; r != nil && k > 0 {
+			r.Pending = nil
+		}
+		v.Resources["resource/table-00"] = &state.Resource{Type: "AWS::DynamoDB::Table", PhysicalID: "orders-dev-table-00", Inputs: json.RawMessage(fmt.Sprintf(`{"properties":{"v":%d}}`, k))}
+		if k%6 == 2 {
+			v.Resources["resource/table-00"].Pending = &state.Pending{Operation: "update", StartedAt: at}
+		}
+		v.DeployedBy = []string{"levi", "ana", "ci@github-actions"}[k%3]
+		f.versions[fmt.Sprintf("d%02d-%d", k, writes-1)] = v
 	}
 }

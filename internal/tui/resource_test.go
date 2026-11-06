@@ -9,7 +9,7 @@ import (
 // openTable opens resource/table of orders/dev from the resources tab.
 func openTable(t *testing.T, f *fakeBackend) model {
 	t.Helper()
-	m := pressKeys(t, started(t, f), "tab", "j", "j", "j", "j", "enter")
+	m := pressKeys(t, started(t, f), "tab", "G", "enter")
 	if m.page != resourcePage || m.state.resource.res.id != "resource/table" {
 		t.Fatalf("page %v on %s, want resource/table", m.page, m.state.resource.res.id)
 	}

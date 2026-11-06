@@ -29,6 +29,12 @@ type fakeBackend struct {
 	states  map[cli.StageRef]*state.State
 	locks   map[cli.StageRef]*state.LockInfo
 	history []state.ObjectVersion
+	// versions are the states of the history by their version, where a test wants others than
+	// testState's; versionReads counts the reads of one.
+	versions     map[string]*state.State
+	versionReads int
+	// metrics are what Metrics returns where a test wants others than the series it makes up.
+	metrics map[string]cli.Metrics
 	logs    []cli.LogEvent
 	older   []cli.LogEvent
 	tail    []cli.LogEvent
@@ -139,6 +145,12 @@ func (f *fakeBackend) History(context.Context, cli.StageRef) ([]state.ObjectVers
 }
 
 func (f *fakeBackend) Version(_ context.Context, ref cli.StageRef, id string) (*state.State, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.versionReads++
+	if st, ok := f.versions[id]; ok {
+		return st, f.err
+	}
 	st := testState(ref)
 	if id == "v1" {
 		delete(st.Resources, "resource/table")
@@ -189,6 +201,9 @@ func (f *fakeBackend) Queue(context.Context, cli.StageRef, string) (cli.QueueDep
 func (f *fakeBackend) Metrics(_ context.Context, _ cli.StageRef, names []string) (map[string]cli.Metrics, error) {
 	if f.metricsErr != nil {
 		return nil, f.metricsErr
+	}
+	if f.metrics != nil {
+		return f.metrics, nil
 	}
 	out := map[string]cli.Metrics{}
 	for _, name := range names {

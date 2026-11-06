@@ -108,7 +108,7 @@ func TestFunctionOverview(t *testing.T) {
 	f := newFake(t)
 	f.function = cli.FunctionState{State: "Active", LastUpdate: "Successful", LastModified: time.Now(), CodeSize: 4 << 20, CodeSHA256: "ff", Memory: 2048, Timeout: 6, Runtime: "nodejs22.x"}
 	m := started(t, f)
-	if v := screen(m); !strings.Contains(v, "calls 1h") || !strings.Contains(v, "1,740") {
+	if v := screen(m); !strings.Contains(v, "last hour") || !strings.Contains(v, "1,740") {
 		t.Errorf("the functions tab does not show the calls of the last hour:\n%s", v)
 	}
 	m = pressKeys(t, m, "enter")
@@ -249,7 +249,7 @@ func TestVersionDiff(t *testing.T) {
 func TestResourceLive(t *testing.T) {
 	f := newFake(t)
 	f.live = map[string]any{"BillingMode": "PROVISIONED", "Arn": "arn:aws:dynamodb:table"}
-	m := pressKeys(t, started(t, f), "tab", "j", "j", "j", "j", "enter")
+	m := pressKeys(t, started(t, f), "tab", "G", "enter")
 	if m.page != resourcePage || m.state.resource.res.id != "resource/table" {
 		t.Fatalf("page %v on %s", m.page, m.state.resource.res.id)
 	}

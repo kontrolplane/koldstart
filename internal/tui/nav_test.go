@@ -81,7 +81,7 @@ func TestNavBack(t *testing.T) {
 	}{
 		{name: "overview from a stage", reach: []string{"q"}, prep: []string{"/", "o", "r", "d", "enter", "j"}, into: []string{"enter"}, inside: stagePage},
 		{name: "stage from a function", prep: []string{"j"}, into: []string{"enter"}, inside: functionPage},
-		{name: "stage resources from a function", prep: []string{"tab"}, into: []string{"enter"}, inside: functionPage},
+		{name: "stage resources from a function", prep: []string{"tab", "j"}, into: []string{"enter"}, inside: functionPage},
 		{name: "stage from a resource", prep: []string{"tab", "G"}, into: []string{"enter"}, inside: resourcePage},
 		{name: "function from an invocation", reach: []string{"enter"}, prep: []string{"tab", "tab", "j"}, into: []string{"enter"}, inside: invocationPage},
 		{name: "function logs from a plan", reach: []string{"enter"}, prep: []string{"tab", "/", "l", "i", "n", "e", "enter", "k", "k"}, into: []string{"d"}, inside: planPage},

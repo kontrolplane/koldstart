@@ -137,9 +137,15 @@ func TestTableFitsContent(t *testing.T) {
 		},
 		{
 			name: "functions on 80 columns", columns: functionColumns, width: 76,
-			rows:  []tableRow{row("api", "nodejs22.x", "384 mb", "14s", "0", "0", "-", "d5e474f8c12a", "r2ui-shop-dev-api")},
-			whole: []string{"api", "nodejs22.x"},
-			shows: []string{"function", "runtime", "memory", "timeout", "calls 1h", "errors", "p99"},
+			rows:  []tableRow{row("invoice-render", "▁▂▃▄▅▆▇█▇▆", "1,740", "12", "48ms", "384 mb", "14s", "nodejs22.x", "d5e474f8c12a", "r2ui-shop-dev-api")},
+			whole: []string{"invoice-render", "▁▂▃▄▅▆▇█▇▆", "1,740", "384 mb"},
+			shows: []string{"function", "last hour", "calls", "errors", "p99", "memory", "timeout"},
+		},
+		{
+			name: "functions on 120 columns", columns: functionColumns, width: 116,
+			rows:  []tableRow{row("invoice-render", "▁▂▃▄▅▆▇█▇▆", "1,740", "12", "48ms", "384 mb", "14s", "nodejs22.x", "d5e474f8c12a", "r2ui-shop-dev-invoice-render")},
+			whole: []string{"invoice-render", "nodejs22.x", "r2ui-shop-dev-invoice-render"},
+			shows: []string{"function", "last hour", "calls", "errors", "p99", "memory", "timeout", "runtime", "in lambda"},
 		},
 	}
 	for _, tt := range tests {

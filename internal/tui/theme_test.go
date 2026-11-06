@@ -123,8 +123,8 @@ func TestToneRules(t *testing.T) {
 		{name: "a cold start", c: cold[5], part: "ms", want: styles.ToneInfo},
 		{name: "a pending function", c: cell{styles.S("pending", stateTone("Pending"))}, part: "pending", want: styles.ToneAccent},
 		{name: "an inactive function", c: cell{styles.S("inactive", stateTone("Inactive"))}, part: "inactive", want: styles.ToneWarning},
-		{name: "a retained resource", c: resourceNote(&state.Resource{DeletionPolicy: "retain"}, false), part: "retained", want: styles.ToneMuted},
-		{name: "a kept resource", c: resourceNote(&state.Resource{}, true), part: "kept", want: styles.ToneMuted},
+		{name: "a retained resource", c: resourceNote(&state.Resource{DeletionPolicy: "retain"}, false, false), part: "retained", want: styles.ToneMuted},
+		{name: "a kept resource", c: resourceNote(&state.Resource{}, true, false), part: "kept", want: styles.ToneMuted},
 		{name: "an unreadable stage", c: overviewRow(stage, false)[len(overviewRow(stage, false))-1], part: "unreadable", want: styles.ToneDanger},
 	}
 	for _, tt := range tests {

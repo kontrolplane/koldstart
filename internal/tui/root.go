@@ -139,6 +139,8 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		return m.applyStage(msg)
 	case historyLoadedMsg:
 		return m.applyHistory(msg)
+	case summariesLoadedMsg:
+		return m.applySummaries(msg)
 	case versionLoadedMsg:
 		return m.applyVersion(msg)
 	case logsLoadedMsg:
@@ -265,6 +267,8 @@ func (m model) keyPress(msg tea.KeyPressMsg) (model, tea.Cmd) {
 		return m.diffUpdate(msg)
 	case invocationPage:
 		return m.invocationUpdate(msg)
+	case outputPage:
+		return m.outputUpdate(msg)
 	}
 	return m, nil
 }
@@ -361,6 +365,8 @@ func (m model) view(p page) string {
 		return m.diffView()
 	case invocationPage:
 		return m.invocationView()
+	case outputPage:
+		return m.outputView()
 	}
 	return ""
 }
@@ -512,6 +518,8 @@ func (m model) trail(p page) []string {
 		return append(m.trail(from), m.state.diff.title)
 	case invocationPage:
 		return append(m.trail(functionPage), shortSHA(m.state.invocation.req.id))
+	case outputPage:
+		return []string{crumbStages, ref, stageTabs[outputsTab], m.state.output.name}
 	}
 	return []string{crumbStages}
 }
@@ -606,6 +614,8 @@ func (m model) position() string {
 		return m.diffPosition()
 	case invocationPage:
 		return scrollCue(m.state.invocation.scroll, contentHeight, m.invocationLines().len())
+	case outputPage:
+		return scrollCue(m.state.output.scroll, contentHeight, m.outputLines().len())
 	}
 	return ""
 }
@@ -830,6 +840,8 @@ func (m model) shortHelp() [][2]string {
 		return m.diffHints()
 	case invocationPage:
 		return [][2]string{scrollHint, hint(k.Copy, "copy id"), hint(k.Help), hint(k.Quit)}
+	case outputPage:
+		return [][2]string{scrollHint, hint(k.Copy, "copy the value"), hint(k.Refresh), hint(k.Help), hint(k.Quit)}
 	case planPage:
 		return m.planHints()
 	case removePage:
@@ -863,15 +875,21 @@ func (m model) overviewHints() [][2]string {
 	return append(h, hint(k.Copy), m.pauseHint(), hint(k.Help), quit)
 }
 
-// stageHints are the keys of the stage's tab: enter where a row opens, d only on the project's
-// app, and ctrl+x only while the stage is locked.
+// stageHints are the keys of the stage's tab: enter where a row opens, or folds on the heading
+// of a kind of resource, space where the resources fold, d only on the project's app, and ctrl+x
+// only while the stage is locked.
 func (m model) stageHints() [][2]string {
 	k := m.keys
 	s := m.state.stage
 	rows := len(s.tables[s.tab].rows) > 0
 	var h [][2]string
-	if rows && s.tab != outputsTab {
+	if row, ok := s.selectedRow(); ok && s.tab == resourcesTab && row.res < 0 {
+		h = append(h, hint(k.View, "fold"))
+	} else if rows {
 		h = append(h, hint(k.View))
+	}
+	if rows && s.tab == resourcesTab && s.filter.text == "" {
+		h = append(h, hint(k.Fold))
 	}
 	h = append(h, hint(k.NextTab))
 	if m.b.Local(s.ref) {
@@ -915,7 +933,7 @@ func helpSections(k keys.KeyMap) []helpSection {
 		{"stage", [][2]string{
 			{name(k.Deploy), "plan a deploy"}, {name(k.Apply), "apply the plan"}, {name(k.Refresh) + " on a plan", "plan again from aws"},
 			{name(k.View), "a change's diff"}, {name(k.Remove), "remove the stage"}, {name(k.Unlock), "release a lock"},
-			{name(k.Yes) + " " + name(k.No), "answer a dialog"}, {name(k.Filter), "filter a table"}, {name(k.Copy), "copy"},
+			{name(k.Yes) + " " + name(k.No), "answer a dialog"}, {name(k.Filter), "filter a table"}, {name(k.Fold), "fold resources"}, {name(k.Copy), "copy"},
 			{name(k.Refresh) + " " + name(k.Pause), "refresh / pause"},
 		}},
 		{"function", [][2]string{

@@ -58,6 +58,7 @@ const (
 	runLocalPage
 	diffPage
 	invocationPage
+	outputPage
 )
 
 type model struct {
@@ -105,6 +106,7 @@ type pages struct {
 	runLocal   runLocalState
 	diff       diffState
 	invocation invocationState
+	output     outputState
 }
 
 func newModel(ctx context.Context, b backend) model {

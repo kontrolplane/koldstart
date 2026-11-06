@@ -165,7 +165,8 @@ func (m model) applyFunctionLive(msg functionLiveMsg) (model, tea.Cmd) {
 	}
 	live := msg.live
 	f.live, f.liveAt, f.liveErr = &live, time.Now(), ""
-	return m, nil
+	m.state.stage.markDrift(desired.FunctionID(f.name), codeChanged(f.inputs, live) || len(configDrift(f.inputs, live)) > 0)
+	return m.updateStageTables(), nil
 }
 
 // refreshFunction reads the function again, its state, what lambda says, and the new lines of

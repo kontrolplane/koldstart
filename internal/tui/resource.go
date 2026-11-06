@@ -93,6 +93,8 @@ func (m model) applyLive(msg liveLoadedMsg) (model, tea.Cmd) {
 		r.live, r.liveErr = nil, msg.err
 	default:
 		r.live, r.liveAt, r.liveErr = msg.props, time.Now(), nil
+		m.state.stage.markDrift(r.res.id, len(cli.Drift(appliedProperties(r.res), msg.props)) > 0)
+		m = m.updateStageTables()
 	}
 	return m, nil
 }
