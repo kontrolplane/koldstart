@@ -158,24 +158,11 @@ func (m model) resourceUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 	return m, nil
 }
 
-// followResourceCursor scrolls the page after a key on its json so the cursor is in sight. Up on
-// the first line scrolls up to what is above the json, and g goes to the top of the page.
+// followResourceCursor scrolls the page after a key on its json so the cursor is in sight.
 func (m model) followResourceCursor(msg tea.KeyPressMsg, before int) model {
 	r := &m.state.resource
-	v := r.shown()
 	lines, at := m.resourceBody()
-	most := maxOffset(lines.len(), contentHeight)
-	switch {
-	case v == nil || at < 0:
-	case key.Matches(msg, m.keys.Top):
-		r.scroll = 0
-	case before == 0 && v.at() == 0 && key.Matches(msg, m.keys.Up, m.keys.PageUp):
-		r.scroll = scrollBy(msg, m.keys, r.scroll, contentHeight, most)
-	default:
-		top, bottom := v.cursorLines(resourceWidth())
-		r.scroll = keepInSight(r.scroll, at+top, at+bottom, contentHeight)
-	}
-	r.scroll = max(0, min(r.scroll, most))
+	r.scroll = m.followJSON(r.shown(), msg, before, r.scroll, at, lines.len(), resourceWidth())
 	return m
 }
 

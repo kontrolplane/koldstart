@@ -29,9 +29,9 @@ func sdOpenOutput(t *testing.T, m model, name string) model {
 	return m
 }
 
-// TestOutputPage checks enter opens an output with what it holds, its size and its value, json
-// pretty-printed and text as it is, c copies the value as the stage holds it, and esc goes back
-// to the output it came from.
+// TestOutputPage checks enter opens an output with what it holds, its size and its value, json in
+// a json view and text as it is, c copies the value as the stage holds it, all of a json value
+// from its top line, and esc goes back to the output it came from.
 func TestOutputPage(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -39,13 +39,13 @@ func TestOutputPage(t *testing.T) {
 		want  []string
 		copy  string
 	}{
-		{name: "database", want: []string{"holds  json object · 4 keys", "size  118 b", `  "port": 5432,`, `    "team": "payments"`}, copy: `copied {"host":"orders.cluster-c9akciq32.eu-west-1.rds…`},
+		{name: "database", want: []string{"holds  json object · 4 keys", "size  118 b", `  "port": 5432,`, `    "team": "payments"`}, copy: "copied all of it"},
 		{name: "queueUrls", want: []string{"holds  json list · 2 items", `  "https://sqs.eu-west-1.amazonaws.com/123456789012/orders-dev-jobs-01",`}},
 		{name: "certificate", want: []string{"holds  text · 3 lines", "-----BEGIN CERTIFICATE-----", "MIIBszCCAVmgAwIBAgIUQ", "-----END CERTIFICATE-----"}},
 		{name: "apiUrl", want: []string{"holds  url", "https://a1b2c3d4e5.execute-api.eu-west-1.amazonaws.com"}, copy: "copied https://a1b2c3d4e5.execute-api.eu-west-1.amazon…"},
 		{name: "tableArn", want: []string{"holds  arn", "arn:aws:dynamodb:eu-west-1:123456789012:table/orders-dev-table-00"}},
 		{name: "emptyNote", want: []string{"holds  nothing", "size  0 b", "empty"}},
-		{name: "spaced", value: "{\n  \"a\": [1, 2]\n}", want: []string{"holds  json object · 1 key", `  "a": [`, "    1,"}, copy: `copied {\x0a  "a": [1, 2]\x0a}`},
+		{name: "spaced", value: "{\n  \"a\": [1, 2]\n}", want: []string{"holds  json object · 1 key", `  "a": [`, "    1,"}, copy: "copied all of it"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -90,9 +90,8 @@ func TestOutputGone(t *testing.T) {
 	}
 }
 
-// TestOutputValueLines checks the lines of an output's value: json pretty-printed with its
-// numbers as they were written, text as it is, and every line wrapped under its indent within the
-// width.
+// TestOutputValueLines checks the lines of an output's value that is not json: text as it is,
+// every line wrapped under its indent within the width.
 func TestOutputValueLines(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -100,8 +99,6 @@ func TestOutputValueLines(t *testing.T) {
 		width int
 		want  []string
 	}{
-		{name: "an object", value: `{"b":1.50,"a":[true,null]}`, width: 40, want: []string{"{", `  "a": [`, "    true,", "    null", "  ],", `  "b": 1.50`, "}"}},
-		{name: "a long string in a list", value: `["` + strings.Repeat("x", 30) + `"]`, width: 20, want: []string{"[", `  "xxxxxxxxxxxxxxxxx`, `    xxxxxxxxxxxxx"`, "]"}},
 		{name: "text", value: "line one\r\n  indented line\n", width: 40, want: []string{"line one", "  indented line"}},
 		{name: "a url too long", value: "https://example.com/" + strings.Repeat("a", 30), width: 24, want: []string{"https://example.com/aaaa", "  aaaaaaaaaaaaaaaaaaaaaa", "  aaaa"}},
 		{name: "escapes", value: "a\x1b[2Jb\n\x07", width: 40, want: []string{`a\x1b[2Jb`, `\x07`}},
@@ -118,6 +115,57 @@ func TestOutputValueLines(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestOutputJSON checks an output's json reads as a resource's: in the order the stage holds it,
+// its numbers as written, a string of json nested, folded, searched and copied by path, and kept
+// folded where it was when a read of the stage changes it.
+func TestOutputJSON(t *testing.T) {
+	value := `{"b":1.50,"a":[true,null],"policy":"{\"Statement\":[{\"Effect\":\"Allow\"}]}"}`
+	tests := []struct {
+		name   string
+		keys   []string
+		want   []string
+		not    []string
+		status string
+	}{
+		{name: "in order", want: []string{`    "b": 1.50,`, `    "a": [`, `      true,`, `    "policy": (json) {`, `          "Effect": "Allow"`}},
+		{name: "folded", keys: []string{"j", "j", "space"}, want: []string{`"a": [ … 2 items ],`}, not: []string{"true,"}},
+		{name: "all folded", keys: []string{"z", "z"}, want: []string{`"policy": (json) { … 1 key }`}},
+		{name: "a path", keys: []string{"/", "e", "f", "f", "enter", "C"}, want: []string{".policy.Statement[0].Effect", "search eff · 1 of 1"}, status: "copied the path .policy.Statement[0].Effect"},
+		{name: "a value", keys: []string{"j", "c"}, status: "copied the value of .b"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := sdStage(t, 3)
+			f.states[ordersDev].Outputs["config"] = value
+			m := pressKeys(t, sdOpenOutput(t, sdOutputs(t, f), "config"), tt.keys...)
+			v := screen(m)
+			for _, want := range tt.want {
+				if !strings.Contains(v, want) {
+					t.Errorf("no %q:\n%s", want, v)
+				}
+			}
+			for _, not := range tt.not {
+				if strings.Contains(v, not) {
+					t.Errorf("%q:\n%s", not, v)
+				}
+			}
+			if m.status != tt.status {
+				t.Errorf("status %q, want %q", m.status, tt.status)
+			}
+		})
+	}
+	f := sdStage(t, 3)
+	f.states[ordersDev].Outputs["config"] = value
+	m := pressKeys(t, sdOpenOutput(t, sdOutputs(t, f), "config"), "j", "j", "space")
+	f.mu.Lock()
+	f.states[ordersDev].Outputs["config"] = `{"b":2,"a":[true,null,false],"c":3}`
+	f.mu.Unlock()
+	m = pressKeys(t, m, "r")
+	if v := screen(m); !strings.Contains(v, `"a": [ … 3 items ],`) || !strings.Contains(v, `"c": 3`) || m.state.output.json.path() != ".a" {
+		t.Errorf("read again, on %s:\n%s", m.state.output.json.path(), v)
 	}
 }
 

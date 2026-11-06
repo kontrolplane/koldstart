@@ -193,8 +193,11 @@ func (m model) toInput(msg tea.Msg) (model, tea.Cmd) {
 	case m.tooSmall():
 	case v != nil && v.search.active:
 		res := v.typeSearch(msg, m.keys)
-		if m.page == resourcePage {
+		switch m.page {
+		case resourcePage:
 			m = m.followResourceCursor(tea.KeyPressMsg{}, -1)
+		case outputPage:
+			m = m.followOutputCursor(tea.KeyPressMsg{}, -1)
 		}
 		return m.jsonDone(res)
 	case m.page == overviewPage && m.state.overview.filter.active:
@@ -634,6 +637,8 @@ func (s *pages) json(p page) *jsonView {
 	switch p {
 	case resourcePage:
 		return s.resource.shown()
+	case outputPage:
+		return s.output.shown()
 	}
 	return nil
 }
@@ -876,6 +881,9 @@ func (m model) shortHelp() [][2]string {
 	case invocationPage:
 		return [][2]string{scrollHint, {k.Next.Help().Key + "/" + k.Previous.Help().Key, "next/previous"}, hint(k.Copy, "copy id"), hint(k.Help), hint(k.Quit)}
 	case outputPage:
+		if v := m.state.json(m.page); v != nil {
+			return append(m.jsonHints(*v), hint(k.Refresh), hint(k.Help), hint(k.Quit))
+		}
 		return [][2]string{scrollHint, hint(k.Copy, "copy the value"), hint(k.Refresh), hint(k.Help), hint(k.Quit)}
 	case planPage:
 		return m.planHints()
@@ -1017,14 +1025,14 @@ func (m model) helpView() string {
 		pair[1] = all[2]
 	case diffPage:
 		pair[1] = all[3]
-	case resourcePage:
+	case resourcePage, outputPage:
 		pair[1] = all[4]
 	}
 	three := all[:3]
 	switch m.page {
 	case diffPage:
 		three = []helpSection{all[0], all[1], all[3]}
-	case resourcePage:
+	case resourcePage, outputPage:
 		three = []helpSection{all[0], all[1], all[4]}
 	}
 	layouts := []helpLayout{
@@ -1102,5 +1110,6 @@ func (m model) restyleInputs() model {
 	m.state.remove.confirm.input.SetStyles(in)
 	m.state.resource.applied.search.input.SetStyles(in)
 	m.state.resource.props.search.input.SetStyles(in)
+	m.state.output.json.search.input.SetStyles(in)
 	return m
 }

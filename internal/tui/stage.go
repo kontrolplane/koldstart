@@ -306,8 +306,11 @@ func (m model) applyStage(msg stageLoadedMsg) (model, tea.Cmd) {
 		m = m.markRead()
 	}
 	m = m.updateStageTables()
-	if m.page == functionPage {
+	switch m.page {
+	case functionPage:
 		m = m.syncFunction()
+	case outputPage:
+		m = m.syncOutput()
 	}
 	m, metrics := m.loadMetrics()
 	m, queues := m.loadQueues()

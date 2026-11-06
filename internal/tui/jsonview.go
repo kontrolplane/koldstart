@@ -98,8 +98,10 @@ type jsonView struct {
 	search  filterBox
 	query   string
 	// from is the node the cursor was on when the search was opened.
-	from  int32
-	cache *jsonCache
+	from int32
+	// source is the document as it was given in bytes, which c on its top copies as it is.
+	source string
+	cache  *jsonCache
 }
 
 // jsonFolds are the objects and arrays folded otherwise than by default, by all and then set; a
@@ -204,9 +206,17 @@ func newJSONView(v any) jsonView {
 }
 
 // newJSONViewBytes shows raw json in the order it is written, or, when it is not json, its lines
-// as they are. Nothing, or null, shows nothing.
+// as they are. Nothing, or null, shows nothing. c on its top copies the bytes as they are.
 func newJSONViewBytes(data []byte) jsonView {
-	data = bytes.TrimSpace(data)
+	v := jsonBytesView(bytes.TrimSpace(data))
+	if !v.empty() && v.nodes[0].kind != jsonText {
+		v.source = string(data)
+	}
+	return v
+}
+
+// jsonBytesView is newJSONViewBytes of data without the space around it.
+func jsonBytesView(data []byte) jsonView {
 	switch {
 	case len(data) == 0 || string(data) == "null":
 		return jsonView{}
@@ -940,6 +950,8 @@ func (v jsonView) steps(i int32) []string {
 func (v jsonView) valueOf(i int32) string {
 	n := v.nodes[i]
 	switch {
+	case i == 0 && v.source != "":
+		return v.source
 	case n.embedded || n.kind == jsonString:
 		return jsonUnquote(n.text)
 	case n.kind == jsonPlaceholder:
@@ -1185,6 +1197,25 @@ func (v *jsonView) typeSearch(msg tea.Msg, k keys.KeyMap) jsonResult {
 func (v *jsonView) follow(width, height int) {
 	top, bottom := v.cursorLines(width)
 	v.scroll = max(0, min(keepInSight(v.scroll, top, bottom, height), v.lineCount(width)-height))
+}
+
+// followJSON is the scroll of a page of total lines, its json v drawn at width from line at, after
+// msg moved the cursor from row before: as little as keeps the cursor in sight, but for up on the
+// json's first line, which scrolls up to what is above it, and g, which goes to the top of the
+// page. A page whose json is not all it shows scrolls with it after each key the json takes.
+func (m model) followJSON(v *jsonView, msg tea.KeyPressMsg, before, scroll, at, total, width int) int {
+	most := maxOffset(total, contentHeight)
+	switch {
+	case v == nil || at < 0:
+	case key.Matches(msg, m.keys.Top):
+		scroll = 0
+	case before == 0 && v.at() == 0 && key.Matches(msg, m.keys.Up, m.keys.PageUp):
+		scroll = scrollBy(msg, m.keys, scroll, contentHeight, most)
+	default:
+		top, bottom := v.cursorLines(width)
+		scroll = keepInSight(scroll, at+top, at+bottom, contentHeight)
+	}
+	return max(0, min(scroll, most))
 }
 
 // jsonHints are the keys of a json view for the footer: n and N in place of / while a search

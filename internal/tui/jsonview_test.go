@@ -339,8 +339,8 @@ func TestJSONViewPaths(t *testing.T) {
 }
 
 // TestJSONViewCopy checks c copies the value under the cursor, a string as its text, an object as
-// indented json and a string of json as the string it was, and shift+c its path, saying what was
-// copied.
+// indented json, a string of json as the string it was and the whole document as it was given,
+// and shift+c its path, saying what was copied.
 func TestJSONViewCopy(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -348,7 +348,7 @@ func TestJSONViewCopy(t *testing.T) {
 		copy   string
 		copied string
 	}{
-		{name: "all of it", keys: []string{"c"}, copy: "{\n  \"a\": \"x\\\"y\",\n  \"doc\": \"{\\\"k\\\":[1]}\",\n  \"n\": 1.50\n}", copied: "all of it"},
+		{name: "all of it", keys: []string{"c"}, copy: ` {"a":"x\"y","doc":"{\"k\":[1]}","n":1.50}` + "\n", copied: "all of it"},
 		{name: "a string", keys: []string{"j", "c"}, copy: `x"y`, copied: "the value of .a"},
 		{name: "a string of json", keys: []string{"j", "j", "c"}, copy: `{"k":[1]}`, copied: "the value of .doc"},
 		{name: "an array in it", keys: []string{"j", "j", "j", "c"}, copy: "[\n  1\n]", copied: "the value of .doc.k"},
@@ -357,11 +357,15 @@ func TestJSONViewCopy(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, res := jvKeys(t, newJSONViewBytes([]byte(`{"a":"x\"y","doc":"{\"k\":[1]}","n":1.50}`)), 80, 20, tt.keys...)
+			_, res := jvKeys(t, newJSONViewBytes([]byte(` {"a":"x\"y","doc":"{\"k\":[1]}","n":1.50}`+"\n")), 80, 20, tt.keys...)
 			if res.copy != tt.copy || res.copied != tt.copied {
 				t.Errorf("copied %q as %q, want %q as %q", res.copy, res.copied, tt.copy, tt.copied)
 			}
 		})
+	}
+	_, res := jvKeys(t, newJSONView(map[string]any{"b": []any{1}, "a": "x"}), 80, 20, "c")
+	if want := "{\n  \"a\": \"x\",\n  \"b\": [\n    1\n  ]\n}"; res.copy != want {
+		t.Errorf("a value given as such copies as %q, want %q", res.copy, want)
 	}
 	m := started(t, newFake(t))
 	m, cmd := m.jsonDone(jsonResult{copy: "v", copied: "the value of .a"})
