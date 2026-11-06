@@ -120,6 +120,76 @@ func TestLogLineKeys(t *testing.T) {
 	}
 }
 
+// TestLogLineJSON checks the json of a line is read in a json view in the order it was logged:
+// its cursor moves, folds, searches and copies the value under it, its path, and on its top line
+// the line as it was logged; n goes to the next match while a search holds text and to the next
+// line once esc dropped it, p to the previous line all the same, and the frame shows the path.
+func TestLogLineJSON(t *testing.T) {
+	tests := []struct {
+		name   string
+		line   int
+		keys   []string
+		want   []string
+		status string
+		path   string
+		page   page
+		shown  string
+	}{
+		{name: "in order", line: 12, want: []string{"\"level\": \"warn\",", "\"ts\": 1762423200.012,", "\"caller\": \"orders/main.go:20\","}, path: ".", page: logLinePage},
+		{name: "the top copies the line", line: 12, keys: []string{"c"}, status: "copied all of it", path: ".", page: logLinePage},
+		{name: "a value", line: 12, keys: []string{"j", "j", "j", "c"}, status: "copied the value of .caller", path: ".caller", page: logLinePage},
+		{name: "a path", line: 11, keys: []string{"j", "j", "j", "shift+c"}, status: "copied the path .pid", path: ".pid", page: logLinePage},
+		{name: "fold", line: 10, keys: []string{"space"}, want: []string{"{ … 5 keys }"}, page: logLinePage},
+		{name: "search", line: 12, keys: []string{"/", "s", "l", "o", "w", "enter"}, want: []string{"search slow · 1 of 1"}, path: ".msg", page: logLinePage},
+		{name: "n goes to a match", line: 12, keys: []string{"/", "s", "enter", "n"}, want: []string{"search s · 2 of"}, page: logLinePage, shown: "a slow query"},
+		{name: "n goes to the next line", line: 12, keys: []string{"/", "s", "enter", "esc", "n"}, page: logLinePage, shown: "listening for events"},
+		{name: "p goes to the previous line", line: 12, keys: []string{"/", "s", "enter", "p"}, page: logLinePage, shown: "the database is down"},
+		{name: "esc drops the search first", line: 12, keys: []string{"/", "s", "enter", "esc"}, page: logLinePage},
+		{name: "esc goes back", line: 12, keys: []string{"/", "s", "enter", "esc", "esc"}, page: functionPage},
+		{name: "enter folds, o opens", line: 2, keys: []string{"o"}, page: invocationPage, shown: lgNodeID},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := pressKeys(t, lgOpen(t, lgOnLogs(t), tt.line), tt.keys...)
+			if m.page != tt.page {
+				t.Fatalf("the page is %d, want %d", m.page, tt.page)
+			}
+			v := ansi.Strip(m.render())
+			for _, w := range tt.want {
+				if !strings.Contains(v, w) {
+					t.Errorf("the page does not show %q:\n%s", w, v)
+				}
+			}
+			if tt.shown != "" && !strings.Contains(v, tt.shown) {
+				t.Errorf("the page does not show %q:\n%s", tt.shown, v)
+			}
+			if m.status != tt.status {
+				t.Errorf("status %q, want %q", m.status, tt.status)
+			}
+			if _, foot := m.frameMeta(); tt.path != "" && !strings.HasPrefix(ansi.Strip(foot), tt.path) {
+				t.Errorf("the frame's foot is %q, want the path %q", ansi.Strip(foot), tt.path)
+			}
+		})
+	}
+}
+
+// TestLogLineJSONCopiesTheLine checks c on the top of the json of a line copies the line as it
+// was logged, the prefix a runtime writes before the json too.
+func TestLogLineJSONCopiesTheLine(t *testing.T) {
+	m := lgOpen(t, lgOnLogs(t), 11)
+	j := m.state.logLine.shown()
+	if j == nil {
+		t.Fatal("the line of pino has no json view")
+	}
+	if got, want := j.valueOf(0), lgLogs(time.Now())[11].Message; got != want {
+		t.Errorf("the top copies %q, want the line %q", got, want)
+	}
+	m = lgOpen(t, lgOnLogs(t), 2)
+	if m.state.logLine.shown() != nil {
+		t.Error("a line of text has a json view")
+	}
+}
+
 // TestLogLineScrolls checks a line of 50 kb is drawn whole and wrapped on its page, which
 // scrolls to its end.
 func TestLogLineScrolls(t *testing.T) {
@@ -169,6 +239,8 @@ func lgLayoutPages(t *testing.T, w, h int) map[string]model {
 		pages["line "+formatInt(i)+" at its end"] = pressKeys(t, p, "G")
 	}
 	pages["line help"] = pressKeys(t, pages["line 0"], "?")
+	pages["line searching its json"] = pressKeys(t, pages["line 16"], "/", "l", "o", "n", "g")
+	pages["line of json folded"] = pressKeys(t, pages["line 16"], "space")
 	return pages
 }
 
