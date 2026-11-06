@@ -231,8 +231,9 @@ func TestWriteProject(t *testing.T) {
 
 // TestReleasedPackage packages the schema as a release publishes it, serves it where github
 // would, and checks a project that depends on its package uri resolves and evaluates, and one
-// that names a version that is not released says so. pkl runs through a script that rewrites
-// github to the server and keeps a cache of its own, so nothing goes over the network.
+// that names a version that is not released says so. Nothing goes over the network: packaging
+// skips pkl's check of what github has published, and pkl runs through a script that rewrites
+// github to the server and keeps a cache of its own.
 func TestReleasedPackage(t *testing.T) {
 	if os.Getenv("CI") == "" && os.Getenv(pkl.EnvBinary) == "" {
 		if _, err := exec.LookPath("pkl"); err != nil {
@@ -244,7 +245,7 @@ func TestReleasedPackage(t *testing.T) {
 		t.Fatalf("finding pkl: %v", err)
 	}
 	out := t.TempDir()
-	cmd := exec.Command(real, "project", "package", "--output-path", out, ".")
+	cmd := exec.Command(real, "project", "package", "--skip-publish-check", "--output-path", out, ".")
 	cmd.Env = append(os.Environ(), "KOLDSTART_VERSION=0.1.0")
 	if data, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("packaging: %v\n%s", err, data)
