@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // openTable opens resource/table of orders/dev from the resources tab.
@@ -183,5 +186,135 @@ func TestResourceEscapes(t *testing.T) {
 		if v := page.render(); strings.Contains(v, "\x1b]") || strings.Contains(v, "\x07") || strings.Contains(v, "\x1b[2J") {
 			t.Errorf("tab %v: an escape sequence reached the view", page.state.resource.tab)
 		}
+	}
+}
+
+// jvResource is resource/table with long attributes, inputs holding a policy as a string of json
+// and an arn longer than any terminal, and as much in aws, part of it drifted.
+func jvResource(t *testing.T) *fakeBackend {
+	t.Helper()
+	f := newFake(t)
+	arn := "arn:aws:iam::123456789012:role/" + strings.Repeat("orders-dev-role-", 20) + "end"
+	table := f.states[ordersDev].Resources["resource/table"]
+	table.Attributes["Arn"] = arn
+	table.Attributes["StreamArn"] = arn + "/stream/2026-11-05T10:00:00.000"
+	inputs, err := json.Marshal(map[string]any{"properties": map[string]any{"BillingMode": "PAY_PER_REQUEST", "RoleArn": arn, "Policy": jvPolicy}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	table.Inputs = inputs
+	f.live = map[string]any{"BillingMode": "PROVISIONED", "RoleArn": arn, "Policy": jvPolicy, "Tags": []any{map[string]any{"Key": "team", "Value": strings.Repeat("orders ", 40)}}}
+	return f
+}
+
+// TestResourceLayout draws both tabs of a resource with long values, the cursor moved, folded and
+// searched, at terminal sizes from the smallest to large, and checks every line fits, and that
+// the long values are wrapped whole rather than cut.
+func TestResourceLayout(t *testing.T) {
+	sizes := [][2]int{{78, 22}, {80, 24}, {100, 30}, {120, 40}, {160, 50}, {200, 60}, {300, 80}}
+	pages := map[string][]string{
+		"applied":          nil,
+		"applied moved":    {"G", "k", "k"},
+		"applied folded":   {"j", "enter", "z"},
+		"applied searched": {"/", "s", "q", "s", "enter", "n"},
+		"in aws":           {"tab"},
+		"in aws moved":     {"tab", "G", "pgup"},
+		"in aws unfolded":  {"tab", "z", "z"},
+	}
+	defer setLayout(120+chromeWidth, 30+chromeHeight)
+	for _, size := range sizes {
+		w, h := size[0], size[1]
+		for name, pressed := range pages {
+			m := openTable(t, jvResource(t))
+			m, _ = update(t, m, tea.WindowSizeMsg{Width: w, Height: h})
+			m = pressKeys(t, m, pressed...)
+			lines := strings.Split(m.render(), "\n")
+			if len(lines) > h {
+				t.Errorf("%dx%d %s: %d lines", w, h, name, len(lines))
+			}
+			for i, line := range lines {
+				if lw := ansi.StringWidth(line); lw > w {
+					t.Errorf("%dx%d %s: line %d is %d wide", w, h, name, i, lw)
+					break
+				}
+			}
+			body := m.resourceLines()
+			whole := ansi.Strip(strings.Join(body.window(0, body.len()), "\n"))
+			if strings.Contains(strings.ReplaceAll(whole, "… ", ""), "…") {
+				t.Errorf("%dx%d %s: a value is cut:\n%s", w, h, name, whole)
+			}
+		}
+	}
+}
+
+// TestResourceAttributesWrap checks an attribute too long for the page wraps under its value,
+// whole, rather than being cut.
+func TestResourceAttributesWrap(t *testing.T) {
+	m := openTable(t, jvResource(t))
+	lines := m.resourceLines()
+	var joined strings.Builder
+	in := false
+	for _, line := range lines.window(0, lines.len()) {
+		plain := strings.TrimSpace(ansi.Strip(line))
+		switch {
+		case strings.HasPrefix(plain, "Arn  "):
+			in = true
+			plain = strings.TrimPrefix(plain, "Arn  ")
+		case strings.HasPrefix(plain, "StreamArn"):
+			in = false
+		}
+		if in {
+			joined.WriteString(plain)
+		}
+	}
+	if want := m.state.resource.res.res.Attributes["Arn"]; joined.String() != want {
+		t.Errorf("the arn reads %q, want %q", joined.String(), want)
+	}
+}
+
+// TestResourceKeys checks the keys of the resource page with json on it: the cursor scrolls the
+// page, letters go into the search while it is typed, esc clears the search before it goes back,
+// and q goes back.
+func TestResourceKeys(t *testing.T) {
+	tests := []struct {
+		name   string
+		keys   []string
+		page   page
+		path   string
+		query  string
+		scroll func(m model) bool
+	}{
+		{name: "down", keys: []string{"j", "j"}, page: resourcePage, path: ".properties.BillingMode"},
+		{name: "the end scrolls", keys: []string{"G"}, page: resourcePage, path: ".", scroll: func(m model) bool { return m.state.resource.scroll > 0 }},
+		{name: "g goes to the top", keys: []string{"G", "g"}, page: resourcePage, path: ".", scroll: func(m model) bool { return m.state.resource.scroll == 0 }},
+		{name: "letters are typed", keys: []string{"/", "q", "c", "h", "l", "tab"}, page: resourcePage, path: ".", query: "qchl"},
+		{name: "esc clears the search", keys: []string{"/", "r", "o", "l", "e", "a", "enter", "esc"}, page: resourcePage, path: ".properties.RoleArn"},
+		{name: "esc then goes back", keys: []string{"/", "r", "o", "l", "e", "a", "enter", "esc", "esc"}, page: stagePage},
+		{name: "q goes back", keys: []string{"j", "q"}, page: stagePage},
+		{name: "tab switches with json", keys: []string{"tab"}, page: resourcePage, path: "."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := pressKeys(t, openTable(t, jvResource(t)), tt.keys...)
+			if m.page != tt.page {
+				t.Fatalf("page %v, want %v", m.page, tt.page)
+			}
+			if m.page != resourcePage {
+				return
+			}
+			v := m.state.json(m.page)
+			if v == nil {
+				t.Fatal("no json on the page")
+			}
+			if v.path() != tt.path || v.query != tt.query {
+				t.Errorf("on %q searching %q, want %q and %q", v.path(), v.query, tt.path, tt.query)
+			}
+			if tt.scroll != nil && !tt.scroll(m) {
+				t.Errorf("scroll %d", m.state.resource.scroll)
+			}
+			if !strings.Contains(screen(m), " "+tt.path+" ") {
+				t.Errorf("the frame does not show the path %s:\n%s", tt.path, screen(m))
+			}
+		})
 	}
 }

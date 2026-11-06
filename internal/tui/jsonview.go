@@ -94,8 +94,10 @@ type jsonView struct {
 	folds  *jsonFolds
 	cursor int
 	scroll int
-	search filterBox
-	query  string
+	// blurred draws no cursor, for a page where the keys go elsewhere.
+	blurred bool
+	search  filterBox
+	query   string
 	// from is the node the cursor was on when the search was opened.
 	from  int32
 	cache *jsonCache
@@ -732,7 +734,7 @@ func (v jsonView) drawLine(width, i int) string {
 		k--
 	}
 	k = max(0, min(k, len(rows)-1))
-	lit := k == v.at()
+	lit := !v.blurred && k == v.at()
 	c := v.cache
 	if !lit && c != nil {
 		want := jsonDrawnKey{width: width, palette: styles.Gen(), query: v.query}
