@@ -310,14 +310,26 @@ The state is read from the stage's bucket, `koldstart-state-<account>-<region>`,
 
 ## secrets
 
-`kdst.ssm("/path")` is read from ssm parameter store, and `kdst.secretsmanager("name")` from secrets manager; `.field("key")` takes one key of a json secret. They are read while planning and deploying, so a plan shows when one changed, and their values become environment variables of the function. Their values never go into the state.
+`kdst.param("name")` is read from ssm parameter store, and `kdst.secret("name")` from secrets manager, each under the app and stage; `.field("key")` takes one key of a json secret. They are read while planning and deploying, so a plan shows when one changed, and their values become environment variables of the function. Their values never go into the state.
 
 ```pkl
 environment {
-  ["API_KEY"] = kdst.ssm("/orders/api-key")
-  ["DB_USER"] = kdst.secretsmanager("orders-db").field("username")
-  ["DB_PASSWORD"] = kdst.secretsmanager("orders-db").field("password").readAtRuntime()
+  ["API_KEY"] = kdst.param("api-key")
+  ["DB_USER"] = kdst.secret("db").field("username")
+  ["DB_PASSWORD"] = kdst.secret("db").field("password").readAtRuntime()
+  ["SENTRY_DSN"] = kdst.ssm("/shared/sentry-dsn")
 }
 ```
+
+Each stage has its own parameters and secrets, named after the app and the stage:
+
+| helper                  | reads, for app `orders` on stage `prod`     |
+|-------------------------|---------------------------------------------|
+| `kdst.param("api-key")` | the ssm parameter `/orders/prod/api-key`    |
+| `kdst.secret("db")`     | the secrets manager secret `orders/prod/db` |
+
+The name has no leading `/`, no `..` and no empty segments, and the plan and `kdst ui` show the full name, as `(secret ssm:/orders/prod/api-key)`.
+
+For a parameter or secret by its full name or arn, such as one that every stage or another app shares, use `kdst.ssm("/path")` and `kdst.secretsmanager("name")`. They read the name as it is: `kdst.ssm("api-key")` reads the parameter `api-key`, and `kdst.ssm("/orders/\(kdst.stage)/api-key")` the one `kdst.param("api-key")` does.
 
 The values are visible to anyone who can read the function's configuration. With `.readAtRuntime()`, the variable holds the arn of the parameter or secret instead, the function's role may read it, and the function reads it itself; with a `.field()`, `<NAME>_KEY` says which key, here `DB_PASSWORD_KEY=password`. A parameter encrypted with a kms key of your own also needs `kms:Decrypt` on it, through `permissions`.

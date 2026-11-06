@@ -32,7 +32,8 @@ func evaluator(t *testing.T) pkl.Evaluator {
 }
 
 // TestTemplatesEvaluate checks what each template writes evaluates against the schema, passes
-// the checks of a deploy, and plans a function with its route.
+// the checks of a deploy, and plans a function with its route, and that its commented secret
+// evaluates once uncommented, under the app and stage.
 func TestTemplatesEvaluate(t *testing.T) {
 	ev := evaluator(t)
 	tests := []struct {
@@ -78,6 +79,23 @@ func TestTemplatesEvaluate(t *testing.T) {
 			}
 			if !slices.ContainsFunc(nodes, func(n engine.Node) bool { return n.ID == "route/GET /hello" }) {
 				t.Error("no route for GET /hello")
+			}
+
+			uncommented := strings.Replace(string(source), "// environment {", "environment {", 1)
+			if uncommented == string(source) {
+				t.Fatal("no commented environment with a secret")
+			}
+			path, cleanup, err = schema.Local([]byte(uncommented), "0.1.0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer cleanup()
+			p, err = config.Load(context.Background(), ev, path, "dev")
+			if err != nil {
+				t.Fatalf("the %s template's secret does not evaluate: %v", tt.template, err)
+			}
+			if s := p.Functions["api"].Environment["API_KEY"].Secret; s == nil || s.Name != "/orders/dev/api-key" {
+				t.Errorf("API_KEY = %+v, want /orders/dev/api-key", s)
 			}
 		})
 	}

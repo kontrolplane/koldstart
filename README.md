@@ -27,7 +27,7 @@ functions {
     handler = "src/api.handler"
     memory = if (kdst.stage == "prod") 1024 else 256
     environment {
-      ["API_KEY"] = kdst.ssm("/orders/api-key")
+      ["API_KEY"] = kdst.param("api-key")
     }
     link { ["orders"] = "read" }
     events {
@@ -63,7 +63,7 @@ resources {
 
 The file amends `Project.pkl`, which gives you type checking and completion in any editor with a pkl plugin, and imports `kdst.pkl` for what goes inside functions and resources: `kdst.stage`, `kdst.ref()`, the secrets and the events.
 
-`kdst.stage` is whatever `--stage` was set to, so one file describes every stage; here the api gets more memory in `prod`. `link` lets a function use a resource: its role may read or write it, and its name and arn arrive as `ORDERS_NAME` and `ORDERS_ARN`. `resources` takes any `AWS::*` type, created through the cloud control api. `kdst.ref()` reads an attribute of a resource once it exists, and `kdst.ssm()` is read from parameter store during the deploy.
+`kdst.stage` is whatever `--stage` was set to, so one file describes every stage; here the api gets more memory in `prod`. `link` lets a function use a resource: its role may read or write it, and its name and arn arrive as `ORDERS_NAME` and `ORDERS_ARN`. `resources` takes any `AWS::*` type, created through the cloud control api. `kdst.ref()` reads an attribute of a resource once it exists, and `kdst.param("api-key")` is read from parameter store during the deploy, as `/orders/prod/api-key` for `prod`.
 
 ```bash
 kdst plan --stage prod
@@ -175,7 +175,7 @@ One app can read another's outputs with `kdst.stageOutput("payments", kdst.stage
 
 ## secrets
 
-`kdst.ssm("/path")` reads a parameter from ssm parameter store, `kdst.secretsmanager("name")` reads a secret from secrets manager, and `.field("key")` takes one key of a json secret. They are read during the deploy and become environment variables of the function, so anyone who can read the function's configuration can read them too. Their values never go into the state.
+`kdst.param("api-key")` reads the parameter `/<app>/<stage>/api-key` from ssm parameter store, `kdst.secret("db")` reads the secret `<app>/<stage>/db` from secrets manager, and `.field("key")` takes one key of a json secret. For a full name or arn, such as one every stage shares, use `kdst.ssm("/path")` and `kdst.secretsmanager("name")`. They are read during the deploy and become environment variables of the function, so anyone who can read the function's configuration can read them too. Their values never go into the state.
 
 To keep a secret out of the configuration, add `.readAtRuntime()`: the variable then holds the arn of the parameter or secret, the function's role may read it, and the function reads it itself. With a `.field()`, a second variable, `<NAME>_KEY`, says which key to take.
 
