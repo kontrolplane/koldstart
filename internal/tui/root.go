@@ -929,7 +929,11 @@ func (m model) shortHelp() [][2]string {
 		if v := m.state.json(m.page); v != nil {
 			return append(m.jsonHints(*v), hint(k.Refresh), hint(k.Help), hint(k.Quit))
 		}
-		return [][2]string{scrollHint, hint(k.Copy, "copy the value"), hint(k.Refresh), hint(k.Help), hint(k.Quit)}
+		var h [][2]string
+		if body, _ := m.outputBody(); body.len() > contentHeight {
+			h = append(h, scrollHint)
+		}
+		return append(h, hint(k.Copy, "copy the value"), hint(k.Refresh), hint(k.Help), hint(k.Quit))
 	case planPage:
 		return m.planHints()
 	case removePage:
