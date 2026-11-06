@@ -43,9 +43,11 @@ func navFake(t *testing.T) *fakeBackend {
 }
 
 // navSnapshot is what a page is left with: the page, what it draws, its filter and where it is.
+// How many seconds ago something was is left out, as it can tick between two snapshots.
 func navSnapshot(m model) string {
 	meta, _ := m.frameMeta()
-	return strings.Join([]string{formatInt(int(m.page)), ansi.Strip(meta), m.position(), ansi.Strip(m.pageView())}, "\n")
+	snap := strings.Join([]string{formatInt(int(m.page)), ansi.Strip(meta), m.position(), ansi.Strip(m.pageView())}, "\n")
+	return themeSeconds.ReplaceAllString(snap, "Ns ago")
 }
 
 // navFoot is the bottom edge of the frame on screen, where the position is set.
