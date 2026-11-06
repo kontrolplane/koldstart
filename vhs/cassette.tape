@@ -15,70 +15,70 @@ Hide
   Sleep 1s
 Show
 
-Sleep 3s
+Sleep 2500ms
 
 Screenshot ./assets/pages/stages/overview.png
 
-Sleep 1s
+Sleep 500ms
 Enter
 Wait+Screen@10s /[0-9]ms/
-Sleep 3s
+Sleep 2500ms
 
 Screenshot ./assets/pages/stage/functions.png
 
-Sleep 1s
+Sleep 500ms
 Tab
 Sleep 2s
 Down@600ms 2
 Sleep 1s
 Space
-Sleep 3s
+Sleep 2500ms
 
 Screenshot ./assets/pages/stage/resources.png
 
-Sleep 1s
+Sleep 500ms
 Tab
 Sleep 2s
 Down
-Sleep 2s
+Sleep 2500ms
 
 Screenshot ./assets/pages/stage/outputs.png
 
-Sleep 1s
+Sleep 500ms
 Enter
 Wait+Screen@10s /value/
-Sleep 3s
+Sleep 2500ms
 
 Screenshot ./assets/pages/output/details.png
 
-Sleep 1s
+Sleep 500ms
 Type "q"
 Sleep 1s
 Tab
 Wait+Screen@10s /~1/
-Sleep 3s
+Sleep 2500ms
 
 Screenshot ./assets/pages/stage/history.png
 
-Sleep 1s
+Sleep 500ms
 Enter
 Wait+Screen@10s /changed/
-Sleep 3s
+Sleep 2500ms
 
 Screenshot ./assets/pages/deploy/changes.png
 
-Sleep 1s
+Sleep 500ms
 Type "q"
 Sleep 1s
 Tab
 Sleep 1s
 Enter
 Wait+Screen@10s /successful/
-Sleep 3s
+Sleep 2500ms
 
 Screenshot ./assets/pages/function/overview.png
 
-Sleep 1s
+Sleep 500ms
 Tab
 Wait+Screen@10s /following/
 Sleep 2s
@@ -86,25 +86,25 @@ Type "s"
 Sleep 1s
 Type "s"
 Wait+Screen@10s /level ≥ warn/
-Sleep 3s
+Sleep 2500ms
 
 Screenshot ./assets/pages/function/logs.png
 
-Sleep 1s
+Sleep 500ms
 Enter
 Wait+Screen@10s /log line/
-Sleep 3s
+Sleep 2500ms
 
 Screenshot ./assets/pages/line/details.png
 
-Sleep 1s
+Sleep 500ms
 Type "o"
 Wait+Screen@10s /memory/
-Sleep 3s
+Sleep 2500ms
 
 Screenshot ./assets/pages/invocation/details.png
 
-Sleep 1s
+Sleep 500ms
 Type "q"
 Wait+Screen@10s /following/
 Sleep 1s
@@ -112,22 +112,22 @@ Tab
 Wait+Screen@10s /cold start/
 Sleep 2s
 Down@600ms 2
-Sleep 2s
+Sleep 2500ms
 
 Screenshot ./assets/pages/function/invocations.png
 
-Sleep 1s
+Sleep 500ms
 Tab
 Sleep 2s
 Down@600ms 4
 Sleep 1s
 Type "i"
 Wait+Screen@30s /returned/
-Sleep 3s
+Sleep 2500ms
 
 Screenshot ./assets/pages/function/invoke.png
 
-Sleep 1s
+Sleep 500ms
 Type "q"
 Sleep 1s
 Tab
@@ -150,26 +150,26 @@ Sleep 1s
 Enter
 Sleep 1s
 Type "n"
-Sleep 3s
+Sleep 2500ms
 
 Screenshot ./assets/pages/resource/applied.png
 
-Sleep 1s
+Sleep 500ms
 Type "q"
 Sleep 1s
 Type "d"
 Wait+Screen@60s /planned at/
-Sleep 3s
+Sleep 2500ms
 
 Screenshot ./assets/pages/plan/kinds.png
 
-Sleep 1s
+Sleep 500ms
 Type "o"
-Sleep 3s
+Sleep 2500ms
 
 Screenshot ./assets/pages/plan/actions.png
 
-Sleep 1s
+Sleep 500ms
 Type "o"
 Sleep 2s
 Enter
@@ -178,11 +178,11 @@ Sleep 2s
 Type "]"
 Sleep 1s
 Type "]"
-Sleep 3s
+Sleep 2500ms
 
 Screenshot ./assets/pages/diff/changes.png
 
-Sleep 1s
+Sleep 500ms
 Type "q"
 Sleep 1s
 Type "q"
