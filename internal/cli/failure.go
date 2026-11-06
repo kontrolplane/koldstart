@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -103,8 +104,8 @@ func traceLine(frame json.RawMessage) (string, bool) {
 
 // internalLines are what a line of a node or python trace holds when the frame is the runtime's
 // or a dependency's: node_modules and node's own modules, lambda's runtime in /var/runtime, and
-// python's library, its site-packages and its frozen modules.
-var internalLines = []string{"node_modules/", "(node:", "at node:", "(internal/", "/var/runtime/", "/var/lang/", "site-packages/", "<frozen "}
+// python's library, its packages and its frozen modules. The logs of kdst ui dim the same frames.
+var internalLines = []string{"node_modules/", "node:", "(internal/", "/var/runtime/", "/var/lang/", "site-packages/", "dist-packages/", "<frozen "}
 
 // internalLine reports whether a line of a node or python trace is the runtime's or a
 // dependency's.
@@ -117,17 +118,22 @@ func internalLine(line string) bool {
 	return false
 }
 
+// goStd are the packages of go's own a stack trace runs through most, beside the runtime.
+var goStd = []string{"runtime", "net", "sync", "reflect", "context", "syscall", "internal", "encoding", "fmt", "io", "os", "testing"}
+
 // internalGoFrame reports whether a frame of go is the runtime's or a dependency's: a module with
-// a version, as -trimpath writes one from the module cache, the module cache itself, and the
-// runtime and reflect of the standard library.
+// a version, as -trimpath writes one from the module cache, the module cache, go's own source,
+// aws-lambda-go, or a function of go's library by its package.
 func internalGoFrame(path, label string) bool {
 	switch {
-	case strings.Contains(path, "@v"), strings.Contains(path, "/pkg/mod/"), strings.Contains(path, "/go/src/"):
-		return true
-	case strings.HasPrefix(path, "runtime/"), strings.HasPrefix(path, "reflect/"):
+	case strings.Contains(path, "@v"), strings.Contains(path, "/pkg/mod/"), strings.Contains(path, "/go/src/"), strings.Contains(path, "aws-lambda-go"):
 		return true
 	}
-	return strings.HasPrefix(label, "runtime.") || strings.HasPrefix(label, "reflect.")
+	pkg := label
+	if i := strings.IndexAny(pkg, "/.("); i >= 0 {
+		pkg = pkg[:i]
+	}
+	return slices.Contains(goStd, pkg)
 }
 
 // functionError says what a function that failed in aws returned: the type and message of its
