@@ -62,7 +62,8 @@ type stageState struct {
 	// the heading of each kind of group, and the resources of the groups not folded.
 	resources []stageResource
 	tree      []treeRow
-	// folded are the groups folded on the resources tab, by groupKey.fold.
+	// folded are the groups folded on the resources tab, by groupKey.fold. It, drifted and
+	// summaries are copied before they change, as a copy of the model may hold them.
 	folded map[string]bool
 	// drifted are the resources a read on their own page found changed outside koldstart, until
 	// the state is written again.
@@ -77,7 +78,7 @@ type stageState struct {
 	// historyErr is why the history could not be listed, before it ever was.
 	historyErr string
 	history    []state.ObjectVersion
-	// summaries are what each deploy of the history changed, by deployKey, read as their rows
+	// summaries are what each deploy of the history changed, by the key of their deployPair, read as their rows
 	// come in sight.
 	summaries         map[string]deploySummary
 	summariesGen      int
@@ -655,7 +656,7 @@ func camelWords(s string) []string {
 // group with how many groups it holds, and every resource whose group is not folded. While the
 // filter holds text, every group is open, so what it matches shows.
 func (s *stageState) resourceRows() ([]string, []tableRow) {
-	s.tree = s.tree[:0]
+	s.tree = nil
 	var keys []string
 	var rows []tableRow
 	open := s.filter.text != ""
@@ -697,14 +698,23 @@ func (s *stageState) resourceRows() ([]string, []tableRow) {
 // markDrift notes whether a read of a resource on its own page found it changed outside
 // koldstart, so the tree marks it until the state is written again.
 func (s *stageState) markDrift(id string, drifted bool) {
-	if s.drifted == nil {
-		s.drifted = map[string]bool{}
+	if s.drifted[id] == drifted {
+		return
 	}
+	s.drifted = cloned(s.drifted)
 	if drifted {
 		s.drifted[id] = true
 	} else {
 		delete(s.drifted, id)
 	}
+}
+
+// cloned is a copy of m to change, an empty one for nil.
+func cloned[K comparable, V any](m map[K]V) map[K]V {
+	if m == nil {
+		return map[K]V{}
+	}
+	return maps.Clone(m)
 }
 
 // selectedRow is the row of the resources tab under the cursor, and whether there is one.
@@ -743,6 +753,7 @@ func (m model) toggleFold() model {
 			}
 		}
 		fold := slices.ContainsFunc(groups, func(g string) bool { return !s.folded[g] })
+		s.folded = cloned(s.folded)
 		for _, g := range groups {
 			s.folded[g] = fold
 		}
@@ -754,6 +765,7 @@ func (m model) toggleFold() model {
 	if !head.head || head.last {
 		return m
 	}
+	s.folded = cloned(s.folded)
 	s.folded[r.group.fold()] = !s.folded[r.group.fold()]
 	m = m.updateStageTables()
 	if at := slices.Index(s.keys[resourcesTab], head.id); at >= 0 {
@@ -895,7 +907,7 @@ func (m model) stageUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 		}
 		m, cmd := m.loadStage()
 		if s.tab == historyTab {
-			s.forgetFailedSummaries()
+			m.state.stage.forgetFailedSummaries()
 			var history tea.Cmd
 			m, history = m.loadHistory()
 			cmd = tea.Batch(cmd, history)

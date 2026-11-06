@@ -3,6 +3,7 @@ package tui
 import (
 	"bytes"
 	"context"
+	"maps"
 	"sync"
 	"time"
 
@@ -188,6 +189,7 @@ func (m model) applySummaries(msg summariesLoadedMsg) (model, tea.Cmd) {
 		return m, nil
 	}
 	s.summariesAnswered = msg.gen
+	s.summaries = cloned(s.summaries)
 	for k, sum := range msg.summaries {
 		s.summaries[k] = sum
 	}
@@ -196,11 +198,8 @@ func (m model) applySummaries(msg summariesLoadedMsg) (model, tea.Cmd) {
 
 // forgetFailedSummaries drops the summaries that could not be read, so they are read again.
 func (s *stageState) forgetFailedSummaries() {
-	for k, sum := range s.summaries {
-		if sum.err != "" {
-			delete(s.summaries, k)
-		}
-	}
+	s.summaries = cloned(s.summaries)
+	maps.DeleteFunc(s.summaries, func(_ string, sum deploySummary) bool { return sum.err != "" })
 }
 
 // historyRows are the deploys the history tab lists, and the key of each, its first version,
