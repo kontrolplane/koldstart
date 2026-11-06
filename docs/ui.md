@@ -26,7 +26,13 @@ The header shows the aws profile, `default` without one, the account, the region
   - invocations: the requests in the logs read, newest first, under a line that counts them, the failed and the cold starts, with the p50 and p99 duration. Each says `✓ ok`, `✗ failed` or `⏱ timed out`, its time, duration, billed duration, memory, cold start and what it failed with. Without any: `no invocations in the logs read: ↑ on the logs tab reads further back`
   - an invocation opens on its request id, how it ended and the type and message of its error, when it started, how long it ran and was billed for, the memory it used of what it has, and the init of a cold start, with the runtime it loaded. Its lines follow, each at its offset from the start, as `+12ms`, with its level, and without lambda's START, END and REPORT or the time and request id the runtime writes. A line of json reads as its level, its message, and its other fields as faint `key=value`, a value cut at 40 columns, without the time, the request id and what powertools says of the function. A stack trace of node, python or go is indented under its line, the frames of dependencies and the runtime faint. `n` and `p` show the next and the previous invocation
   - invoke: the `.json` events kept for it, with the ones that are not json marked, and what the last invocation with each returned or failed with, and its log
-- `resource`: its type in full, what koldstart applied, its id in aws, its policy, what it depends on, its attributes and inputs, and on a second tab, `in aws`, its properties in aws now, from cloud control, with the ones changed outside koldstart, what each was applied with and what it is now
+- `resource`: its type in full, what koldstart applied, its id in aws, its policy, what it depends on, its attributes, long values wrapped, and the inputs it was applied with, and on a second tab, `in aws`, its properties in aws now, from cloud control, with the ones changed outside koldstart named on top. Both are json, read with a cursor:
+  - keys, strings, numbers and booleans, `null` and refs, secrets and outputs each take a colour of their own, and long values, as arns, urls and policies, wrap under their key rather than being cut
+  - a string that holds json, as a policy document or an event's body, is shown nested and written after `(json)`, as the diff writes it
+  - an array or object of more than 50 items, or 8 levels down, starts folded, as `[ … 60 items ]`; `enter` or `space` folds and unfolds the one under the cursor, and `z` unfolds all of them, and pressed again folds them
+  - the frame shows the path of the line under the cursor, as `.Policies[0].PolicyDocument.Statement[1].Action`; `c` copies its value, an object or array as indented json, and `shift+c` the path
+  - `/` searches keys and values as it is typed, and finds what is folded too; `n` and `shift+n` go to the next and previous match, and the frame shows which, as `search arn · 3 of 12`
+  - on `in aws`, each line of a property changed outside koldstart is marked `▲`, its first written as applied → now, as `"BillingMode": "PAY_PER_REQUEST" → "PROVISIONED"`
 - `plan`: what a deploy or remove does, and the progress of each resource while it applies, with how long it took and the error of one that failed; each change opens for its diff. A plan with nothing to do says `<app>/<stage> is as the configuration says: there is nothing to deploy`
 - `diff`: the inputs of a resource before and after, as indented json, opened on its first change:
   - a line under the title counts the fields added, changed and removed, as `+1 added  ~2 changed  -1 removed`, or says `no change`, and `no change but the spacing of json in a string` when that is all that differs
@@ -41,18 +47,19 @@ The stages, a stage and a function are read again every five seconds, and `p` pa
 ## keybindings
 
 - `q`: back, quit on the stages; on a dialog, no
-- `esc`: back, clear the filter, cancel a dialog or a plan being made, where the plan `r` asked for goes back to the one before; never quits
+- `esc`: back, clear the filter or the search, cancel a dialog or a plan being made, where the plan `r` asked for goes back to the one before; never quits
 - `ctrl+c`: quit, also while a deploy or remove runs
-- `↑`, `k` and `↓`, `j`: up and down
-- `g`, `home` and `G`, `end`: first and last row, top and bottom of the logs, where `G` and `end` follow them again
+- `↑`, `k` and `↓`, `j`: up and down; in json, a line, and `↑` on its first scrolls up to what is above it
+- `g`, `home` and `G`, `end`: first and last row, top and bottom of the logs, where `G` and `end` follow them again; first and last line of json
 - `pgup`, `pgdn`: page up and down; on the invoke tab, scroll what the invocation returned
 - `tab`, `shift+tab`: switch between functions, resources, outputs and history; on a function between its overview, logs, invocations and invoke; on a resource between what was applied and what is in aws; on a dialog between no and yes
 - `←`, `h` and `→`, `l`: switch the tabs of a stage, a function and a resource, as `tab` and `shift+tab` do; on a dialog, choose no or yes
-- `enter`: open a stage, a function, a resource, an output, a deploy, an invocation, or a change's diff; on a kind's heading in the resources, fold its groups; on a function's overview, the log group, role or trigger of the row, or its url in the browser; on a diff, show the lines of the first fold in sight; apply a filter; answer a dialog with the button chosen
+- `enter`: open a stage, a function, a resource, an output, a deploy, an invocation, or a change's diff; on a kind's heading in the resources, fold its groups; on a function's overview, the log group, role or trigger of the row, or its url in the browser; on a diff, show the lines of the first fold in sight; in json, fold or unfold; apply a filter; answer a dialog with the button chosen
 - `]`, `[`: on a diff, go to the next or the previous change
-- `z`: on a diff, show every line, or fold them again
-- `space`: on the resources of a stage, fold the group under the cursor or open it, and on a kind's heading every group of the kind
-- `/`: filter the stages, the tabs of a stage, or the lines of the logs
+- `z`: on a diff, show every line, or fold them again; in json, unfold everything, or fold it all again
+- `space`: on the resources of a stage, fold the group under the cursor or open it, and on a kind's heading every group of the kind; in json, fold or unfold the object or array under the cursor, or the one the value under it is in
+- `/`: filter the stages, the tabs of a stage, or the lines of the logs; search json
+- `n`, `shift+n`: the next and previous match of the search in json
 - `d`: plan a deploy of the project's stage, or on a function of its code
 - `ctrl+s`: apply the plan on screen
 - `r` on a plan of a deploy of the stage: plan again with every resource read as it is in aws, to find what was deleted or changed outside koldstart
@@ -63,12 +70,13 @@ The stages, a stage and a function are read again every five seconds, and `p` pa
 - `f`: on the logs, follow the newest lines, or stop following
 - `y`, `n`: answer the dialog to release a lock or to run against prod
 - `n`, `p` on an invocation: the next and the previous one, as the invocations list them
-- `c`: copy what is under the cursor: an app and stage, a function's arn, the whole value of a row of its overview, a resource's id in aws, an output's value as it is, a version, a request id, or what the last invocation returned
+- `c`: copy what is under the cursor: an app and stage, a function's arn, the whole value of a row of its overview, the value of a line of json, or a resource's id in aws on a tab without json, an output's value as it is, a version, a request id, or what the last invocation returned
+- `shift+c`: copy the path of the line of json under the cursor
 - `r`: read the page again
 - `p`: pause or resume reading the page again
 - `?`: help; any key closes it
 
-While a filter, or the stage's name to remove it, has focus, letters, `?` and `p` included, are typed into it.
+While a filter, a search, or the stage's name to remove it, has focus, letters, `?`, `p` and `q` included, are typed into it.
 
 `ctrl+s` applies the plan on screen. It takes the stage's lock and plans again first: when the configuration or the state changed since, nothing is applied, and the new plan is shown to apply instead. Removing a stage shows the plan of the remove, and asks to type the stage's name, such as `dev`. Releasing a lock shows who took it, for what, from where, and when, before asking. Running a function of `prod` on this machine asks first, naming the event it sends.
 

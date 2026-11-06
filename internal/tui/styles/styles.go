@@ -17,15 +17,15 @@
 //     and the words of a log line or a payload.
 //   - muted: what qualifies a value: a region, who did something, a type, an id in aws in a table,
 //     a reason, a billed duration, what a plan changes in a field, a note on a row (kept, imported,
-//     retained), the tabs that are not open, what a key does, and what a page or a table says while
-//     it loads or holds nothing.
+//     retained), the tabs that are not open, what a key does, the keys of json, and what a page or a
+//     table says while it loads or holds nothing.
 //   - faint: metadata and punctuation: column headings and field labels, units and counts beside a
 //     name or a tab, hashes and request and version ids, the time stamped on a log line,
-//     separators, empty values such as "-", "none" and "free", hints, and notes on what cannot be
-//     shown and why.
+//     separators, empty values such as "-", "none", "free" and json's null, json's punctuation and
+//     what a fold of it hides, hints, and notes on what cannot be shown and why.
 //   - accent: where the cursor is and what runs now: the open tab, the cursor's marker, the
 //     spinner, something in flight (● running, a function lambda is updating), the project's app
-//     (●), the current version, a filter's matches and the titles in the help.
+//     (●), the current version, the matches of a filter or a search and the titles in the help.
 //   - success: something done or healthy: ✓, + and create, ok, active.
 //   - warning: something that needs attention and has not failed: ▲, ~ and update, a lock, a change
 //     outside koldstart, what is pending, paused or throttled, an event that is not json, and a
@@ -34,7 +34,7 @@
 //     counts, a timeout, what a failure stopped, and the dialog that removes a stage.
 //   - info: what koldstart takes over or does not change itself, = and adopt, a reference to a
 //     secret or an output, and a cold start.
-//   - warm: numbers in a payload.
+//   - warm: numbers in a payload, and its booleans.
 //
 // A status carries its symbol as well as its tone, ✓, ▲ or ✗, so it reads without colour too.
 // Rules and the branches of a tree are hairlines: they divide, carry nothing that is not also said
