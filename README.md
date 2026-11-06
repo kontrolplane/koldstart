@@ -185,7 +185,7 @@ To keep a secret out of the configuration, add `.readAtRuntime()`: the variable 
 kdst invoke -f worker --local --path events/job.json
 ```
 
-A python function runs with the version of python its runtime names, which [uv](https://docs.astral.sh/uv/) finds or installs once, its dependencies installed for it. A container image function is built for this machine and runs in docker, pointed at the same emulator.
+A python function runs with the version of python its runtime names, which [uv](https://docs.astral.sh/uv/) finds or installs once, its dependencies installed for it. A container image function is built for this machine and runs in docker, pointed at the same emulator. A function's layers are not added here, so what they put under `/opt` is missing; koldstart says so when it runs one.
 
 `offline` serves every http route of the stage on `127.0.0.1:3000`, so the api can be called with curl or a browser while you work on it. A change to a source file rebuilds the functions, and the next request runs the new code:
 

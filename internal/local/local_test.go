@@ -194,6 +194,23 @@ func TestNodeSlowInit(t *testing.T) {
 	}
 }
 
+// TestLayersMissing checks a function with layers is told they are not added when it runs here.
+func TestLayersMissing(t *testing.T) {
+	tests := []struct {
+		layers int
+		want   string
+	}{
+		{layers: 0, want: ""},
+		{layers: 1, want: "note: the function's layer is not added here: what it puts under /opt is missing"},
+		{layers: 3, want: "note: the function's 3 layers are not added here: what they put under /opt is missing"},
+	}
+	for _, tt := range tests {
+		if got := layersMissing(tt.layers); got != tt.want {
+			t.Errorf("layersMissing(%d) = %q, want %q", tt.layers, got, tt.want)
+		}
+	}
+}
+
 // TestNodeInitError checks a module that fails to load is reported as lambda reports it.
 func TestNodeInitError(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
