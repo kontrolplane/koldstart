@@ -22,10 +22,11 @@ internal/scaffold/          kdst init's templates: a koldstart.pkl, a handler in
 internal/awstest/           connects tests to the emulator
 hack/schema/                packages the schema in pkl/ with the pkl koldstart pins, for releases: the metadata at koldstart@<v> and the zip
 hack/pkl/                   downloads the pinned pkl for a platform, for the image
-hack/floci/                 an aws profile for floci, for running kdst against it by hand
+hack/floci/                 the local aws profile for floci, for running kdst against it by hand
+hack/demo/                  the shop make local and make vhs deploy to floci, the script that seeds it, and the metrics floci does not keep
 examples/                   example projects, each a go module of its own; examples_test.go checks they evaluate
 test/e2e/                   deploys examples/full-featured to a real account, behind the e2e build tag
-vhs/                        make vhs: the tape that records kdst ui for the README, and the shop it deploys to a floci of its own
+vhs/                        make vhs: the tape that records kdst ui for the README, and the floci and profile it records against
 internal/version/           the build's version, stamped by the linker, in route's shape
 docs/                       the user documentation; it describes the design in #1 until it is built
 ```

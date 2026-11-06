@@ -1,7 +1,7 @@
 // Command cloudwatch writes what cloudwatch holds of a lambda function and floci does not, for the
-// shop in vhs/shop: an hour of its metrics, and lambda's START, END and REPORT lines around the
-// lines of each request in its log. make vhs runs it against the floci of vhs/docker-compose.yaml,
-// with the profile in vhs/aws-config, once the shop is deployed and invoked.
+// shop in hack/demo/shop: an hour of its metrics, and lambda's START, END and REPORT lines around
+// the lines of each request in its log. hack/demo/seed.sh runs it with the profile it sets, once
+// the shop is deployed and invoked.
 package main
 
 import (

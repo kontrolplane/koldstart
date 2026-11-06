@@ -1,4 +1,5 @@
-# The aws profile of floci, the emulator make emulator starts. Use it with
+# The aws profile of floci, the emulator make emulator starts. make local deploys the shop in
+# hack/demo/shop to it, and make local-ui opens kdst ui there. Use it by hand with
 #   AWS_CONFIG_FILE=hack/floci/aws-config kdst --profile local plan
 # or copy the profile into ~/.aws/config.
 [profile local]

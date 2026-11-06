@@ -7,7 +7,7 @@ Set TypingSpeed 100ms
 Output ./assets/cassette.gif
 
 Hide
-  Type@10ms "go build -o bin/koldstart ./cmd/koldstart && cd vhs/shop && clear && AWS_CONFIG_FILE=../aws-config ../../bin/koldstart --profile vhs ui --config koldstart.next.pkl"
+  Type@10ms "go build -o bin/koldstart ./cmd/koldstart && cd hack/demo/shop && clear && AWS_CONFIG_FILE=../../../vhs/aws-config ../../../bin/koldstart --profile vhs ui --config koldstart.next.pkl"
   Enter
   Wait+Screen@60s /1 of 3/
   Type "q"

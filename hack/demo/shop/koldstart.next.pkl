@@ -2,7 +2,7 @@
 // product, bigger batches for the worker and a longer visibility timeout for its queue.
 amends "koldstart.pkl"
 
-import "../../pkl/kdst.pkl"
+import "@koldstart/kdst.pkl"
 
 functions {
   ["api"] {
