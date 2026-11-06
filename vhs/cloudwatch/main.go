@@ -7,7 +7,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"hash/fnv"
 	"os"
 	"slices"
 	"strings"
@@ -88,7 +87,7 @@ func minute(f traffic, m int, t time.Time) []cwtypes.MetricDatum {
 func metrics(ctx context.Context, client *cloudwatch.Client) error {
 	now := time.Now().Truncate(time.Minute)
 	for _, f := range shop {
-		var data []cwtypes.MetricDatum
+		data := make([]cwtypes.MetricDatum, 0, 60*6)
 		for m := range 60 {
 			data = append(data, minute(f, m, now.Add(time.Duration(m-60)*time.Minute+30*time.Second))...)
 		}
@@ -152,11 +151,13 @@ func requestOf(line string) (string, bool) {
 	return fields[1], false
 }
 
-// spread is a number from 0 to n-1 that stays the same for s.
-func spread(s string, n int) int {
-	h := fnv.New32a()
-	h.Write([]byte(s))
-	return int(h.Sum32() % uint32(n))
+// spread is a number from 0 to n-1 that stays the same for s, its fnv-1a hash modulo n.
+func spread(s string, n uint32) int {
+	h := uint32(2166136261)
+	for i := range len(s) {
+		h = (h ^ uint32(s[i])) * 16777619
+	}
+	return int(h % n)
 }
 
 // reports writes lambda's lines around each request of function that has none: START before its
