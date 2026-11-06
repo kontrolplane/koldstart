@@ -151,3 +151,122 @@ func TestPrintPlanNoChanges(t *testing.T) {
 		}
 	}
 }
+
+// TestWritePlanJSON checks plan -o json lists the changes the text plan does, with the inputs
+// an update changes, a secret by what it stands for, its keys sorted, and [] and {} for a plan
+// without changes.
+func TestWritePlanJSON(t *testing.T) {
+	secret := map[string]any{"$koldstart": "secret", "source": "ssm", "name": "/orders/api-key", "key": "", "atRuntime": false}
+	tests := []struct {
+		name string
+		plan *engine.Plan
+		want string
+	}{
+		{name: "no changes", plan: &engine.Plan{Changes: []engine.Change{{ID: "role/api", Action: engine.NoOp}}}, want: `{
+  "account": "123456789012",
+  "app": "orders",
+  "changes": [],
+  "counts": {},
+  "refreshed": false,
+  "region": "eu-west-1",
+  "stage": "dev"
+}
+`},
+		{name: "changes", plan: &engine.Plan{Refreshed: true, Changes: []engine.Change{
+			{ID: "function/api", Type: "koldstart::Lambda::Function", Action: engine.Update, Fields: []string{"environment", "memory"},
+				Before: map[string]any{"memory": 256.0, "environment": map[string]any{"API_KEY": secret}},
+				After:  map[string]any{"memory": 1024.0, "environment": map[string]any{"API_KEY": secret, "URL": "https://x?a=1&b=2"}}},
+			{ID: "resource/jobs", Type: "AWS::SQS::Queue", Action: engine.Replace, Fields: []string{"properties"}, Drift: []string{"properties"},
+				Before: map[string]any{"properties": map[string]any{"FifoQueue": false, "VisibilityTimeout": 30.0}},
+				After:  map[string]any{"properties": map[string]any{"FifoQueue": true, "VisibilityTimeout": map[string]any{"$koldstart": "unknown"}}}},
+			{ID: "function/worker", Type: "koldstart::Lambda::Function", Action: engine.Update, Fields: []string{engine.SecretChanged}},
+			{ID: "url/api", Type: "koldstart::Lambda::Url", Action: engine.Create, Resume: true},
+			{ID: "resource/orders", Type: "AWS::DynamoDB::Table", Action: engine.Create, Gone: true},
+		}}, want: `{
+  "account": "123456789012",
+  "app": "orders",
+  "changes": [
+    {
+      "action": "update",
+      "fields": [
+        {
+          "after": {
+            "API_KEY": "ssm:/orders/api-key",
+            "URL": "https://x?a=1&b=2"
+          },
+          "before": {
+            "API_KEY": "ssm:/orders/api-key"
+          },
+          "field": "environment"
+        },
+        {
+          "after": 1024,
+          "before": 256,
+          "field": "memory"
+        }
+      ],
+      "id": "function/api",
+      "type": "koldstart::Lambda::Function"
+    },
+    {
+      "action": "replace",
+      "drift": [
+        "properties"
+      ],
+      "fields": [
+        {
+          "after": true,
+          "before": false,
+          "field": "properties.FifoQueue"
+        },
+        {
+          "after": "known after apply",
+          "before": 30,
+          "field": "properties.VisibilityTimeout"
+        }
+      ],
+      "id": "resource/jobs",
+      "type": "AWS::SQS::Queue"
+    },
+    {
+      "action": "update",
+      "id": "function/worker",
+      "secretChanged": true,
+      "type": "koldstart::Lambda::Function"
+    },
+    {
+      "action": "create",
+      "id": "url/api",
+      "resume": true,
+      "type": "koldstart::Lambda::Url"
+    },
+    {
+      "action": "create",
+      "gone": true,
+      "id": "resource/orders",
+      "type": "AWS::DynamoDB::Table"
+    }
+  ],
+  "counts": {
+    "create": 2,
+    "replace": 1,
+    "update": 2
+  },
+  "refreshed": true,
+  "region": "eu-west-1",
+  "stage": "dev"
+}
+`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var out bytes.Buffer
+			if err := writePlanJSON(&out, "orders", "dev", "eu-west-1", "123456789012", tt.plan); err != nil {
+				t.Fatal(err)
+			}
+			if out.String() != tt.want {
+				t.Errorf("got:\n%s\nwant:\n%s", out.String(), tt.want)
+			}
+		})
+	}
+}

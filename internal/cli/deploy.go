@@ -20,6 +20,7 @@ import (
 
 func planCommand(name string, opts *Options) *cobra.Command {
 	var plan planOptions
+	var output string
 	cmd := &cobra.Command{
 		Use:   "plan",
 		Short: "show what a deploy would create, change and delete",
@@ -30,12 +31,40 @@ writes no state; it reads secrets and other stages' outputs, to tell whether the
 With --refresh it also reads every resource as it is in aws: one deleted outside koldstart is
 planned to be created again, and one changed outside koldstart to be set back to what the
 configuration says. Functions and resources say which inputs were changed; the rest only whether
-they are still there.`,
+they are still there.
+
+-o json prints the same changes as one json object, its keys sorted. A change has its action,
+create, update, replace, delete, keep or adopt, its id and type; an update, replace or adopt the
+inputs it changes, with their values before and after, or secretChanged when only a secret or
+another stage's output did; and drift, resume and gone when the text plan marks them so. A
+secret is shown by what it stands for, such as ssm:/orders/api-key, and never by its value. Its
+shape, here on fewer lines:
+
+  {
+    "account": "123456789012",
+    "app": "orders",
+    "changes": [
+      {
+        "action": "update",
+        "fields": [{"after": 1024, "before": 256, "field": "memory"}],
+        "id": "function/api",
+        "type": "koldstart::Lambda::Function"
+      }
+    ],
+    "counts": {"update": 1},
+    "refreshed": false,
+    "region": "eu-west-1",
+    "stage": "prod"
+  }`,
 		Example: fmt.Sprintf(`  %[1]s plan
   %[1]s plan --stage prod --refresh
-  %[1]s plan --allow-replace`, name),
+  %[1]s plan --allow-replace
+  %[1]s plan -o json | jq -e '.changes | map(select(.action == "replace")) | length == 0'`, name),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := checkOutput(cmd, output); err != nil {
+				return err
+			}
 			ctx := cmd.Context()
 			s, err := openStage(ctx, opts, false)
 			if err != nil {
@@ -45,12 +74,16 @@ they are still there.`,
 			if err != nil {
 				return err
 			}
+			if output == outputJSON {
+				return writePlanJSON(cmd.OutOrStdout(), s.App, s.Stage, s.Region, s.sess.Account, p)
+			}
 			printPlan(cmd.OutOrStdout(), s, p)
 			return nil
 		},
 	}
 	cmd.Flags().BoolVar(&plan.AllowReplace, "allow-replace", false, "plan replacing retained resources; the old ones stay")
 	cmd.Flags().BoolVar(&plan.Refresh, "refresh", false, "show what changed outside koldstart")
+	outputFlag(cmd, &output)
 	return cmd
 }
 

@@ -190,22 +190,124 @@ func planCounts(plan *engine.Plan) string {
 // by one, as they are what the configuration sets.
 func FieldChanges(c engine.Change) []string {
 	var out []string
-	for _, f := range c.Fields {
-		before, isMapB := c.Before[f].(map[string]any)
-		after, isMapA := c.After[f].(map[string]any)
-		if f == engine.SecretChanged {
+	for _, d := range fieldDiffs(c) {
+		if d.field == engine.SecretChanged {
 			out = append(out, "a secret or another stage's output changed")
 			continue
 		}
-		if f != "properties" || !isMapB || !isMapA {
-			out = append(out, f+": "+describeChange(c.Before[f], c.After[f]))
+		out = append(out, d.field+": "+describeChange(d.before, d.after))
+	}
+	return out
+}
+
+// fieldDiff is one input a change changes, from before to after.
+type fieldDiff struct {
+	field         string
+	before, after any
+}
+
+// fieldDiffs are the inputs a change changes, the properties of a resource one by one, as
+// FieldChanges and plan -o json list them. engine.SecretChanged stands for a secret or another
+// stage's output that changed.
+func fieldDiffs(c engine.Change) []fieldDiff {
+	var out []fieldDiff
+	for _, f := range c.Fields {
+		before, isMapB := c.Before[f].(map[string]any)
+		after, isMapA := c.After[f].(map[string]any)
+		if f == engine.SecretChanged || f != "properties" || !isMapB || !isMapA {
+			out = append(out, fieldDiff{field: f, before: c.Before[f], after: c.After[f]})
 			continue
 		}
 		for _, k := range engine.ChangedKeys(before, after) {
-			out = append(out, f+"."+k+": "+describeChange(before[k], after[k]))
+			out = append(out, fieldDiff{field: f + "." + k, before: before[k], after: after[k]})
 		}
 	}
 	return out
+}
+
+// planJSON is a plan as plan -o json prints it.
+type planJSON struct {
+	App       string         `json:"app"`
+	Stage     string         `json:"stage"`
+	Region    string         `json:"region"`
+	Account   string         `json:"account"`
+	Refreshed bool           `json:"refreshed"`
+	Changes   []changeJSON   `json:"changes"`
+	Counts    map[string]int `json:"counts"`
+}
+
+// changeJSON is one change of a plan -o json: what the text plan says of it.
+type changeJSON struct {
+	Action string `json:"action"`
+	ID     string `json:"id"`
+	Type   string `json:"type"`
+	// Fields are the inputs an update, replace or take over changes, and SecretChanged says only
+	// a secret or another stage's output did.
+	Fields        []fieldJSON `json:"fields,omitempty"`
+	SecretChanged bool        `json:"secretChanged,omitempty"`
+	Drift         []string    `json:"drift,omitempty"`
+	Resume        bool        `json:"resume,omitempty"`
+	Gone          bool        `json:"gone,omitempty"`
+}
+
+// fieldJSON is one input a change changes. Before is null for one added, and after for one
+// removed.
+type fieldJSON struct {
+	Field  string `json:"field"`
+	Before any    `json:"before"`
+	After  any    `json:"after"`
+}
+
+// writePlanJSON writes a plan as one json object for a script, with the changes the text plan
+// lists, in its order.
+func writePlanJSON(w io.Writer, app, stage, region, account string, plan *engine.Plan) error {
+	out := planJSON{App: app, Stage: stage, Region: region, Account: account, Refreshed: plan.Refreshed, Changes: []changeJSON{}, Counts: map[string]int{}}
+	for _, c := range plan.Changes {
+		if c.Action == engine.NoOp {
+			continue
+		}
+		out.Counts[string(c.Action)]++
+		change := changeJSON{Action: string(c.Action), ID: c.ID, Type: c.Type, Drift: c.Drift, Resume: c.Resume, Gone: c.Gone}
+		if c.Action == engine.Update || c.Action == engine.Replace || c.Action == engine.Adopt {
+			for _, d := range fieldDiffs(c) {
+				if d.field == engine.SecretChanged {
+					change.SecretChanged = true
+					continue
+				}
+				change.Fields = append(change.Fields, fieldJSON{Field: d.field, Before: shownInput(d.before), After: shownInput(d.after)})
+			}
+		}
+		out.Changes = append(out.Changes, change)
+	}
+	return writeJSON(w, out)
+}
+
+// ownMarker is the key the engine marks its own values with inside inputs: a secret, another
+// stage's output, or a value known only after apply.
+const ownMarker = "$koldstart"
+
+// shownInput is an input as plan -o json shows it: koldstart's own values by what they stand
+// for, as engine.Describe writes them, such as ssm:/orders/api-key for a secret, whose value
+// is never in a plan.
+func shownInput(v any) any {
+	switch x := v.(type) {
+	case map[string]any:
+		if _, own := x[ownMarker]; own {
+			return engine.Describe(x)
+		}
+		out := make(map[string]any, len(x))
+		for k, item := range x {
+			out[k] = shownInput(item)
+		}
+		return out
+	case []any:
+		out := make([]any, len(x))
+		for i, item := range x {
+			out[i] = shownInput(item)
+		}
+		return out
+	}
+	return v
 }
 
 // describeChange says how an input changes: before and after for short values, less for the rest.
