@@ -450,7 +450,7 @@ func perfFresh(m model) model {
 	m.state.invocation.cache = &invocationCache{}
 	results := make(map[string]invocationResult, len(m.state.function.results))
 	for k, r := range m.state.function.results {
-		r.wrapped = &resultRows{}
+		r.logs = &wrappedLog{}
 		results[k] = r
 	}
 	m.state.function.results = results

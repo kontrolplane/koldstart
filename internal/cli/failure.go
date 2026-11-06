@@ -142,17 +142,17 @@ func functionError(payload []byte, kind string) string {
 		}
 		return kind + ", returning\n" + indentLines(strings.TrimRight(b.String(), "\n"))
 	}
-	return failureText(f)
+	return f.String()
 }
 
 // describeFailure says what a function that failed on this machine failed with, as functionError
 // says one that failed in aws.
 func describeFailure(typ, message string, trace []json.RawMessage) string {
-	return failureText(newFailure(typ, message, trace))
+	return newFailure(typ, message, trace).String()
 }
 
-// failureText is the head of a failure with its stack trace under it, indented.
-func failureText(f Failure) string {
+// String is the head of a failure with its stack trace under it, indented, as the cli writes it.
+func (f Failure) String() string {
 	if len(f.Trace) == 0 {
 		return f.Head()
 	}

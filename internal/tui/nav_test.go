@@ -279,7 +279,7 @@ func TestNavPosition(t *testing.T) {
 		{name: "function overview", reach: []string{"enter"}, top: "lines 1–", bottom: []string{"G"}},
 		{name: "logs", reach: []string{"enter", "tab"}, top: "lines 1–", bottom: []string{"G"}, end: "of 212"},
 		{name: "invocation", reach: []string{"enter", "tab", "tab", "G", "enter"}, top: "lines 1–", bottom: []string{"G"}},
-		{name: "invoke", reach: []string{"enter", "shift+tab", "i"}, top: "lines 1–", bottom: slices.Repeat([]string{"pgdown"}, 30)},
+		{name: "invoke", reach: []string{"enter", "shift+tab", "i"}, top: "lines 1–", bottom: slices.Repeat([]string{"pgdown"}, 60)},
 		{name: "resource", reach: []string{"tab", "G", "enter"}, top: "lines 1–", bottom: []string{"G"}},
 		{name: "diff", reach: []string{"d", "enter"}, top: "lines 1–", bottom: []string{"G"}},
 		{name: "plan", reach: []string{"d"}, top: "1 of 2", bottom: []string{"G"}, end: "2 of 2"},

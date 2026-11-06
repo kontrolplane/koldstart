@@ -34,20 +34,88 @@ type invocationResult struct {
 	running bool
 	at      time.Time
 	err     error
-	// body is the payload's lines, indented and cleaned, and wrapped what the last frame drew of
-	// it and of the log at its width, so the next does not do either again.
-	body    []string
-	wrapped *resultRows
+	// failure is the error the function failed with, read from what it returned; failed is set
+	// when what it returned was one.
+	failure cli.Failure
+	failed  bool
+	// report is what lambda's REPORT line in the log's tail says of the invocation, when it has
+	// one.
+	report request
+	// view is what it returned, as json or as the lines it is.
+	view jsonView
+	// logs are the cells of its log as the last frame wrapped them, so the next does not again.
+	logs *wrappedLog
 }
 
-// resultRows are what an invocation returned and its log, wrapped to width in the palette
-// numbered palette. They hold no colour, but are wrapped again in a new palette all the same, so
-// nothing kept outlives one.
-type resultRows struct {
+// wrappedLog is an invocation's log wrapped to width in the palette numbered palette. It holds
+// no colour, but is wrapped again in a new palette all the same, so nothing kept outlives one.
+type wrappedLog struct {
 	width   int
 	palette int
-	payload []string
-	logs    []cell
+	cells   []cell
+}
+
+// newResult reads what an invocation returned: the error it failed with, the report in its log
+// and the json of its payload. It runs off the interface's goroutine, as a payload can be
+// megabytes.
+func newResult(inv cli.Invocation, local bool, err error) invocationResult {
+	r := invocationResult{inv: inv, local: local, err: err, logs: &wrappedLog{}}
+	if err != nil {
+		return r
+	}
+	if inv.Error != "" {
+		r.failure, r.failed = cli.ReadFailure(inv.Payload)
+	}
+	r.report = tailReport(inv)
+	if !r.failed {
+		r.view = newJSONViewBytes(inv.Payload)
+	}
+	return r
+}
+
+// tailReport is what the REPORT line of an invocation's log tail says of it: of the request lambda
+// gave it, or else of the last one reported.
+func tailReport(inv cli.Invocation) request {
+	if !strings.Contains(inv.Logs, "REPORT RequestId:") {
+		return request{}
+	}
+	var events []cli.LogEvent
+	for line := range strings.SplitSeq(inv.Logs, "\n") {
+		events = append(events, cli.LogEvent{Stream: "tail", Message: line})
+	}
+	var out request
+	for _, r := range requests(events) {
+		switch {
+		case !r.reported:
+		case r.id == inv.RequestID:
+			return r
+		case out.id == "":
+			out = r
+		}
+	}
+	return out
+}
+
+// timedOut reports whether lambda ended the invocation at the function's timeout.
+func (r invocationResult) timedOut() bool {
+	return r.inv.Error != "" && (r.failed && r.failure.TimedOut() || r.report.timedOut)
+}
+
+// requestID is the id lambda gave the invocation, from its answer or its report.
+func (r invocationResult) requestID() string {
+	return cmpOr(r.inv.RequestID, r.report.id)
+}
+
+// logCells are the cells of the log at width, or as the last frame wrapped them.
+func (r invocationResult) logCells(width int) []cell {
+	if w := r.logs; w != nil && w.width == width && w.palette == styles.Gen() && w.cells != nil {
+		return w.cells
+	}
+	cells := logCells(r.inv.Logs, width)
+	if r.logs != nil {
+		*r.logs = wrappedLog{width: width, palette: styles.Gen(), cells: cells}
+	}
+	return cells
 }
 
 // payloadLines are the lines of what an invocation returned, indented when it is json, and
@@ -57,22 +125,6 @@ func payloadLines(payload []byte) []string {
 		return nil
 	}
 	return strings.Split(styles.CleanBlock(strings.TrimRight(prettyJSON(payload), "\n")), "\n")
-}
-
-// rows wraps the payload and the log to width, or takes them as the last frame wrapped them.
-func (r invocationResult) rows(width int) resultRows {
-	if w := r.wrapped; w != nil && w.width == width && w.palette == styles.Gen() && width > 0 {
-		return *w
-	}
-	body := r.body
-	if body == nil {
-		body = payloadLines(r.inv.Payload)
-	}
-	out := resultRows{width: width, palette: styles.Gen(), payload: hardwrapLines(body, width), logs: logCells(r.inv.Logs, width)}
-	if r.wrapped != nil {
-		*r.wrapped = out
-	}
-	return out
 }
 
 // hardwrapLines breaks each line wider than width where the width runs out, as ansi.Hardwrap
@@ -100,15 +152,73 @@ func hardwrapLines(lines []string, width int) []string {
 // errNotJSON is an event file that does not hold json.
 var errNotJSON = errors.New("not json")
 
-var eventColumns = []column{{title: "event", width: 12, grow: 1}}
+// eventFile is an event kept for the function, as it was when the events were listed.
+type eventFile struct {
+	size     int64
+	modified time.Time
+	// data is what it holds, and err why it cannot be sent, nil for one that can.
+	data []byte
+	err  error
+}
 
-func eventsWidth() int { return min(36, contentWidth/3) }
+var eventColumns = []column{
+	{title: "event", width: 12, grow: 1},
+	{title: "size", width: 7, right: true, drop: 2},
+	{title: "modified", width: 8, right: true, drop: 1},
+}
 
-// resultWidth is the width of what an invocation returned, right of the events.
-func resultWidth() int { return contentWidth - 4 - eventsWidth() - 2 }
+// invokeWideWidth is the content width from which the events and the pane are side by side;
+// below it the pane is under the events.
+const invokeWideWidth = 96
 
-// readEventFiles lists the events kept for the function, marking the ones that are not json, and
-// keeps the cursor on the one it was on.
+// invokeLayout is where the invoke tab draws: the events, their width and the rows they show,
+// and the pane of the payload or the result, beside them when the terminal is wide and under them
+// when it is narrow, where the pane takes all of the tab while its json has the keys.
+type invokeLayout struct {
+	wide       bool
+	showEvents bool
+	eventsW    int
+	eventsH    int
+	paneW      int
+	paneH      int
+}
+
+// paneChrome is the lines above the pane's body: its tabs and a rule.
+const paneChrome = 2
+
+func (m model) invokeLayout() invokeLayout {
+	f := m.state.function
+	height := functionBodyHeight()
+	if contentWidth >= invokeWideWidth {
+		w := min(48, contentWidth*2/5)
+		return invokeLayout{wide: true, showEvents: true, eventsW: w, eventsH: height - tableHeaderRows, paneW: contentWidth - 3 - w - 2, paneH: height}
+	}
+	rows := max(1, min(len(f.events.rows), (height-1)/3))
+	l := invokeLayout{showEvents: true, eventsW: contentWidth - 3, eventsH: rows, paneW: contentWidth - 3, paneH: height - rows - tableHeaderRows - 1}
+	if f.pane.focused {
+		l.showEvents, l.paneH = false, height
+	}
+	return l
+}
+
+// paneBodyHeight is the lines the pane's body shows.
+func (l invokeLayout) paneBodyHeight() int { return max(1, l.paneH-paneChrome) }
+
+// fitEvents sizes the events' table to the layout. Over the pane it shows no more rows than
+// there are events, fewer than a table's least, so the pane has the room.
+func (m model) fitEvents() model {
+	l := m.invokeLayout()
+	t := &m.state.function.events
+	t.setSize(l.eventsW, l.eventsH)
+	if !l.wide {
+		t.height = l.eventsH
+		t.setCursor(t.cursor)
+	}
+	return m
+}
+
+// readEventFiles lists the events kept for the function, with their size and when they were
+// changed, marking the ones that are not json, and keeps the cursor on the one it was on.
 //
 //nolint:gosec // reads the event files of the project
 func (m model) readEventFiles() model {
@@ -119,33 +229,43 @@ func (m model) readEventFiles() model {
 		entries, _ = os.ReadDir(dir)
 	}
 	var files []string
+	var infos []eventFile
 	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
-			files = append(files, e.Name())
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
 		}
+		var ev eventFile
+		if info, err := e.Info(); err == nil {
+			ev.size, ev.modified = info.Size(), info.ModTime()
+		}
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			ev.err = fmt.Errorf("reading the event %s: %w", e.Name(), err)
+		} else {
+			ev.data, ev.size, ev.err = data, int64(len(data)), checkEvent(e.Name(), data)
+		}
+		files, infos = append(files, e.Name()), append(infos, ev)
 	}
 	current := m.selectedEvent()
-	f.eventFiles, f.eventErrs = files, make([]error, len(files))
+	f.eventFiles, f.eventInfo = files, infos
 	rows := make([]tableRow, 0, len(files))
 	for i, name := range files {
+		ev := infos[i]
 		c := cell{styles.S(strings.TrimSuffix(name, ".json"), styles.ToneText)}
-		data, err := os.ReadFile(filepath.Join(dir, name))
-		if err != nil {
-			err = fmt.Errorf("reading the event %s: %w", name, err)
-		} else {
-			err = checkEvent(name, data)
-		}
-		if errors.Is(err, errNotJSON) {
+		if errors.Is(ev.err, errNotJSON) {
 			c = append(c, styles.S("  not json", styles.ToneWarning))
 		}
-		f.eventErrs[i] = err
-		rows = append(rows, tableRow{c})
+		modified := text(formatAgo(ev.modified), styles.ToneBody)
+		if ev.modified.IsZero() {
+			modified = text("-", styles.ToneFaint)
+		}
+		rows = append(rows, tableRow{c, text(cli.Size(ev.size), styles.ToneBody), modified})
 	}
 	switch {
 	case len(files) == 0 && dir == "":
-		rows = []tableRow{{text(defaultEvent, styles.ToneText)}}
+		rows = []tableRow{{text(defaultEvent, styles.ToneText), text("-", styles.ToneFaint), text("-", styles.ToneFaint)}}
 	case len(files) == 0:
-		rows = []tableRow{{cell{styles.S(defaultEvent, styles.ToneText), styles.S("  e creates "+defaultEventFile, styles.ToneFaint)}}}
+		rows = []tableRow{{cell{styles.S(defaultEvent, styles.ToneText), styles.S("  e creates "+defaultEventFile, styles.ToneFaint)}, text("-", styles.ToneFaint), text("-", styles.ToneFaint)}}
 	}
 	f.events.setRows(rows)
 	for i, name := range files {
@@ -153,7 +273,7 @@ func (m model) readEventFiles() model {
 			f.events.setCursor(i)
 		}
 	}
-	return m
+	return m.fitEvents().syncPane(true)
 }
 
 // selectedEvent is the file of the event under the cursor, or "" for the default event.
@@ -163,6 +283,15 @@ func (m model) selectedEvent() string {
 		return f.eventFiles[f.events.cursor]
 	}
 	return ""
+}
+
+// selectedEventFile is the event under the cursor as it was listed, false for the default event.
+func (m model) selectedEventFile() (eventFile, bool) {
+	f := m.state.function
+	if i := f.events.cursor; i < len(f.eventFiles) && i < len(f.eventInfo) {
+		return f.eventInfo[i], true
+	}
+	return eventFile{}, false
 }
 
 // eventPayload reads the selected event, and checks it is json, as lambda takes nothing else.
@@ -201,11 +330,8 @@ func checkEvent(name string, data []byte) error {
 // eventErr is why the selected event cannot be sent, as it was when the events were listed, so a
 // frame does not read the file again.
 func (m model) eventErr() error {
-	f := m.state.function
-	if i := f.events.cursor; i < len(f.eventFiles) && i < len(f.eventErrs) {
-		return f.eventErrs[i]
-	}
-	return nil
+	ev, _ := m.selectedEventFile()
+	return ev.err
 }
 
 // editor is the command of $VISUAL, or $EDITOR, or vi, split into its words.
@@ -259,8 +385,8 @@ func (m model) applyEventEdited(msg eventEditedMsg) (model, tea.Cmd) {
 	return m, nil
 }
 
-// startInvoke invokes the function with the selected event, in aws or on this machine. Against
-// prod, running here asks first. An event that is not json is not sent.
+// startInvoke invokes the function with the selected event, in aws or on this machine, and shows
+// the result. Against prod, running here asks first. An event that is not json is not sent.
 func (m model) startInvoke(local bool) (model, tea.Cmd) {
 	f := &m.state.function
 	ref := m.state.stage.ref
@@ -285,6 +411,7 @@ func (m model) startInvoke(local bool) (model, tea.Cmd) {
 		m.state.runLocal = runLocalState{event: m.selectedEvent(), payload: payload}
 		return m.switchPage(runLocalPage), nil
 	}
+	m = m.showPane(true)
 	return m.invoke(m.selectedEvent(), payload, local)
 }
 
@@ -294,35 +421,175 @@ func (m model) applyInvoked(msg invokedMsg) (model, tea.Cmd) {
 		return m, nil
 	}
 	f.invoking = false
-	f.results[msg.event] = invocationResult{inv: msg.inv, local: msg.local, at: time.Now(), err: msg.err, body: msg.body, wrapped: &resultRows{}}
-	f.scroll = 0
-	switch {
-	case msg.err != nil:
-		return m.setStatus("could not invoke "+f.name, styles.ToneDanger)
-	case msg.inv.Error != "":
-		return m.setStatus(f.name+" failed: "+functionError(msg.inv), styles.ToneDanger)
+	r := msg.result
+	r.at = time.Now()
+	prev := f.results[msg.event].view
+	if f.pane.result && f.pane.event == msg.event {
+		prev = f.pane.view
 	}
-	return m.setStatus(f.name+" returned in "+cli.Duration(msg.inv.Duration), styles.ToneSuccess)
+	r.view = r.view.carry(prev)
+	f.results[msg.event] = r
+	f.scroll = 0
+	m = m.syncPane(true)
+	switch {
+	case r.err != nil:
+		return m.setStatus("could not invoke "+f.name, styles.ToneDanger)
+	case r.timedOut():
+		return m.setStatus(f.name+" timed out: "+functionError(r), styles.ToneDanger)
+	case r.inv.Error != "":
+		return m.setStatus(f.name+" failed: "+functionError(r), styles.ToneDanger)
+	}
+	return m.setStatus(f.name+" returned in "+cli.Duration(r.inv.Duration), styles.ToneSuccess)
 }
 
-// invokeUpdate handles a key on the invoke tab: ↑ and ↓ choose the event, pgup and pgdn scroll
-// what it returned.
+// invokePane is what the right of the invoke tab shows, or below the events on a narrow terminal:
+// the selected event's payload, or what the last invocation with it returned, as json. While
+// focused, its json has the keys.
+type invokePane struct {
+	event   string
+	result  bool
+	focused bool
+	synced  bool
+	view    jsonView
+}
+
+// showPane shows the result, or the payload, of the selected event.
+func (m model) showPane(result bool) model {
+	f := &m.state.function
+	if f.pane.result != result {
+		f.pane.result, f.scroll = result, 0
+	}
+	if result && f.results[m.selectedEvent()].running {
+		f.pane.focused = false
+	}
+	return m.syncPane(false)
+}
+
+// syncPane points the pane at the selected event. The view of a result it leaves is kept with the
+// result, so its folds and cursor are there when it comes back. Again set, it reads the view
+// anew, the payload of an event read again keeping what was done to it.
+func (m model) syncPane(again bool) model {
+	f := &m.state.function
+	p := &f.pane
+	event := m.selectedEvent()
+	if p.synced && p.event == event && !again {
+		p.view.blurred = !p.focused
+		return m
+	}
+	moved := p.event != event
+	if p.synced && p.result && moved {
+		if r, ok := f.results[p.event]; ok {
+			r.view = p.view
+			f.results[p.event] = r
+		}
+	}
+	old := p.view
+	switch {
+	case p.result:
+		p.view = f.results[event].view
+	case !p.synced || moved || again:
+		p.view = m.payloadView()
+		if !moved {
+			p.view = p.view.carry(old)
+		}
+	}
+	p.event, p.synced = event, true
+	if p.view.empty() {
+		p.focused = false
+	}
+	p.view.blurred = !p.focused
+	return m
+}
+
+// payloadView is the selected event as json, or its lines when it is not json.
+func (m model) payloadView() jsonView {
+	ev, ok := m.selectedEventFile()
+	if !ok {
+		return newJSONViewBytes([]byte(defaultEvent))
+	}
+	return newJSONViewBytes(ev.data)
+}
+
+// paneKey gives a key to the json of the pane while it has the keys, before the function's own:
+// esc or q, once its search is clear, gives them back to the events. It reports whether the key
+// was taken.
+func (m model) paneKey(msg tea.KeyPressMsg) (model, tea.Cmd, bool) {
+	f := &m.state.function
+	l := m.invokeLayout()
+	v := &f.pane.view
+	before := v.at()
+	if res, ok := v.update(msg, m.keys, l.paneW, l.paneBodyHeight()); ok {
+		m = m.followPane(msg, before)
+		m, cmd := m.jsonDone(res)
+		return m, cmd, true
+	}
+	if key.Matches(msg, m.keys.Back, m.keys.Quit) {
+		f.pane.focused, v.blurred = false, true
+		return m.fitEvents(), nil, true
+	}
+	return m, nil, false
+}
+
+// invokeUpdate handles a key on the invoke tab that the pane's json did not take: ↑ and ↓ choose
+// the event, enter goes into the json shown, v switches between the payload and the result,
+// pgup and pgdn scroll the pane, and shift+c copies the request id of the result.
 func (m model) invokeUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 	f := &m.state.function
+	l := m.invokeLayout()
 	switch {
+	case key.Matches(msg, m.keys.Pane):
+		return m.showPane(!f.pane.result), nil
+	case key.Matches(msg, m.keys.View) && !f.pane.focused:
+		if f.pane.view.empty() || f.pane.result && f.results[m.selectedEvent()].running {
+			return m, nil
+		}
+		f.pane.focused, f.pane.view.blurred = true, false
+		return m.fitEvents().followPane(tea.KeyPressMsg{}, -1), nil
+	case key.Matches(msg, m.keys.CopyPath) && f.pane.result:
+		return m.copy(f.results[m.selectedEvent()].requestID())
 	case key.Matches(msg, m.keys.PageUp, m.keys.PageDown):
-		height := functionBodyHeight()
-		f.scroll = scrollBy(msg, m.keys, f.scroll, height, maxResultScroll(m.invokeLines(resultWidth()).len(), height))
-	case f.events.move(msg, m.keys):
+		height := l.paneBodyHeight()
+		body, _ := m.paneBody(l.paneW)
+		f.scroll = scrollBy(msg, m.keys, f.scroll, height, maxResultScroll(body.len(), height))
+	case !f.pane.focused && f.events.move(msg, m.keys):
 		f.scroll = 0
+		return m.syncPane(false), nil
 	}
 	return m, nil
 }
 
-// invokeLines are what the right of the invoke tab shows for the selected event: the invocation
-// running, what the last one returned, or how to invoke it.
-func (m model) invokeLines(width int) lazyLines {
+// followPane scrolls the pane after msg moved the cursor of its json from row before: as little
+// as keeps the cursor in sight, but for up on the json's first row, which scrolls up to what is
+// above it, and g, which goes to the top.
+func (m model) followPane(msg tea.KeyPressMsg, before int) model {
+	f := &m.state.function
+	l := m.invokeLayout()
+	height := l.paneBodyHeight()
+	lines, at := m.paneBody(l.paneW)
+	most := maxResultScroll(lines.len(), height)
+	v := &f.pane.view
+	switch {
+	case at < 0:
+	case key.Matches(msg, m.keys.Top):
+		f.scroll = 0
+	case before == 0 && v.at() == 0 && key.Matches(msg, m.keys.Up, m.keys.PageUp):
+		f.scroll = scrollBy(msg, m.keys, f.scroll, height, most)
+	default:
+		top, bottom := v.cursorLines(l.paneW)
+		f.scroll = keepInSight(f.scroll, at+top, at+bottom, height)
+	}
+	f.scroll = max(0, min(f.scroll, most))
+	return m
+}
+
+// paneBody is what the pane shows under its tabs, and the line its json starts on, -1 without
+// one in it: the payload of the selected event, or the invocation running, what the last one
+// returned, or how to invoke it.
+func (m model) paneBody(width int) (lazyLines, int) {
 	f := m.state.function
+	if !f.pane.result {
+		return m.payloadBody(width)
+	}
 	name := styles.Clean(f.name)
 	r, ok := f.results[m.selectedEvent()]
 	switch {
@@ -331,19 +598,37 @@ func (m model) invokeLines(width int) lazyLines {
 		if r.local {
 			what = "running " + name + " on this machine…"
 		}
-		return lazyOf([]string{styles.Accent(m.spinner.View()) + " " + styles.Muted(what)})
+		return lazyOf([]string{styles.Accent(m.spinner.View()) + " " + styles.Muted(what)}), -1
 	case !ok:
 		if err := m.eventErr(); err != nil {
 			lines := wrapped("▲ "+err.Error(), styles.ToneWarning, width-2, 0)
-			return lazyOf(append(lines, "", styles.Faint("e edits it, and i sends it once it is json")))
+			return lazyOf(append(lines, "", styles.Faint("e edits it, and i sends it once it is json"))), -1
 		}
-		return lazyOf(m.invokeHints(name))
+		return lazyOf(m.invokeHints(name)), -1
 	case r.err != nil:
 		lines := []string{styles.Render(styles.S("✗ could not invoke "+f.name, styles.ToneDanger)), ""}
 		lines = append(lines, wrapped(r.err.Error(), styles.ToneDanger, width-2, 0)...)
-		return lazyOf(append(lines, "", styles.Faint("i tries again")))
+		return lazyOf(append(lines, "", styles.Faint("i tries again"))), -1
 	}
-	return resultLines(r, width)
+	return resultLines(r, f.pane.view, width)
+}
+
+// payloadBody is the selected event: why it cannot be sent, when it cannot, and what it holds,
+// as json or as the lines it is.
+func (m model) payloadBody(width int) (lazyLines, int) {
+	var lines lazyLines
+	if err := m.eventErr(); err != nil {
+		lines.add(wrapped("▲ "+err.Error(), styles.ToneWarning, width-2, 0)...)
+		lines.add("")
+	}
+	v := m.state.function.pane.view
+	if v.empty() {
+		lines.add(styles.Faint("nothing"))
+		return lines, -1
+	}
+	at := lines.len()
+	lines.join(v.lines(width))
+	return lines, at
 }
 
 // invokeHints say how the selected event can be sent: i where the function is deployed, shift+i
@@ -369,74 +654,272 @@ func (m model) invokeHints(name string) []string {
 	return append(lines, styles.Faint("e edits the event"))
 }
 
+// paneCopyValue is what c copies on the invoke tab from the events: the payload shown, as its
+// file holds it, or the result, the error a function failed with as the cli writes it.
+func (m model) paneCopyValue() string {
+	f := m.state.function
+	if !f.pane.result {
+		if ev, ok := m.selectedEventFile(); ok {
+			return string(ev.data)
+		}
+		return defaultEvent
+	}
+	r, ok := f.results[m.selectedEvent()]
+	switch {
+	case !ok || r.running || r.err != nil:
+		return ""
+	case r.failed:
+		return r.failure.String()
+	}
+	return string(r.inv.Payload)
+}
+
+// invokeKeys are the footer's keys on the invoke tab: those of the json while it has them, with
+// esc back to the events, and otherwise enter into the json, v, e, scrolling and copying.
+func (m model) invokeKeys() [][2]string {
+	k := m.keys
+	f := m.state.function
+	if f.pane.focused {
+		h := append(m.jsonHints(f.pane.view), hint(k.Pane), hint(k.Back, "events"), hint(k.Invoke))
+		return append(h, hint(k.Help))
+	}
+	r, ok := f.results[m.selectedEvent()]
+	var h [][2]string
+	if m.paneScrolls() {
+		h = append(h, [2]string{k.PageUp.Help().Key + "/" + k.PageDown.Help().Key, "scroll"})
+	}
+	if !f.pane.view.empty() && !(f.pane.result && r.running) {
+		h = append(h, hint(k.View, "open json"))
+	}
+	h = append(h, hint(k.Pane))
+	if m.b.EventsDir(f.name) != "" {
+		h = append(h, hint(k.EditEvent))
+	}
+	h = append(h, hint(k.NextTab), hint(k.Invoke))
+	if m.b.Local(m.state.stage.ref) {
+		h = append(h, hint(k.RunLocal), hint(k.Deploy, "plan its code"))
+	}
+	h = append(h, hint(k.Copy))
+	if ok && f.pane.result && !r.running && r.requestID() != "" {
+		h = append(h, hint(k.CopyPath, "copy request id"))
+	}
+	return append(h, m.pauseHint(), hint(k.Help), hint(k.Quit))
+}
+
 // maxResultScroll is how far n lines of a result scroll in height.
 func maxResultScroll(n, height int) int {
 	return max(0, n-height)
 }
 
+// paneScrolls reports whether the pane's body is longer than it shows.
+func (m model) paneScrolls() bool {
+	l := m.invokeLayout()
+	body, _ := m.paneBody(l.paneW)
+	return body.len() > l.paneBodyHeight()
+}
+
+// paneTabs are the tabs over the pane: the payload with its size, and the result.
+func (m model) paneTabs() string {
+	f := m.state.function
+	size := cli.Size(int64(len(defaultEvent)))
+	if ev, ok := m.selectedEventFile(); ok {
+		size = cli.Size(ev.size)
+	}
+	open := 0
+	if f.pane.result {
+		open = 1
+	}
+	return tabBar([]string{"payload", "result"}, []string{size, ""}, open)
+}
+
+// paneView draws the pane at width and height: its tabs, a rule, and its body scrolled.
+func (m model) paneView(width, height int) string {
+	f := m.state.function
+	body, _ := m.paneBody(width)
+	bodyHeight := max(1, height-paneChrome)
+	rule := lipgloss.NewStyle().Foreground(styles.P.Rule).Render(strings.Repeat("─", max(0, width)))
+	return fill(m.paneTabs()+"\n"+rule+"\n"+scrolledLines(body, f.scroll, bodyHeight), width, height)
+}
+
 func (m model) invokeView() string {
 	f := m.state.function
+	l := m.invokeLayout()
 	height := functionBodyHeight()
-	left, right := eventsWidth(), resultWidth()
-	body := scrolledLines(m.invokeLines(right), f.scroll, height)
-	return lipgloss.NewStyle().PaddingLeft(1).Render(lipgloss.JoinHorizontal(lipgloss.Top,
-		fill(f.events.View(), left, height),
-		"  ",
-		fill(body, right, height),
-	))
+	pane := m.paneView(l.paneW, l.paneH)
+	var body string
+	switch {
+	case !l.showEvents:
+		body = pane
+	case l.wide:
+		body = lipgloss.JoinHorizontal(lipgloss.Top, fill(f.events.View(), l.eventsW, height), "  ", pane)
+	default:
+		body = fill(f.events.View(), l.eventsW, l.eventsH+tableHeaderRows) + "\n\n" + pane
+	}
+	return lipgloss.NewStyle().PaddingLeft(1).Render(body)
 }
 
 // functionError is what a function failed with: the type and message of the error it returned,
 // or the kind of error lambda says when its payload has neither.
-func functionError(inv cli.Invocation) string {
-	var e struct {
-		Type    string `json:"errorType"`
-		Message string `json:"errorMessage"`
+func functionError(r invocationResult) string {
+	if r.failed {
+		return r.failure.Head()
 	}
-	_ = json.Unmarshal(inv.Payload, &e)
-	switch {
-	case e.Type != "" && e.Message != "":
-		return e.Type + ": " + e.Message
-	case e.Message != "":
-		return e.Message
-	case e.Type != "":
-		return e.Type
-	}
-	return inv.Error
+	return r.inv.Error
 }
 
-// resultLines show what an invocation returned, or the error it failed with, and its log. Only
-// the lines in sight are painted, so a payload of megabytes draws as quickly as a short one.
-func resultLines(r invocationResult, width int) lazyLines {
-	took := ""
-	if r.inv.Duration > 0 {
-		took = " in " + cli.Duration(r.inv.Duration)
+// resultFacts are what lambda measured of an invocation, a cell each, and the length of its log
+// and its request id: how long it took, what was billed, the memory it used of what it has, its
+// cold start, its log's lines and the id.
+func resultFacts(r invocationResult) []cell {
+	var facts []cell
+	fact := func(label string, value ...styles.Span) {
+		facts = append(facts, append(cell{styles.S(label+" ", styles.ToneFaint)}, value...))
 	}
-	where := " in aws"
-	if r.local {
-		where = " on this machine"
+	took := r.inv.Duration
+	if r.report.reported {
+		took = time.Duration(r.report.duration * float64(time.Millisecond))
 	}
-	facts := styles.S(took+where+", "+formatAgo(r.at), styles.ToneFaint)
-	outcome, section := styles.S("✓ returned", styles.ToneSuccess), "returned"
-	if r.inv.Error != "" {
-		outcome, section = styles.S("✗ failed", styles.ToneDanger), "error"
+	if took > 0 {
+		fact("duration", styles.S(cli.Duration(took), styles.ToneBody))
 	}
-	var lines lazyLines
-	lines.add(styles.Render(outcome, facts))
-	if r.inv.Error != "" {
-		for line := range strings.SplitSeq(styles.CleanBlock(strings.TrimRight(functionError(r.inv), "\n")), "\n") {
-			lines.add(cellLines(text(line, styles.ToneDanger), width-2)...)
+	if r.report.billed > 0 {
+		fact("billed", styles.S(formatMillis(r.report.billed), styles.ToneMuted))
+	}
+	if r.report.memory > 0 {
+		fact("memory", styles.S(formatInt(r.report.maxMemory), styles.ToneBody), styles.S(" of "+formatInt(r.report.memory)+" mb", styles.ToneFaint))
+	}
+	if r.report.init > 0 {
+		fact("cold start", styles.S(formatMillis(r.report.init), styles.ToneInfo))
+	}
+	if n := logLineCount(r.inv.Logs); n > 0 {
+		what := "log"
+		if r.local {
+			what = "output"
 		}
+		unit := " lines"
+		if n == 1 {
+			unit = " line"
+		}
+		fact(what, styles.S(formatInt(n), styles.ToneBody), styles.S(unit, styles.ToneFaint))
 	}
-	rows := r.rows(width - 2)
-	lines.add("", styles.SectionHeader(section, width-2))
-	if len(rows.payload) == 0 {
-		lines.add(styles.Faint("nothing"))
+	if id := r.requestID(); id != "" {
+		fact("request", styles.S(id, styles.ToneFaint))
 	}
-	lines.addDrawn(len(rows.payload), func(i int) string { return styles.Body(rows.payload[i]) })
-	if strings.TrimSpace(r.inv.Logs) != "" {
-		lines.add("", styles.SectionHeader("log", width-2))
-		lines.addDrawn(len(rows.logs), func(i int) string { return renderCell(rows.logs[i], column{width: width - 2}, nil) })
+	return facts
+}
+
+// packFacts sets facts on as few lines of width as they fit, between dots, breaking a line only
+// between two of them, and a fact wider than a line on lines of its own.
+func packFacts(facts []cell, width int) []string {
+	var lines []string
+	var line cell
+	used := 0
+	for _, f := range facts {
+		w := ansi.StringWidth(plainText(f))
+		switch {
+		case len(line) > 0 && used+3+w <= width:
+			line, used = append(append(line, sep()), f...), used+3+w
+			continue
+		case len(line) > 0:
+			lines = append(lines, cellLines(line, width)...)
+		}
+		line, used = append(cell{}, f...), w
+	}
+	if len(line) > 0 {
+		lines = append(lines, cellLines(line, width)...)
 	}
 	return lines
+}
+
+// logLineCount is the lines of a log, without the newlines it ends in.
+func logLineCount(logs string) int {
+	logs = strings.TrimRight(logs, "\n")
+	if strings.TrimSpace(logs) == "" {
+		return 0
+	}
+	return strings.Count(logs, "\n") + 1
+}
+
+// resultHead are the lines over an invocation's result: how it ended, where it ran and when,
+// and what lambda measured of it, with its request id.
+func resultHead(r invocationResult, width int) []string {
+	status := styles.S("✓ ok", styles.ToneSuccess)
+	switch {
+	case r.timedOut():
+		status = styles.S("⏱ timed out", styles.ToneDanger)
+	case r.inv.Error != "":
+		status = styles.S("✗ failed", styles.ToneDanger)
+	}
+	where := "in aws"
+	if r.local {
+		where = "on this machine"
+	}
+	lines := cellLines(cell{status, styles.S("  "+where, styles.ToneMuted), sep(), styles.S(formatAgo(r.at), styles.ToneFaint)}, width)
+	return append(lines, packFacts(resultFacts(r), width)...)
+}
+
+// hanging wraps s to width in tone, its first line indented by first and the rest by more, as
+// a frame of a stack trace too long for a line reads under its start.
+func hanging(s string, tone styles.Tone, first, more, width int) []string {
+	lines := cellLines(text(s, tone), max(2, width-more))
+	for i, line := range lines {
+		pad := more
+		if i == 0 {
+			pad = first
+		}
+		lines[i] = strings.Repeat(" ", pad) + line
+	}
+	return lines
+}
+
+// failureLines are the error a function failed with: its type and message, and its stack trace,
+// the frames of the runtime and of dependencies faint, so the function's own stand out.
+func failureLines(r invocationResult, width int) []string {
+	if !r.failed {
+		return cellLines(text(r.inv.Error, styles.ToneDanger), width)
+	}
+	var lines []string
+	for line := range strings.SplitSeq(styles.CleanBlock(r.failure.Head()), "\n") {
+		lines = append(lines, cellLines(text(line, styles.ToneDanger), width)...)
+	}
+	for _, line := range r.failure.Trace {
+		tone := styles.ToneBody
+		if line.Internal {
+			tone = styles.ToneFaint
+		}
+		lines = append(lines, hanging(line.Text, tone, 2, 4, width)...)
+	}
+	return lines
+}
+
+// resultLines show how an invocation ended, the error it failed with or what it returned in its
+// json view v, and its log, and the line the json starts on, -1 without it. Only the lines in
+// sight are drawn, so a payload of megabytes draws as quickly as a short one.
+func resultLines(r invocationResult, v jsonView, width int) (lazyLines, int) {
+	var lines lazyLines
+	lines.add(resultHead(r, width)...)
+	at := -1
+	if r.inv.Error != "" {
+		lines.add("", styles.SectionHeader("error", width))
+		lines.add(failureLines(r, width)...)
+	}
+	if !r.failed {
+		lines.add("", styles.SectionHeader("returned", width))
+		if v.empty() {
+			lines.add(styles.Faint("nothing"))
+		} else {
+			at = lines.len()
+			lines.join(v.lines(width))
+		}
+	}
+	if strings.TrimSpace(r.inv.Logs) != "" {
+		title := "log"
+		if r.local {
+			title = "output"
+		}
+		cells := r.logCells(width)
+		lines.add("", styles.SectionHeader(title, width))
+		lines.addDrawn(len(cells), func(i int) string { return renderCell(cells[i], column{width: width}, nil) })
+	}
+	return lines, at
 }

@@ -198,6 +198,8 @@ func (m model) toInput(msg tea.Msg) (model, tea.Cmd) {
 			m = m.followResourceCursor(tea.KeyPressMsg{}, -1)
 		case outputPage:
 			m = m.followOutputCursor(tea.KeyPressMsg{}, -1)
+		case functionPage:
+			m = m.followPane(tea.KeyPressMsg{}, -1)
 		}
 		return m.jsonDone(res)
 	case m.page == overviewPage && m.state.overview.filter.active:
@@ -639,6 +641,10 @@ func (s *pages) json(p page) *jsonView {
 		return s.resource.shown()
 	case outputPage:
 		return s.output.shown()
+	case functionPage:
+		if f := &s.function; f.tab == invokeTab && f.pane.focused {
+			return &f.pane.view
+		}
 	}
 	return nil
 }
@@ -854,12 +860,7 @@ func (m model) shortHelp() [][2]string {
 		case invocationsTab:
 			h = append(h, hint(k.View, "open"))
 		case invokeTab:
-			if m.b.EventsDir(m.state.function.name) != "" {
-				h = append(h, hint(k.EditEvent))
-			}
-			if m.invokeLines(resultWidth()).len() > functionBodyHeight() {
-				h = append(h, [2]string{k.PageUp.Help().Key + "/" + k.PageDown.Help().Key, "scroll"})
-			}
+			return m.invokeKeys()
 		}
 		h = append(h, hint(k.NextTab), hint(k.Invoke))
 		if m.b.Local(m.state.stage.ref) {
@@ -983,6 +984,7 @@ func helpSections(k keys.KeyMap) []helpSection {
 			{name(k.Invoke), "invoke in aws"}, {name(k.RunLocal), "run on this machine"}, {name(k.EditEvent), "edit the event"},
 			{name(k.Deploy), "plan its code"}, {name(k.Follow), "follow the logs"}, {name(k.Filter), "filter the logs"},
 			{"↑ at top", "older logs"}, {name(k.View), "open the row"}, {name(k.Next) + " " + name(k.Previous), "step invocations"},
+			{name(k.Pane), "payload / result"},
 		}},
 		{"diff", [][2]string{
 			{name(k.NextDiff) + " " + name(k.PrevDiff), "next / previous change"}, {name(k.View), "unfold the lines in sight"},
@@ -1111,5 +1113,6 @@ func (m model) restyleInputs() model {
 	m.state.resource.applied.search.input.SetStyles(in)
 	m.state.resource.props.search.input.SetStyles(in)
 	m.state.output.json.search.input.SetStyles(in)
+	m.state.function.pane.view.search.input.SetStyles(in)
 	return m
 }

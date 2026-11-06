@@ -191,7 +191,6 @@ func (m model) resize() model {
 		s.tables[i].setSize(tableWidth(), stageTableHeight())
 	}
 	f := &m.state.function
-	f.events.setSize(eventsWidth(), functionBodyHeight()-tableHeaderRows)
 	f.invocations.setSize(tableWidth(), invocationsTableHeight())
-	return m
+	return m.fitEvents()
 }

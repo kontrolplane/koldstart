@@ -73,11 +73,13 @@ type functionState struct {
 
 	events     dataTable
 	eventFiles []string
-	// eventErrs are why each event cannot be sent, nil for one that can, as they were listed.
-	eventErrs []error
+	// eventInfo is each event as it was listed: its size, when it changed, and why it cannot be
+	// sent.
+	eventInfo []eventFile
 	invokeGen int
 	invoking  bool
 	results   map[string]invocationResult
+	pane      invokePane
 }
 
 func functionBodyHeight() int { return contentHeight - 2 }
@@ -93,7 +95,6 @@ func (m model) openFunction(name string) (model, tea.Cmd) {
 			invocations: newTable(invocationColumns, "no invocations in the logs read: ↑ on the logs tab reads further back"),
 			logs:        newLogState(),
 		}
-		f.events.setSize(eventsWidth(), functionBodyHeight()-tableHeaderRows)
 		f.invocations.setSize(tableWidth(), invocationsTableHeight())
 	}
 	m = m.switchPage(functionPage).syncFunction()
@@ -205,6 +206,11 @@ func (m model) functionUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 		}
 		return m, cmd
 	}
+	if f.tab == invokeTab && f.pane.focused {
+		if m, cmd, ok := m.paneKey(msg); ok {
+			return m, cmd
+		}
+	}
 	switch {
 	case key.Matches(msg, m.keys.Back):
 		if f.tab == logsTab && f.logs.filter.clear() {
@@ -281,9 +287,7 @@ func (m model) functionCopyValue() string {
 			return f.requests[i].id
 		}
 	case invokeTab:
-		if r, ok := f.results[m.selectedEvent()]; ok {
-			return string(r.inv.Payload)
-		}
+		return m.paneCopyValue()
 	}
 	return cmpOr(f.arn, f.lambdaName)
 }
@@ -323,8 +327,10 @@ func (m model) functionPosition() string {
 			return f.invocations.position()
 		}
 	case invokeTab:
-		height := functionBodyHeight()
-		n := m.invokeLines(resultWidth()).len()
+		l := m.invokeLayout()
+		height := l.paneBodyHeight()
+		body, _ := m.paneBody(l.paneW)
+		n := body.len()
 		return scrollCue(min(f.scroll, maxResultScroll(n, height)), height, n)
 	}
 	return ""
