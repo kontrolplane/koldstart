@@ -38,10 +38,10 @@ var modules = []string{Project, Kdst, Package}
 // releases is where a release of koldstart publishes its schema package, before its version.
 const releases = "package://github.com/kontrolplane/koldstart/releases/download/v"
 
-// PackageURI is the uri of a module of the schema package released with koldstart version, as a
+// PackageURI is the uri of a module of the schema package released with koldstart v, as a
 // koldstart.pkl without a PklProject names it.
-func PackageURI(version, module string) string {
-	return Release(version).URI() + "#/" + module
+func PackageURI(v, module string) string {
+	return Release(v).URI() + "#/" + module
 }
 
 // Dependency is the koldstart dependency of a project: the schema package of a release, or a
@@ -54,9 +54,9 @@ type Dependency struct {
 	Dir string
 }
 
-// Release is the schema package released with koldstart version.
-func Release(version string) Dependency {
-	return Dependency{Version: version}
+// Release is the schema package released with koldstart v.
+func Release(v string) Dependency {
+	return Dependency{Version: v}
 }
 
 // Local reports whether d is a local dependency rather than a release.

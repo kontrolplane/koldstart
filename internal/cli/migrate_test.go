@@ -70,7 +70,7 @@ func TestMigrateWritesProject(t *testing.T) {
 			if !strings.Contains(out.String(), tt.printed) {
 				t.Errorf("printed no %q:\n%s", tt.printed, out.String())
 			}
-			if _, err := os.Stat(pkl.DepsFile); (err != nil || !strings.Contains(out.String(), "resolved it into PklProject.deps.json")) {
+			if _, err := os.Stat(pkl.DepsFile); err != nil || !strings.Contains(out.String(), "resolved it into PklProject.deps.json") {
 				t.Errorf("not resolved: %v\n%s", err, out.String())
 			}
 		})
