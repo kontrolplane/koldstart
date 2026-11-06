@@ -34,7 +34,7 @@ func dvDoc(t *testing.T, s string) any {
 
 // dvMarked are the parts of a line its marks mark.
 func dvMarked(l diffLine) []string {
-	var out []string
+	out := make([]string, 0, len(l.marks))
 	for _, m := range l.marks {
 		out = append(out, l.text[m[0]:m[1]])
 	}

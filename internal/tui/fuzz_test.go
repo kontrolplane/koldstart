@@ -196,7 +196,7 @@ func FuzzDiff(f *testing.F) {
 	f.Add([]byte(`{"deep":{"deeper":{"deepest":"`+strings.Repeat("漢", 60)+`"}}}`), []byte(`{}`), 9, "日本")
 	f.Add([]byte(`{"p":"{\"a\":[1,\"{\\\"b\\\":2}\"]}"}`), []byte(`{"p":"{\"a\":[0,1,\"{\\\"b\\\":3}\"]}"}`), 40, "policy")
 	f.Add([]byte(`[{"a":1},{"a":2}]`), []byte(`[{"a":0},{"a":1},{"a":2},{"a":2}]`), 76, "layers")
-	f.Add([]byte(`{"arn":"arn:aws:iam::1:role/a-dev‮"}`), []byte(`{"arn":"arn:aws:iam::1:role/a-prod\u0007"}`), 1, "\x9b")
+	f.Add([]byte(`{"arn":"arn:aws:iam::1:role/a-dev\u202e"}`), []byte(`{"arn":"arn:aws:iam::1:role/a-prod\u0007"}`), 1, "\x9b")
 	f.Fuzz(func(t *testing.T, a, b []byte, width int, title string) {
 		var before, after any
 		if json.Unmarshal(a, &before) != nil {
