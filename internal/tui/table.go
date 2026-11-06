@@ -17,14 +17,16 @@ import (
 
 // column is one column of a table. A growing column takes a share of the width left over once
 // every column has its own; when the table cannot fit, the columns with the highest drop are
-// hidden first, and a column with drop 0 always stays.
+// hidden first, and a column with drop 0 always stays. A middle column cuts a value of one span
+// that does not fit in its middle, as the end of an arn, a url or a path names what it is.
 type column struct {
-	title string
-	width int
-	right bool
-	grow  int
-	drop  int
-	hide  bool
+	title  string
+	width  int
+	right  bool
+	grow   int
+	drop   int
+	hide   bool
+	middle bool
 }
 
 // minimum is the narrowest the column gets while the table fits.
@@ -408,6 +410,11 @@ func pad(n int, bg color.Color) string {
 func renderCell(c cell, col column, bg color.Color) string {
 	if col.width <= 0 {
 		return ""
+	}
+	if col.middle && len(c) == 1 {
+		if _, _, whole := fitCell(c, col.width); !whole {
+			c = cell{styles.Span{Text: cutMiddle(styles.Clean(c[0].Text), col.width), Tone: c[0].Tone, Bold: c[0].Bold}}
+		}
 	}
 	parts, used, whole := fitCell(c, col.width)
 	if !whole {
