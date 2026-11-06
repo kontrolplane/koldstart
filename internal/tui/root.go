@@ -281,6 +281,8 @@ func (m model) keyPress(msg tea.KeyPressMsg) (model, tea.Cmd) {
 		return m.invocationUpdate(msg)
 	case outputPage:
 		return m.outputUpdate(msg)
+	case inputsPage:
+		return m.inputsUpdate(msg)
 	}
 	return m, nil
 }
@@ -379,6 +381,8 @@ func (m model) view(p page) string {
 		return m.invocationView()
 	case outputPage:
 		return m.outputView()
+	case inputsPage:
+		return m.inputsView()
 	}
 	return ""
 }
@@ -532,6 +536,8 @@ func (m model) trail(p page) []string {
 		return append(m.trail(functionPage), shortRequest(m.state.invocation.req.id))
 	case outputPage:
 		return []string{crumbStages, ref, stageTabs[outputsTab], m.state.output.name}
+	case inputsPage:
+		return append(m.trail(planPage), m.state.inputs.id)
 	}
 	return []string{crumbStages}
 }
@@ -627,6 +633,10 @@ func (m model) position() string {
 		return scrollCue(m.state.invocation.scroll, contentHeight, m.invocationLines().len())
 	case outputPage:
 		return scrollCue(m.state.output.scroll, contentHeight, m.outputLines().len())
+	case inputsPage:
+		if v := m.state.inputs.shown(); v != nil {
+			return ofCount(v.at(), len(v.rows()))
+		}
 	}
 	return ""
 }
@@ -644,6 +654,8 @@ func (s *pages) json(p page) *jsonView {
 		if f := &s.function; f.tab == invokeTab && f.pane.focused {
 			return &f.pane.view
 		}
+	case inputsPage:
+		return s.inputs.shown()
 	}
 	return nil
 }
@@ -878,6 +890,8 @@ func (m model) shortHelp() [][2]string {
 		return [][2]string{hint(k.View, "diff"), chooseHint, hint(k.Copy), hint(k.Help), hint(k.Quit)}
 	case diffPage:
 		return m.diffHints()
+	case inputsPage:
+		return m.inputsHints()
 	case invocationPage:
 		return [][2]string{scrollHint, {k.Next.Help().Key + "/" + k.Previous.Help().Key, "next/previous"}, hint(k.Copy, "copy id"), hint(k.Help), hint(k.Quit)}
 	case outputPage:
@@ -1027,14 +1041,14 @@ func (m model) helpView() string {
 		pair[1] = all[2]
 	case diffPage:
 		pair[1] = all[3]
-	case resourcePage, outputPage:
+	case resourcePage, outputPage, inputsPage:
 		pair[1] = all[4]
 	}
 	three := all[:3]
 	switch m.page {
 	case diffPage:
 		three = []helpSection{all[0], all[1], all[3]}
-	case resourcePage, outputPage:
+	case resourcePage, outputPage, inputsPage:
 		three = []helpSection{all[0], all[1], all[4]}
 	}
 	layouts := []helpLayout{
@@ -1114,5 +1128,6 @@ func (m model) restyleInputs() model {
 	m.state.resource.props.search.input.SetStyles(in)
 	m.state.output.json.search.input.SetStyles(in)
 	m.state.function.pane.view.search.input.SetStyles(in)
+	m.state.inputs.json.search.input.SetStyles(in)
 	return m
 }

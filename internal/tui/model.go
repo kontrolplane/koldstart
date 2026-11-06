@@ -59,6 +59,7 @@ const (
 	diffPage
 	invocationPage
 	outputPage
+	inputsPage
 )
 
 type model struct {
@@ -107,6 +108,7 @@ type pages struct {
 	diff       diffState
 	invocation invocationState
 	output     outputState
+	inputs     inputsState
 }
 
 func newModel(ctx context.Context, b backend) model {

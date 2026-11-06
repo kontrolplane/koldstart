@@ -508,6 +508,7 @@ func layoutPages(t *testing.T, w, h int) map[string]model {
 	pages["plan"] = p
 	pages["plan applied"] = pressKeys(t, p, "ctrl+s")
 	pages["plan diff"] = pressKeys(t, p, "enter")
+	pages["plan inputs"] = pressKeys(t, p, "j", "j", "enter")
 	pages["unlock"] = pressKeys(t, m, "q", "ctrl+x")
 	pages["remove"] = pressKeys(t, m, "q", "ctrl+d")
 	o := pressKeys(t, m, "q", "q")
@@ -559,7 +560,8 @@ func TestEscapesNeverReachTheTerminal(t *testing.T) {
 	f.locks[ordersDev] = &state.LockInfo{Who: evil, Where: evil, Operation: evil, Since: time.Now()}
 	f.logs = []cli.LogEvent{{Time: time.Now(), Message: evil}}
 	f.result = cli.Invocation{Payload: []byte(evil), Logs: evil, Error: evil}
-	f.plan = &engine.Plan{Changes: []engine.Change{{ID: evil, Action: engine.Update, Fields: []string{evil}, Before: map[string]any{evil: evil}, After: map[string]any{evil: "y"}}}}
+	f.plan = &engine.Plan{Changes: []engine.Change{{ID: evil, Action: engine.Update, Fields: []string{evil}, Before: map[string]any{evil: evil}, After: map[string]any{evil: "y"}},
+		{ID: evil + "2", Action: engine.Create, After: map[string]any{evil: evil}}}}
 	f.live = map[string]any{evil: evil}
 	f.function = cli.FunctionState{State: evil, StateReason: evil, LastUpdate: evil, LastUpdateReason: evil, Runtime: evil}
 	f.logs = []cli.LogEvent{
@@ -596,6 +598,7 @@ func TestEscapesNeverReachTheTerminal(t *testing.T) {
 	check("invocation", pressKeys(t, inv, "enter"))
 	check("resource in aws", pressKeys(t, r, "tab"))
 	check("plan diff", pressKeys(t, m, "d", "enter"))
+	check("plan inputs", pressKeys(t, m, "d", "j", "enter"))
 	check("invoke", pressKeys(t, fn, "tab", "tab", "i"))
 	check("unlock", pressKeys(t, m, "ctrl+x"))
 	check("plan", pressKeys(t, m, "d"))

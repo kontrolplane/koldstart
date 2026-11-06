@@ -255,6 +255,8 @@ func (m model) planUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 		case !ok:
 		case row.change < 0:
 			return m.togglePlanFold(), nil
+		case opensInputs(p.facts().changes[row.change]):
+			return m.openInputs(p.facts().changes[row.change])
 		default:
 			c := p.facts().changes[row.change]
 			after := c.After
