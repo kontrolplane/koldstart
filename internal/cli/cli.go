@@ -150,7 +150,7 @@ works on a stage works on the one --stage names, dev without it.`, name),
 			root.AddCommand(cmd)
 		}
 	}
-	add(groupStart, initCommand(name, opts), migrateCommand(name))
+	add(groupStart, initCommand(name, opts), migrateCommand(name), upgradeCommand(name, opts))
 	add(groupDeploy, packageCommand(name, opts), planCommand(name, opts), deployCommand(name, opts),
 		importCommand(name, opts), removeCommand(name, opts), unlockCommand(name, opts))
 	add(groupWork, invokeCommand(name, opts), offlineCommand(name, opts), logsCommand(name, opts), outputsCommand(name, opts))
