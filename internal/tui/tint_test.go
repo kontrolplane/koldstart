@@ -100,6 +100,13 @@ func TestTint(t *testing.T) {
 		{name: "node message as json", line: "2026-11-05T10:00:00.001Z\t1\tINFO\t{\"msg\":\"stored\"}", part: "stored", tone: styles.ToneText},
 		{name: "colours dropped", line: "\x1b[31mred\x1b[0m text", part: "red text", tone: styles.ToneBody},
 		{name: "a leading timestamp", line: "2026-11-05 10:00:00.123 started", part: "2026", tone: styles.ToneFaint},
+		{name: "go's log date", line: "2026/11/05 10:00:00 started", part: "2026/11/05", tone: styles.ToneFaint},
+		{name: "mixed separators are no date", line: "2026-11/05 10:00:00 started", part: "2026", tone: styles.ToneBody},
+		{name: "pino's error level", line: `{"level":50,"msg":"boom"}`, part: "50", tone: styles.ToneDanger},
+		{name: "pino's warning level", line: `{"level":40,"msg":"slow"}`, part: "40", tone: styles.ToneWarning},
+		{name: "a python level", line: "[ERROR]\t2026-11-05T10:00:00.001Z\t1\tboom", part: "[ERROR]", tone: styles.ToneDanger},
+		{name: "a python warning", line: "[WARNING]\t2026-11-05T10:00:00.001Z\t1\tslow", part: "[WARNING]", tone: styles.ToneWarning},
+		{name: "a python request id", line: "[INFO]\t2026-11-05T10:00:00.001Z\t1\tok", part: "1 ", tone: styles.ToneFaint},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -185,6 +192,7 @@ func TestLogCells(t *testing.T) {
 		{name: "crlf", message: "one\r\ntwo\r\n", want: []string{"one", "two"}},
 		{name: "a stack", message: "Error: boom\n    at handler (index.js:1)\n", want: []string{"Error: boom", "    at handler (index.js:1)"}},
 		{name: "a blank line inside", message: "one\n\ntwo", want: []string{"one", "", "two"}},
+		{name: "carriage returns, as node and python end lines", message: "Error: boom\r    at handler (index.js:1)\r", want: []string{"Error: boom", "    at handler (index.js:1)"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -194,6 +202,63 @@ func TestLogCells(t *testing.T) {
 			}
 			if strings.Join(got, "|") != strings.Join(tt.want, "|") {
 				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestStackLines checks the lines of a stack trace are found in node, python and go, and the
+// frames of dependencies and the runtime are told from the function's own.
+func TestStackLines(t *testing.T) {
+	tests := []struct {
+		name  string
+		lines []string
+		block bool
+		want  []stackLine
+	}{
+		{name: "node", lines: []string{"Error: boom", "    at handler (/var/task/index.js:4:2)", "    at Client.query (/var/task/node_modules/pg/client.js:1:1)", "    at node:internal/process/task_queues:95:5", "    at Runtime.handler (file:///var/runtime/index.mjs:1:1)"},
+			want: []stackLine{{}, {frameCall, false}, {frameCall, true}, {frameCall, true}, {frameCall, true}}},
+		{name: "python", lines: []string{"Traceback (most recent call last):", `  File "/var/task/app.py", line 8, in handler`, `    return orders[event["id"]]`, `  File "/var/lang/lib/python3.12/site-packages/x.py", line 3, in get`, "    raise KeyError(key)", "KeyError: 'id'"},
+			want: []stackLine{{kind: frameHead}, {frameCall, false}, {frameSource, false}, {frameCall, true}, {frameSource, true}, {}}},
+		{name: "a go panic", lines: []string{"panic: boom", "", "goroutine 1 [running]:", "main.handler({0x1, 0x2})", "\t/build/main.go:23 +0x1d", "runtime.goexit()", "\t/usr/local/go/src/runtime/asm_arm64.s:1223 +0x4"},
+			want: []stackLine{{}, {}, {kind: frameHead}, {frameCall, false}, {frameSource, false}, {frameCall, true}, {frameSource, true}}},
+		{name: "zap's stacktrace", block: true, lines: []string{"main.store", "\t/build/main.go:51", "github.com/aws/aws-lambda-go/lambda.NewHandler.func1", "\t/go/pkg/mod/github.com/aws/aws-lambda-go@v1.47.0/lambda/handler.go:200"},
+			want: []stackLine{{frameCall, false}, {frameSource, false}, {frameCall, true}, {frameSource, true}}},
+		{name: "a go call alone, by its name", lines: []string{"runtime.main()"}, want: []stackLine{{frameCall, true}}},
+		{name: "a message", lines: []string{"order placed", "for levi"}, want: []stackLine{{}, {}}},
+		{name: "a name alone outside a trace", lines: []string{"main.store"}, want: []stackLine{{}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := stackLines(tt.lines, tt.block)
+			for i := range tt.want {
+				if got[i] != tt.want[i] {
+					t.Errorf("line %d, %q: %+v, want %+v", i, tt.lines[i], got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+// TestLogCellsStack checks a frame of the function's own code is in the body ink on the logs, and
+// one of a dependency faint.
+func TestLogCellsStack(t *testing.T) {
+	cells := logCells("2026-11-05T10:00:00.012Z\t1\tERROR\tError: boom\r    at store (/var/task/src/store.js:18:9)\r    at Client._connect (/var/task/node_modules/pg/lib/client.js:132:11)", 120)
+	tests := []struct {
+		name string
+		line int
+		tone styles.Tone
+	}{
+		{name: "its own", line: 1, tone: styles.ToneBody},
+		{name: "a dependency", line: 2, tone: styles.ToneFaint},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if len(cells) != 3 {
+				t.Fatalf("%d lines, want 3", len(cells))
+			}
+			if tone, _ := toneOf(cells[tt.line], "at "); tone != tt.tone {
+				t.Errorf("%q is in tone %v, want %v", plainText(cells[tt.line]), tone, tt.tone)
 			}
 		})
 	}

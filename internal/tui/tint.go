@@ -2,6 +2,7 @@ package tui
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -62,16 +63,62 @@ func isLevelKey(key string) bool {
 	return false
 }
 
-// valueLevelTone is the tone of a level written as a value of json or logfmt: error and worse in
-// danger, a warning in warning, the rest in the body ink.
+// valueLevelTone is the tone of a level written as a value of json or logfmt, a word or pino's
+// number: error and worse in danger, a warning in warning, the rest in the body ink.
 func valueLevelTone(level string) styles.Tone {
-	switch strings.ToUpper(level) {
-	case "ERROR", "ERR", "FATAL", "CRITICAL", "PANIC":
+	switch levelName(level) {
+	case "error", "fatal", "crit", "panic":
 		return styles.ToneDanger
-	case "WARN", "WARNING":
+	case "warn":
 		return styles.ToneWarning
 	}
 	return styles.ToneBody
+}
+
+// levelName is a level as the invocation page writes it, lowercase and at most five wide: pino's
+// numbers by the names it gives them, 50 as error, and the names loggers spell differently as one,
+// warning as warn and critical as crit.
+func levelName(level string) string {
+	if n, err := strconv.Atoi(level); err == nil {
+		switch {
+		case n >= 60:
+			return "fatal"
+		case n >= 50:
+			return "error"
+		case n >= 40:
+			return "warn"
+		case n >= 30:
+			return "info"
+		case n >= 20:
+			return "debug"
+		}
+		return "trace"
+	}
+	switch l := strings.ToLower(level); l {
+	case "warning":
+		return "warn"
+	case "err":
+		return "error"
+	case "critical":
+		return "crit"
+	case "dpanic":
+		return "panic"
+	case "information":
+		return "info"
+	default:
+		return truncateBytes(l, 5)
+	}
+}
+
+// truncateBytes is s cut to n bytes at most, at a rune's start.
+func truncateBytes(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // tintJSON tints a JSON line. It does not check the line is valid, a broken one is tinted as far
@@ -137,7 +184,11 @@ func tintJSON(line string) cell {
 			for j < len(line) && strings.IndexByte(`"{}[],:`, line[j]) < 0 {
 				j++
 			}
-			add(line[i:j], styles.ToneBody)
+			tone := styles.ToneBody
+			if depth == 1 && isLevelKey(key) {
+				tone = valueLevelTone(strings.TrimSpace(line[i:j]))
+			}
+			add(line[i:j], tone)
 			i = j
 		}
 	}
@@ -222,7 +273,8 @@ func skipQuoted(s string, i int) int {
 }
 
 // leadingTimestamp is the length of a date and time a line starts with, like
-// "2026-10-01 12:00:00.123" or "2026-10-01T12:00:00Z", with the space after it, or 0.
+// "2026-10-01 12:00:00.123", "2026-10-01T12:00:00Z" or go's log "2026/10/01 12:00:00", with the
+// space after it, or 0.
 func leadingTimestamp(line string) int {
 	const layout = "0000-00-00?00:00:00"
 	if len(line) < len(layout) {
@@ -237,6 +289,10 @@ func leadingTimestamp(line string) int {
 			}
 		case '?':
 			if c != ' ' && c != 'T' {
+				return 0
+			}
+		case '-':
+			if c != line[4] || (c != '-' && c != '/') {
 				return 0
 			}
 		default:
@@ -295,24 +351,196 @@ func tintNode(line string) (cell, bool) {
 	}, tint(parts[3])...), true
 }
 
+// levelTone is the tone of a level levelName wrote: error and worse in danger, a warning in
+// warning, info muted and debug and trace faint.
+func levelTone(name string) styles.Tone {
+	switch name {
+	case "error", "fatal", "crit", "panic":
+		return styles.ToneDanger
+	case "warn":
+		return styles.ToneWarning
+	case "info":
+		return styles.ToneMuted
+	case "debug", "trace":
+		return styles.ToneFaint
+	}
+	return styles.ToneBody
+}
+
+// pythonLevel is the level of a line python's logging writes in lambda, [INFO], or "".
+func pythonLevel(field string) string {
+	if len(field) < 3 || field[0] != '[' || field[len(field)-1] != ']' {
+		return ""
+	}
+	switch name := field[1 : len(field)-1]; name {
+	case "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL":
+		return levelName(name)
+	}
+	return ""
+}
+
+// tintPython tints a line of python's logging in lambda: its level, time and request id, tab
+// separated, before the message, which is tinted as tint does.
+func tintPython(parts []string) (cell, bool) {
+	level := pythonLevel(parts[0])
+	if level == "" || leadingTimestamp(parts[1]+" ") == 0 {
+		return nil, false
+	}
+	tone := levelTone(level)
+	return append(cell{
+		{Text: parts[0] + " ", Tone: tone, Bold: tone == styles.ToneDanger},
+		{Text: parts[1] + " ", Tone: styles.ToneFaint},
+		{Text: parts[2] + " ", Tone: styles.ToneFaint},
+	}, tint(parts[3])...), true
+}
+
 // colours are the sgr sequences a logger colours its lines with. They are dropped; any other
 // escape sequence is shown escaped, by Clean.
 var colours = regexp.MustCompile(`\x1b\[[0-9;:]*m`)
 
-// tintLine tints a raw line of a log for drawing: a node line by its tab separated fields, anything
-// else as tint does, its colours dropped and every span cleaned of control characters.
+// tintLine tints a raw line of a log for drawing: a node or a python line by its tab separated
+// fields, anything else as tint does, its colours dropped and every span cleaned of control
+// characters.
 func tintLine(raw string) cell {
 	raw = colours.ReplaceAllString(raw, "")
-	var c cell
 	if parts := strings.SplitN(raw, "\t", 4); len(parts) == 4 {
-		if node, ok := tintNode(strings.Join([]string{styles.Clean(parts[0]), styles.Clean(parts[1]), styles.Clean(parts[2]), styles.Clean(parts[3])}, "\t")); ok {
-			c = node
+		for i := range parts {
+			parts[i] = styles.Clean(parts[i])
+		}
+		if node, ok := tintNode(strings.Join(parts, "\t")); ok {
+			return node
+		}
+		if py, ok := tintPython(parts); ok {
+			return py
 		}
 	}
-	if c == nil {
-		c = tint(styles.Clean(raw))
+	return tint(styles.Clean(raw))
+}
+
+// messageLines are the lines of a message. The runtimes of node and python end each line of one
+// with a carriage return rather than a newline, so cloudwatch keeps it one event; either breaks a
+// line. The newlines a message ends in make no lines.
+func messageLines(message string) []string {
+	if strings.IndexByte(message, '\r') >= 0 {
+		message = strings.ReplaceAll(strings.ReplaceAll(message, "\r\n", "\n"), "\r", "\n")
 	}
-	return c
+	return strings.Split(strings.TrimRight(message, "\n"), "\n")
+}
+
+// frameKind is what a line of a stack trace is.
+type frameKind int
+
+const (
+	// notFrame is a line that is no part of a stack trace, or its message, as Error: boom.
+	notFrame frameKind = iota
+	// frameHead opens a trace: Traceback (most recent call last): or goroutine 1 [running]:.
+	frameHead
+	// frameCall is a call: at handler (/var/task/index.js:4:2) in node, File "/var/task/app.py",
+	// line 8, in handler in python, main.handler(...) in go.
+	frameCall
+	// frameSource is the line under a call: the code of a python frame, the file of a go one.
+	frameSource
+)
+
+// stackLine is what a line of a message is in a stack trace, and whether it is in code the
+// function's own does not hold: a dependency or the runtime.
+type stackLine struct {
+	kind     frameKind
+	internal bool
+}
+
+// goCall is the call of a frame of a go stack trace: main.handler(...), net/http.(*conn).serve(...).
+var goCall = regexp.MustCompile(`^[\w./-]*\w\.[\w.*()\[\]$-]*\(.*\)( \+0x[0-9a-f]+)?$`)
+
+// isGoCall reports whether a line is the call of a go frame. The expression runs only on a line
+// that ends as one does.
+func isGoCall(line string) bool {
+	return (strings.HasSuffix(line, ")") || strings.Contains(line, ") +0x")) && goCall.MatchString(line)
+}
+
+// stackLines finds the stack traces in the lines of a message, as node, python and go write them.
+// block says the lines are one, as a field of json holds, where a go call is its name alone.
+func stackLines(lines []string, block bool) []stackLine {
+	out := make([]stackLine, len(lines))
+	for i, line := range lines {
+		t := strings.TrimLeft(line, " \t")
+		indented := len(t) < len(line)
+		switch {
+		case indented && strings.HasPrefix(t, "at "):
+			out[i] = stackLine{frameCall, nodeInternal(t)}
+		case indented && strings.HasPrefix(t, `File "`):
+			out[i] = stackLine{frameCall, pythonInternal(t)}
+		case t == "Traceback (most recent call last):", strings.HasPrefix(t, "goroutine ") && strings.HasSuffix(t, "]:"):
+			out[i] = stackLine{kind: frameHead}
+		case indented && goSource(t):
+			out[i] = stackLine{frameSource, goInternalPath(t)}
+		case indented && i > 0 && out[i-1].kind == frameCall && strings.HasPrefix(strings.TrimLeft(lines[i-1], " \t"), `File "`):
+			out[i] = stackLine{frameSource, out[i-1].internal}
+		case !indented && (isGoCall(t) || block && i+1 < len(lines) && goSource(strings.TrimLeft(lines[i+1], " \t"))):
+			out[i] = stackLine{frameCall, goInternalCall(t)}
+			if i+1 < len(lines) {
+				if next := strings.TrimLeft(lines[i+1], " \t"); goSource(next) {
+					out[i].internal = goInternalPath(next)
+				}
+			}
+		}
+	}
+	return out
+}
+
+// tone is the tone of a line of a stack trace: the function's own frames in the body ink, so they
+// stand out, the rest faint.
+func (s stackLine) tone() styles.Tone {
+	if s.kind == frameHead || s.internal {
+		return styles.ToneFaint
+	}
+	return styles.ToneBody
+}
+
+// nodeInternal reports whether a frame of node is in a dependency or node and lambda's runtime.
+func nodeInternal(frame string) bool {
+	return strings.Contains(frame, "node_modules/") || strings.Contains(frame, "node:") || strings.Contains(frame, "/var/runtime/")
+}
+
+// pythonInternal reports whether a frame of python is in a package or python and lambda's runtime.
+func pythonInternal(frame string) bool {
+	for _, in := range []string{"/var/runtime/", "/var/lang/", "site-packages/", "dist-packages/", "<frozen "} {
+		if strings.Contains(frame, in) {
+			return true
+		}
+	}
+	return false
+}
+
+// goSource reports whether a line is the file and line of a go frame: /build/main.go:23 +0x1d.
+func goSource(line string) bool {
+	return (strings.HasPrefix(line, "/") || strings.HasPrefix(line, "<autogenerated>")) && strings.Contains(line, ":")
+}
+
+// goInternalPath reports whether the file of a go frame is in the module cache or go's own source.
+func goInternalPath(path string) bool {
+	return strings.Contains(path, "/pkg/mod/") || strings.Contains(path, "/go/src/") || strings.HasPrefix(path, "<autogenerated>")
+}
+
+// goStd are the packages of go's own a stack trace runs through most.
+var goStd = []string{"runtime", "net", "sync", "reflect", "context", "syscall", "internal", "encoding", "fmt", "io", "os", "testing"}
+
+// goInternalCall reports whether a go call is in go's runtime or library, or in aws-lambda-go, by
+// its name, for a frame without its file.
+func goInternalCall(call string) bool {
+	if strings.Contains(call, "aws-lambda-go") {
+		return true
+	}
+	first := call
+	if i := strings.IndexAny(first, "/.("); i >= 0 {
+		first = first[:i]
+	}
+	for _, std := range goStd {
+		if first == std {
+			return true
+		}
+	}
+	return false
 }
 
 // wrapCell breaks a cell into lines of at most width columns, keeping each span's tone. A line
@@ -429,14 +657,23 @@ func highlight(c cell, want string) cell {
 // logCells are the drawn lines of one log message: each of its lines tinted and wrapped to width.
 func logCells(message string, width int) []cell { return markedLogCells(message, "", width) }
 
-// markedLogCells are logCells with where the message holds mark marked. The newlines a message
-// ends in draw no empty lines.
+// markedLogCells are logCells with where the message holds mark marked. A line of a stack trace
+// is in the body ink when it is in the function's own code, faint when it is not.
 func markedLogCells(message, mark string, width int) []cell {
-	message = strings.TrimRight(strings.ReplaceAll(message, "\r\n", "\n"), "\n")
-	lines := strings.Split(message, "\n")
+	lines := messageLines(message)
+	var stack []stackLine
+	if len(lines) > 1 || strings.IndexByte(message, '\t') == 0 || isGoCall(message) {
+		stack = stackLines(lines, false)
+	}
 	out := make([]cell, 0, len(lines))
-	for _, raw := range lines {
-		out = append(out, wrapCell(highlight(tintLine(raw), mark), width)...)
+	for i, raw := range lines {
+		var c cell
+		if i < len(stack) && stack[i].kind != notFrame {
+			c = cell{{Text: styles.Clean(colours.ReplaceAllString(raw, "")), Tone: stack[i].tone()}}
+		} else {
+			c = tintLine(raw)
+		}
+		out = append(out, wrapCell(highlight(c, mark), width)...)
 	}
 	return out
 }
