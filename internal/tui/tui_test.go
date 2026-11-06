@@ -485,6 +485,11 @@ func layoutPages(t *testing.T, w, h int) map[string]model {
 		m = pressKeys(t, m, k)
 		pages["stage "+stageTabs[m.state.stage.tab]] = m
 	}
+	if out, ok := pages["stage outputs"]; ok {
+		pages["output"] = pressKeys(t, out, "G", "enter")
+		pages["output scrolled"] = pressKeys(t, pages["output"], "G")
+		pages["resources folded"] = pressKeys(t, pages["stage resources"], "space")
+	}
 	m = pressKeys(t, m, "enter")
 	pages["version"] = m
 	m = pressKeys(t, m, "q", "tab", "tab", "enter")
@@ -549,6 +554,8 @@ func TestEscapesNeverReachTheTerminal(t *testing.T) {
 	st.Resources["resource/"+evil] = &state.Resource{Type: evil, PhysicalID: evil, Attributes: map[string]string{evil: evil}}
 	st.Resources["function/api"].Attributes["Arn"] = evil
 	st.Outputs[evil] = evil
+	st.Outputs["json"] = `{"` + evil + `":["` + evil + `"]}`
+	f.versions = map[string]*state.State{"v2": st}
 	f.locks[ordersDev] = &state.LockInfo{Who: evil, Where: evil, Operation: evil, Since: time.Now()}
 	f.logs = []cli.LogEvent{{Time: time.Now(), Message: evil}}
 	f.result = cli.Invocation{Payload: []byte(evil), Logs: evil, Error: evil}
@@ -575,6 +582,10 @@ func TestEscapesNeverReachTheTerminal(t *testing.T) {
 		m = pressKeys(t, m, k)
 		check("stage "+stageTabs[m.state.stage.tab], m)
 	}
+	check("resources folded", pressKeys(t, m, "shift+tab", "space"))
+	check("output json", pressKeys(t, m, "j", "enter"))
+	check("output", pressKeys(t, m, "j", "j", "enter"))
+	check("history", pressKeys(t, m, "tab"))
 	r := pressKeys(t, m, "tab", "tab", "enter")
 	check("resource", r)
 	fn := pressKeys(t, m, "tab", "tab", "enter")

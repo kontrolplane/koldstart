@@ -30,9 +30,11 @@ type fakeBackend struct {
 	locks   map[cli.StageRef]*state.LockInfo
 	history []state.ObjectVersion
 	// versions are the states of the history by their version, where a test wants others than
-	// testState's; versionReads counts the reads of one.
+	// testState's; versionReads counts the reads of one, and versionErr is what each read fails
+	// with.
 	versions     map[string]*state.State
 	versionReads int
+	versionErr   error
 	// metrics are what Metrics returns where a test wants others than the series it makes up.
 	metrics map[string]cli.Metrics
 	logs    []cli.LogEvent
@@ -148,6 +150,9 @@ func (f *fakeBackend) Version(_ context.Context, ref cli.StageRef, id string) (*
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.versionReads++
+	if f.versionErr != nil {
+		return nil, f.versionErr
+	}
 	if st, ok := f.versions[id]; ok {
 		return st, f.err
 	}
@@ -312,6 +317,8 @@ func press(s string) tea.KeyPressMsg {
 		return tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift}
 	case "backspace":
 		return tea.KeyPressMsg{Code: tea.KeyBackspace}
+	case "space":
+		return tea.KeyPressMsg{Code: tea.KeySpace, Text: " "}
 	}
 	if ctrl, ok := strings.CutPrefix(s, "ctrl+"); ok {
 		return tea.KeyPressMsg{Code: rune(ctrl[0]), Mod: tea.ModCtrl}

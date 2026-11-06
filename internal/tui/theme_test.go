@@ -125,6 +125,12 @@ func TestToneRules(t *testing.T) {
 		{name: "an inactive function", c: cell{styles.S("inactive", stateTone("Inactive"))}, part: "inactive", want: styles.ToneWarning},
 		{name: "a retained resource", c: resourceNote(&state.Resource{DeletionPolicy: "retain"}, false, false), part: "retained", want: styles.ToneMuted},
 		{name: "a kept resource", c: resourceNote(&state.Resource{}, true, false), part: "kept", want: styles.ToneMuted},
+		{name: "a pending resource", c: resourceNote(&state.Resource{Pending: &state.Pending{Operation: "update"}}, false, false), part: "▲ update pending", want: styles.ToneWarning},
+		{name: "a drifted resource", c: resourceNote(&state.Resource{}, false, true), part: "▲ drifted", want: styles.ToneWarning},
+		{name: "a failed deploy", c: deployNote(deploySummary{failed: true}, true), part: "✗ failed", want: styles.ToneDanger},
+		{name: "the current deploy", c: deployNote(deploySummary{failed: true}, true), part: "current", want: styles.ToneAccent},
+		{name: "a type in the tree", c: stageState{}.resourceRow(stageResource{id: "role/api", res: &state.Resource{Type: "koldstart::IAM::Role"}}, 0, false)[1], part: "iam role", want: styles.ToneMuted},
+		{name: "an id in aws in the tree", c: stageState{}.resourceRow(stageResource{id: "role/api", res: &state.Resource{PhysicalID: "orders-dev-api"}}, 0, false)[2], part: "orders-dev-api", want: styles.ToneMuted},
 		{name: "an unreadable stage", c: overviewRow(stage, false)[len(overviewRow(stage, false))-1], part: "unreadable", want: styles.ToneDanger},
 	}
 	for _, tt := range tests {
