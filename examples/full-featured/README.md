@@ -4,10 +4,11 @@ A shop's orders, in [koldstart.pkl](./koldstart.pkl): an http api in typescript 
 
 | what                  | where                                                       |
 | --------------------- | ----------------------------------------------------------- |
-| http routes           | `api`: `GET /orders/{id}` and `POST /orders`                |
-| a queue               | `worker` reads `jobs`, retrying only the orders that failed |
+| defaults              | `functions { default { ... } }`: memory and log retention of every function |
+| http routes           | `api`: `kdst.get("/orders/{id}")` and `kdst.post("/orders")` |
+| a queue               | `worker` reads `jobs`, `kdst.fromQueue("jobs")`, retrying only the orders that failed |
 | a schedule            | `report`, every hour, enabled in `prod`                     |
-| a table and a queue   | `resources`, through cloud control                          |
+| a table and a queue   | `kdst.table("id")` and `kdst.queue()` in `resources`, through cloud control |
 | `link`                | the access and the variables, such as `ORDERS_NAME`         |
 | a secret              | `API_KEY`, `kdst.param("api-key")`: `/shop/<stage>/api-key` |
 | a stage of its own    | `memory` is larger in `prod`                                |
