@@ -1,69 +1,107 @@
 # terminal interface
 
-`kdst ui` opens a terminal interface for everything koldstart has deployed in an account. It finds the apps and stages by listing the account's state buckets, one for each region, so it works from any directory and needs no configuration file. Without permission to list buckets, it reads the bucket of the region in use alone.
+`kdst ui` opens a terminal interface for everything koldstart has deployed in an account. It finds the apps and stages in the account's state buckets, `koldstart-state-<account>-<region>`, one for each region, so it works from any directory and needs no configuration file. When it cannot list buckets, it reads the bucket of the region in use alone.
 
 ```bash
 kdst ui
 kdst ui --profile prod --stage prod
 ```
 
-Opened in a project's directory, it starts on the project's stage, `--stage` or `dev`, also before its first deploy. The project's app is marked `●`: its stages can be planned and deployed, and its functions run on this machine. Any stage can be browsed, invoked, unlocked and removed.
+Opened next to a `koldstart.pkl`, or the file `--config` names, it starts on the project's stage, `--stage`, `KOLDSTART_STAGE` or `dev`, also before its first deploy. The project's app is marked `●`: its stages can be planned and deployed, and its functions run on this machine. Any stage can be browsed, invoked, unlocked and removed. A configuration that does not load says why, and the ui opens on the stages without a project.
 
-The header shows the aws profile, account, region and state bucket in use, the project here, and who the credentials belong to.
+The header shows the aws profile, `default` without one, the account, the region, the state bucket, the project and its stage, or `none here`, and who the credentials belong to, as `user/levi`. It needs a terminal of at least 78 by 22; a smaller one says so, and only `ctrl+c` works.
 
 ## views
 
-- `stages`: every app and stage, with when it was last deployed, by whom, how many resources it has, and who holds its lock
-- `stage`, in tabs:
-  - functions, with their invocations, errors and p99 duration of the last hour
-  - resources, as a tree: each function with its role, log group, url, permissions, routes and events, each resource with the notifications of a bucket and the depth of a queue, and the http api with its domain and authorizers
-  - outputs
-  - history: the deploys, each the versions of the state it wrote; one shows what it changed from the deploy before, and each change opens for its full diff
+- `stages`: every app and stage, with its region, when it was last deployed and by whom, how many resources it has and how many were kept by a remove, and who holds its lock, or `free`. A stage whose state or lock cannot be read is `✗ unreadable`, and `enter` shows why; one of the project never deployed is `not yet`. Without any: `no stages in this account yet: deploy one with kdst deploy`.
+- `stage`: the stage above the tabs, as `orders/dev`, and on a line below how many resources it has and how many a remove kept, its account and region, when it was last deployed, how long ago and by whom, and its lock, `lock free` or `● ana on ana-mbp · deploy since 14:02:11, 4m ago`; a narrow terminal shows the shorter `3h ago by levi` and `● ana on ana-mbp, 4m ago`, without the date, the account and a region the header shows. Then the tabs:
+  - functions: a sparkline of the last hour's invocations, in red when the hour had errors, the invocations, the errors, in bold red when there were any, and the p99 duration of the last hour, then memory, timeout, runtime, its name in lambda and its code, the last columns left out as the terminal narrows; `…` while the metrics are read, and `-` where they cannot be, with `could not read the metrics: <error>` beside the tabs. `▲` marks a function its page found changed outside koldstart
+  - resources, as a tree under a heading for each kind, `functions`, `resources`, `http api` and `other`, with how many groups it holds: each function with its role, log group, url, permissions, routes and events, each resource with the notifications of a bucket and the depth of a queue, and the http api with its domain and authorizers. A type is shown as it is said, `lambda function` for `AWS::Lambda::Function`, and the resource page shows it whole; an id in aws too long for its column is cut in the middle, keeping its end. A note says what is kept, imported or retained, and `▲` what a deploy left pending, as `▲ update pending`, or what its page found changed outside koldstart, `▲ drifted`, until the state is written again. `space` folds the group under the cursor to its head, `▸ api  +6`, `▲ +6` when what it hides needs attention, and opens it again; on a kind's heading `space` or `enter` folds every group of the kind, and opens them all. While the filter holds text every group is open. A function opens the function page, the rest the resource page
+  - outputs: a value on one line, a url or an arn whole when it fits and cut in the middle when it does not, a json list or object compacted, with `[…] 3 items` or `{…} 4 keys` beside it, and text of more than one line its first with how many more. `enter` opens the output: what it holds, its size, and its value, text with every line wrapped, and json in the order the stage holds it, read as a resource's is, below. `c` copies the value as it is, on the tab, and on the output from its first line, or the value under the cursor of its json
+  - history: the deploys, newest first: how long ago and when, by whom, what it changed from the deploy before, as `+3 ~1 -0` resources added, changed and removed, `✗ failed` where it stopped with a resource it started on unfinished, how long it took from its first write of the state to its last, and how many it wrote. What a deploy changed is read as its row comes in sight, `…` until then and `-` where it cannot be, and `r` tries again. The filter matches the time, the author and the version. A deploy opens with who deployed it, when, its serial and version, and the resources and outputs it changed from the deploy before, counted as `+1 added  ~2 changed  -1 removed`; each changed resource opens for its diff
+  - an empty tab says `no functions yet`, `no resources yet`, `no outputs yet` or `no deploys yet`, and `no function matches <filter>: esc clears the filter` when the filter hides every row
 - `function`, in tabs:
-  - overview: its configuration; what lambda says of it now, its state, its last update, and code or configuration changed outside koldstart; sparklines of its invocations, errors, throttles, duration and concurrency in the last hour; its environment and what invokes it
-  - logs: the last half hour, followed with a live tail, or read again every few seconds where there is none; json and logfmt tinted so the message stands out; `/` filters the lines, and ↑ at the top reads the hour before
-  - invocations: the requests in the logs read, with their duration, billed duration, memory, cold start, and whether they failed or timed out; one opens with its lines of the log
-  - invoke: the events kept for it, and what the last invocation with each returned
-- `resource`: what koldstart applied, its id in aws, its attributes and inputs, and on a second tab its properties in aws now, from cloud control, with the ones changed outside koldstart
-- `plan`: what a deploy or remove does, and the progress of each resource while it applies; each change opens for its full diff of inputs, with secrets and refs shown by what they stand for
+  - overview: its name, and its runtime, architecture, memory, timeout, the stage's last deploy and its state in lambda on a line below, with a notice when its code, memory, timeout or runtime was changed outside koldstart; then its configuration; what lambda says of it now, its state and its last update, and each setting that differs from what koldstart deployed; sparklines of its invocations, errors, throttles, p99 duration and concurrency in the last hour, each with its total, its range and its last minute, or `not invoked in the last hour`; what invokes it, its url first, each by its kind; its environment, sorted, values that look like secrets hidden and secrets, refs and outputs by what they stand for; and its role, with its managed policies and what its policy allows. Two columns from a terminal 111 wide, one below it. Long arns, names and urls are cut in the middle; `c` copies the whole value of the row under the cursor, the name of a variable whose value is hidden, and `enter` opens its log group, role or a trigger on the resource page, or its url in the browser
+  - logs: the last half hour, followed with a live tail, or read again every five seconds where there is none; json and logfmt tinted so the message and an error level stand out, long lines wrapped under their time. The cursor, `▌`, is on the newest line while following; `↑` or `pgup` moves it up and stops following, `G` follows again, and `↑` on the first line reads the hour before. `enter` opens the line under the cursor and `c` copies it as it was logged. `/` filters the lines and marks what it looks for. `s` shows them from a level, info, warn and then error and worse, and every line again, which the frame says, as `level ≥ warn`; a line that names no level is info, or error when it says something failed, as a timeout, a crash or a panic does, and the filter and the level both keep a line. `b` groups the lines of each request together, where its first line is, under a faint rule with its id, how long it ran, and how it failed or that it runs, as `╌╌ 22222222 · 5ms · ✗ failed`; the lines of no request stay where they are. It is off until pressed. `t` shows the time of each line, how long ago it was, or nothing, leaving its room to the lines. Without a log group: `no log group: deploy the function first`
+  - invocations: the requests in the logs read, newest first, under a line that counts them, the failed and the cold starts, with the p50 and p99 duration. Each says `✓ ok`, `✗ failed` or `⏱ timed out`, its time, duration, billed duration, memory, cold start and what it failed with. Without any: `no invocations in the logs read: ↑ on the logs tab reads further back`
+  - an invocation opens on its request id, how it ended and the type and message of its error, when it started, how long it ran and was billed for, the memory it used of what it has, and the init of a cold start, with the runtime it loaded. Its lines follow, each at its offset from the start, as `+12ms`, with its level, and without lambda's START, END and REPORT or the time and request id the runtime writes. A line of json reads as its level, its message, and its other fields as faint `key=value`, a value cut at 40 columns, without the time, the request id and what powertools says of the function. A stack trace of node, python or go is indented under its line, the frames of dependencies and the runtime faint. `n` and `p` show the next and the previous invocation
+  - a line of the logs opens on when it was logged, to the millisecond and how long ago, its log stream, the invocation it is of and how it ended, which `o` opens, its level and its size. Its message follows whole, tinted and wrapped, without the time, request id and level a runtime writes in front of it, and the pairs of a line of logfmt each under its key. The json a line is, or ends in, as node's `Invoke Error`, is read in the order it was logged, as a resource's json is, below, and `c` on its first line copies the line as it was logged; an error with a stack trace in it is shown above it as the invoke tab shows one, the frames that are not the function's own faint. `enter` on a line without json opens its invocation too. `n` and `p` show the next and the previous line the logs tab shows, moving its cursor with them; while a search of the json holds text, `n` goes to its next match
+  - invoke: the `.json` events kept for it, each with its size and when it was changed, and `not json` marked on the ones that are not; beside them from a terminal 98 wide, and under them below it, a pane with the event's `payload` or the `result` of the last invocation with it, which `v` switches between and `i` turns to the result. Both read as a resource's json does, the payload in the order its file writes it, and what is not json as its lines, an event that is not json under the line it breaks on. The result says how it ended, `✓ ok`, `✗ failed` or `⏱ timed out`, where it ran and when, and what lambda's report in the log says of it: its duration, what was billed, the memory it used of what it has, a cold start, the lines of its log and its request id. A function that failed shows the type and message of its error with its stack trace under them, as `kdst invoke` writes them, the frames of node, python and go that are not the function's own faint; then the end of the log, tinted as the logs are. `enter` gives the keys to the json, where `esc` or `q` gives them back to the events and, on a narrow terminal, the pane takes the whole tab. From the events `c` copies the payload as its file holds it, or what the function returned, its error as `kdst invoke` writes it, and `shift+c` the request id
+- `resource`: its type in full, what koldstart applied, its id in aws, its policy, what it depends on, its attributes, long values wrapped, and the inputs it was applied with, and on a second tab, `in aws`, its properties in aws now, from cloud control, with the ones changed outside koldstart named on top. Both are json, read with a cursor, as an output's json is:
+  - keys, strings, numbers and booleans, `null` and refs, secrets and outputs each take a colour of their own, and long values, as arns, urls and policies, wrap under their key rather than being cut
+  - a string that holds json, as a policy document or an event's body, is shown nested and written after `(json)`, as the diff writes it
+  - an array or object of more than 50 items, or 8 levels down, starts folded, as `[ … 60 items ]`; `enter` or `space` folds and unfolds the one under the cursor, and `z` unfolds all of them, and pressed again folds them
+  - the frame shows the path of the line under the cursor, as `.Policies[0].PolicyDocument.Statement[1].Action`; `c` copies its value, an object or array as indented json, and `shift+c` the path
+  - `/` searches keys and values as it is typed, and finds what is folded too; `n` and `shift+n` go to the next and previous match, and the frame shows which, as `search arn · 3 of 12`
+  - on `in aws`, each line of a property changed outside koldstart is marked `▲`, its first written as applied → now, as `"BillingMode": "PAY_PER_REQUEST" → "PROVISIONED"`
+- `plan`: what a deploy or remove does, and the progress of each resource while it applies:
+  - the head names the plan, `deploy of orders/dev in eu-west-1`, `deploy of the code of api to orders/dev in eu-west-1` or `remove of orders/dev in eu-west-1`, and when it was made, `planned at 14:02:11`, over its counts in the colour of each action, `2 to create, 1 to update`, and whether every resource was read as it is in aws
+  - the changes are grouped by kind, under headings with how many each holds and of which action, as `functions  3  +1  ~2`: `functions`, `roles, logs and triggers`, each function's role, log group, url, permissions and events, `http api`, its routes, domain and authorizers, `resources` and `other`. `o` groups them by action instead, `~ update  2`, in the order the counts name them, and back. `space` folds the group under the cursor to its heading, and `enter` on a heading does too
+  - an update, replace or take over lists the fields it changes, as the text plan does, a resource's properties and a function's environment one by one: `memory 512 → 1024` with the part that changed marked, `environment.TABLE known after apply`, `environment.KEY (a secret)`, `code changed` with the hashes; three at most, then `+5 more · enter for the diff`
+  - a replace says which field needs the new resource, `▲ changing properties.KeySchema needs a new resource`, and of a table, a bucket or another type that holds data, `✗ the old one is deleted, and the data it holds with it`. One retained is not replaced: the plan fails, and `kdst deploy --allow-replace` replaces it, leaving the old one in place
+  - while it applies, each change says how far it got, waiting, in flight, done with how long it took, or the error it failed with under it, and each heading how many of its changes are done, `2/5 done`, `✓ 5/5`, or `✗ 1 failed · 2/5`
+  - `enter` opens a change's diff, or of a create with nothing deployed before it, its inputs in the json viewer, as `create dynamodb table · its inputs, with nothing deployed to diff against`, which folds, searches and copies as json on a resource does. A plan with nothing to do says what it compared, `no changes: what the state says is deployed matches the configuration`, or `what is in aws` once `r` read it, and of a function's code, `api is up to date: its code is the code deployed to orders/dev`
+- `diff`: the inputs of a resource before and after, as indented json, opened on its first change:
+  - a line under the title counts the fields added, changed and removed, as `+1 added  ~2 changed  -1 removed`, or says `no change`, and `no change but the spacing of json in a string` when that is all that differs
+  - a field changed is its removed line right above its added one, with the part that changed marked, as the number of `"memory": 512` to `"memory": 1024`, or `dev` to `prod` in an arn
+  - three lines are kept around each change, and the rest folded into rows such as `⋯ 24 unchanged lines`
+  - json in a string, as a policy document often is, is written out after `(json)` and diffed as json, so one statement changed is one line; the order of keys is no change, and an item added to a list marks only that item
+  - long values wrap under their key, with the `+` or `-` on every line; secrets, refs and outputs show in parentheses by what they stand for, as `(secret ssm:/orders/key)`
+  - the change navigated to is marked `▌`, and the frame's foot says which it is, as `change 2 of 5`
 
-The page on screen is read again every five seconds; `p` pauses that. The live data, metrics, lambda's own view of a function, a queue's depth and a resource's properties in aws, needs the permissions to read them; where it cannot be read, as on an emulator, the page says so and shows the rest.
+The stages, a stage and a function are read again every five seconds, and `p` pauses that; a resource and an output are read once, and `r` reads them again, and the other pages show what the page they were opened from read. The live data, metrics, lambda's own view of a function, a queue's depth and a resource's properties in aws, needs the permissions to read them; where metrics, lambda, cloud control or a queue's depth cannot be read, as on an emulator, the page says so, as `could not read the metrics: <error> · r tries again`, and shows the rest. When a read fails after one that worked, what that one read stays on screen, marked `as of 10:04:05, could not read again`.
 
 ## keybindings
 
-- `q`: back, quit on the stages
-- `esc`: back, clear the filter, cancel a dialog; never quits
-- `ctrl+c`: quit
-- `↑`, `k` and `↓`, `j`: up and down
-- `g`, `G`: first and last row, top and bottom of the logs
-- `pgup`, `pgdn`: page up and down
-- `tab`, `shift+tab`: switch between functions, resources, outputs and history; on a function between its overview, logs, invocations and invoke; on a resource between what was applied and what is in aws
-- `enter`: open: a stage, a function, a resource, a deploy, an invocation, or a change's diff
-- `/`: filter a table, or the lines of the logs
-- `d`: plan a deploy of the stage, or on a function of its code
+- `q`: back, quit on the stages; on a dialog, no
+- `esc`: back, clear the filter or the search, cancel a dialog or a plan being made, where the plan `r` asked for goes back to the one before; never quits
+- `ctrl+c`: quit, also while a deploy or remove runs
+- `↑`, `k` and `↓`, `j`: up and down; in json, a line, and `↑` on its first scrolls up to what is above it
+- `g`, `home` and `G`, `end`: first and last row, top and bottom of the logs, where `G` and `end` follow them again; first and last line of json
+- `pgup`, `pgdn`: page up and down; on the invoke tab, scroll the payload or the result
+- `tab`, `shift+tab`: switch between functions, resources, outputs and history; on a function between its overview, logs, invocations and invoke; on a resource between what was applied and what is in aws; on a dialog between no and yes
+- `←`, `h` and `→`, `l`: switch the tabs of a stage, a function and a resource, as `tab` and `shift+tab` do; on a dialog, choose no or yes
+- `enter`: open a stage, a function, a resource, an output, a deploy, an invocation, a line of the logs, a change's diff, or a create's inputs; on a kind's heading in the resources, fold its groups, and on a plan's heading, its changes; on a function's overview, the log group, role or trigger of the row, or its url in the browser; on a diff, show the lines of the first fold in sight; in json, fold or unfold; on the invoke tab, go into the json of the payload or the result; apply a filter; answer a dialog with the button chosen
+- `]`, `[`: on a diff, go to the next or the previous change
+- `z`: on a diff, show every line, or fold them again; in json, unfold everything, or fold it all again
+- `space`: on the resources of a stage, fold the group under the cursor or open it, and on a kind's heading every group of the kind; on a plan, fold the group of the change under the cursor or open it; in json, fold or unfold the object or array under the cursor, or the one the value under it is in
+- `o`: on a plan, group the changes by action, or by kind again; on a line of the logs, open the invocation it is of
+- `/`: filter the stages, the tabs of a stage, or the lines of the logs; search json
+- `n`, `shift+n`: the next and previous match of the search in json, while it holds text
+- `d`: plan a deploy of the project's stage, or on a function of its code
 - `ctrl+s`: apply the plan on screen
-- `r` on a plan of a deploy: plan again with every resource read as it is in aws, to find what was deleted or changed outside koldstart
-- `ctrl+d`: remove the stage
-- `ctrl+x`: release a lock
-- `i`: invoke the function in aws, `shift+i` to run it on this machine
-- `e`: edit the event to invoke with in `$VISUAL` or `$EDITOR`
-- `f`: follow the newest log lines, or stop following
-- `y`, `n`: answer a yes/no dialog
-- `c`: copy the arn, id, output or payload under the cursor
-- `r`: refresh
-- `p`: pause or resume the refresh
-- `?`: help
+- `r` on a plan of a deploy of the stage: plan again with every resource read as it is in aws, to find what was deleted or changed outside koldstart
+- `ctrl+d`: remove the stage, on the stages and on a stage
+- `ctrl+x`: release the stage's lock, on the stages and on a stage
+- `i`: invoke the function in aws, `shift+i` to run it on this machine, from any tab of a function
+- `e`: edit the event to invoke with in `$VISUAL`, `$EDITOR` or `vi`
+- `v`: on the invoke tab, show the event's payload or the result of the last invocation with it
+- `f`: on the logs, follow the newest lines, or stop following
+- `s`: on the logs, show the lines from info, warn or error, or every line again
+- `b`: on the logs, group the lines of each request together, or not
+- `t`: on the logs, show the time of each line, how long ago it was, or nothing
+- `y`, `n`: answer the dialog to release a lock or to run against prod
+- `n`, `p`: on an invocation, the next and the previous one, as the invocations list them; on a line of the logs, the next and the previous line the logs tab shows
+- `c`: copy what is under the cursor: an app and stage, a function's arn, the whole value of a row of its overview, the value of a line of json, or a resource's id in aws on a tab without json, an output's value as it is, a version, a request id, a line of the logs as it was logged, or on the invoke tab the payload or the result shown
+- `shift+c`: copy the path of the line of json under the cursor; on the invoke tab, from the events, the request id of the result
+- `r`: read the page again, on the stages, a stage, a function, a resource and an output
+- `p`: on the stages, a stage and a function, pause or resume reading the page again
+- `?`: help; any key closes it
 
-`ctrl+s` applies the plan on screen. It takes the stage's lock and plans again first: when the configuration or the state changed since, nothing is applied, and the new plan is shown to apply instead. Removing a stage shows the plan of the remove, and asks to type the stage's name. Releasing a lock shows who took it, for what, and when, before asking. Running a function of `prod` on this machine asks first.
+While a filter, a search, or the stage's name to remove it, has focus, letters, `?`, `p` and `q` included, are typed into it.
 
-Quitting while a deploy or remove runs stops it, as ctrl+c does on the command line: the lock is released, and the state says what was done, so running it again finishes it.
+`ctrl+s` applies the plan on screen. It takes the stage's lock and plans again first: when the configuration or the state changed since, nothing is applied, and the new plan is shown to apply instead. Removing a stage shows the plan of the remove, and asks to type the stage's name, such as `dev`. Releasing a lock shows who took it, for what, from where, and when, before asking. Running a function of `prod` on this machine asks first, naming the event it sends.
 
-Events to invoke a function with are kept in `.koldstart/events/<function>/` in the project, as json files, so they can be committed and shared. Without any, the function is invoked with `{}`, and `e` creates `event.json` to edit.
+While a deploy or remove runs, `q` and `esc` stay on the plan. `ctrl+c` stops it, as it does on the command line: the lock is released, and the state says what was done, so running it again finishes it.
+
+Events to invoke a function with are kept in `.koldstart/events/<function>/` in the project, as `.json` files, so they can be committed and shared. Without any, the function is invoked with `{}`, and `e` creates `event.json` to edit. Without a project here there is nowhere to keep them: `{}` is sent, and `e` says so. An event that is not json is not sent.
 
 ## flags
 
-| flag      | description                                                                              |
-| --------- | ---------------------------------------------------------------------------------------- |
-| `--theme` | `auto`, the default, follows the terminal; `dark` and `light` paint their own background |
+| flag      | description                                                                                                                                                                    |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--theme` | `auto`, the default, follows the background the terminal reports, or `COLORFGBG`, and is dark when neither says; `dark` and `light` paint their own background into every cell |
 
-The global `--stage`, `--profile`, `--region` and `--debug` flags work as they do everywhere: `--stage` picks the project's stage it opens on.
+The colours follow what the terminal shows: truecolor, 256 colours, its own 16, or none with `NO_COLOR`. In 16 colours or none, the row under the cursor is drawn in reverse video, and without colour, failures and warnings are bold.
+
+The global `--stage`, `--config`, `--profile`, `--region` and `--debug` flags work as they do everywhere: `--stage` picks the project's stage it opens on, and `--config` the project.

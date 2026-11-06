@@ -18,9 +18,11 @@ func packageCommand(name string, opts *Options) *cobra.Command {
 		Use:   "package",
 		Short: "build and zip every function, without deploying",
 		Long: `package builds every function the way deploy does, into .koldstart/build/<stage>/<function>.zip,
-and prints the size and hash of each zip.`,
+and prints the size and hash of each zip. It needs no aws credentials. A container image is built
+by deploy, not here.`,
 		Example: fmt.Sprintf(`  %[1]s package
-  %[1]s package --stage prod`, name),
+  %[1]s package --stage prod
+  %[1]s package && unzip -l .koldstart/build/dev/api.zip`, name),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			p, err := loadProject(cmd.Context(), opts)
@@ -41,37 +43,29 @@ and prints the size and hash of each zip.`,
 	}
 }
 
+// printArchives writes a table of the zips: each function, its size lined up on the right, the
+// start of its hash and its path in the project.
 func printArchives(w io.Writer, root string, archives []build.Archive) error {
 	if len(archives) == 0 {
 		_, err := fmt.Fprintln(w, "no functions to build")
 		return err
 	}
+	width := len("SIZE")
+	for _, a := range archives {
+		width = max(width, len(Size(a.Size)))
+	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "FUNCTION\tSIZE\tSHA256\tZIP")
+	_, _ = fmt.Fprintf(tw, "FUNCTION\t%*s\tSHA256\tZIP\n", width, "SIZE")
 	for _, a := range archives {
 		if a.Image {
-			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", a.Function, "-", a.SHA256[:12], "container image, built on deploy")
+			_, _ = fmt.Fprintf(tw, "%s\t%*s\t%s\t%s\n", a.Function, width, "-", a.SHA256[:12], "container image, built on deploy")
 			continue
 		}
 		rel, err := filepath.Rel(root, a.Path)
 		if err != nil {
 			rel = a.Path
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", a.Function, humanSize(a.Size), a.SHA256[:12], rel)
+		_, _ = fmt.Fprintf(tw, "%s\t%*s\t%s\t%s\n", a.Function, width, Size(a.Size), a.SHA256[:12], rel)
 	}
 	return tw.Flush()
-}
-
-// humanSize formats a byte count the way ls -h does.
-func humanSize(n int64) string {
-	const unit = 1024
-	if n < unit {
-		return fmt.Sprintf("%d B", n)
-	}
-	div, exp := int64(unit), 0
-	for m := n / unit; m >= unit; m /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGT"[exp])
 }

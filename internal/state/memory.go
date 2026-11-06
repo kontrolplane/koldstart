@@ -53,10 +53,14 @@ func (m *Memory) Read(_ context.Context, app, stage string) (*State, string, err
 	return s, etagOf(versions), err
 }
 
-// Write implements Backend. After a delete, only a write that expects nothing succeeds.
-func (m *Memory) Write(_ context.Context, s *State, etag string) (string, error) {
+// Write implements Backend. After a delete, only a write that expects nothing succeeds. A
+// cancelled ctx fails the write, as it does a write to s3.
+func (m *Memory) Write(ctx context.Context, s *State, etag string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	if err := m.FailNext; err != nil {
 		m.FailNext = nil
 		return "", err

@@ -1,13 +1,26 @@
 # migrating from the serverless framework
 
-`kdst migrate` reads a `serverless.yml` and writes a `koldstart.pkl` next to it. What it cannot convert is left in the file as a `// TODO` comment, on the line above where it belongs, and listed at the end of the run. The new file is checked with pkl before it is written, so it is valid pkl, and passes the checks a deploy makes, even where it is not complete.
+`kdst migrate` reads a `serverless.yml` and writes a `koldstart.pkl` next to it. What it cannot convert, or converts to something that works differently, is left in the file as a `// TODO` comment, on the line above where it belongs, and listed at the end of the run by the `serverless.yml` key it came from. The list is grouped by what each needs, most urgent first: what to fix before you deploy, what was left out and is to write by hand, what works differently and is to check, and what koldstart does not need. The new file is checked with pkl before it is written, so it is valid pkl, and passes the checks a deploy makes, even where it is not complete.
 
 ```bash
 kdst migrate
 kdst migrate path/to/serverless.yml --out koldstart.pkl
 ```
 
-Without a path, it reads `./serverless.yml`. It does not write over a `koldstart.pkl` that is there, unless you pass `--force`.
+Without a path, it reads `./serverless.yml`. It does not write over a `koldstart.pkl` that is there, unless you pass `--force`, and `--out` writes it elsewhere. It ends with the `plan` to run next, with the `--stage` that `provider.stage` names:
+
+```text
+wrote koldstart.pkl; left to you:
+
+  provider.stage: koldstart deploys to dev by default: pass --stage prod, or set KOLDSTART_STAGE
+  functions.api.permissions: the statements of provider.iam are on every function: narrow them
+  plugins.serverless-offline: kdst offline serves the http routes on this machine
+
+the TODO comments in koldstart.pkl say where each one belongs
+
+next:
+  kdst plan --stage prod
+```
 
 koldstart does not read `serverless.yml` itself, and does not run serverless framework plugins. The conversion is done once, and the pkl file is what you keep.
 
@@ -53,7 +66,9 @@ koldstart does not read `serverless.yml` itself, and does not run serverless fra
 | `Mappings` and `Fn::FindInMap`                              | a `local` Mapping, looked up by its keys                             |
 | `Fn::Base64` of a string, `Fn::Select` of a list written out | `.base64`, the item                                                 |
 | `<Function>LambdaFunction`, the logical id of a function    | that function                                                        |
-| `${ssm:/path}`                                              | `kdst.ssm("/path")`                                                  |
+| `${ssm:/${self:service}/${sls:stage}/<name>}`               | `kdst.param("<name>")`                                               |
+| `${ssm:/aws/reference/secretsmanager/${self:service}/${sls:stage}/<name>}` | `kdst.secret("<name>")`                                |
+| `${ssm:/path}`, any other path                              | `kdst.ssm("/path")`, its variables interpolated                      |
 | `${cf:<service>-<stage>.<Output>}`                          | `kdst.stageOutput("<service>", "<stage>", "<Output>")`               |
 | `${cf(<region>):...}`, `${cf.<region>:...}`                 | the same, amended with `{ region = "<region>" }`                     |
 | `${env:NAME}`, `${env:NAME, 'default'}`                     | `read("env:NAME")`, `read?("env:NAME") ?? "default"`                 |
@@ -64,7 +79,7 @@ koldstart does not read `serverless.yml` itself, and does not run serverless fra
 | `${self:service}`, `${self:provider.region}`, `${aws:region}` | `module.app`, `module.region`                                      |
 | `${self:...}` of anything else, such as `custom`            | the value it names                                                   |
 
-A variable inside a longer string becomes pkl interpolation: `orders-${sls:stage}` is `"orders-\(kdst.stage)"`.
+A variable inside a longer string becomes pkl interpolation: `orders-${sls:stage}` is `"orders-\(kdst.stage)"`. An ssm path is the app's and stage's when it starts with the service, by name or as `${self:service}`, then the stage, as `${sls:stage}` or `${opt:stage}`: `${ssm:/orders/${sls:stage}/api-key}` is `kdst.param("api-key")`, and `${ssm:/shared/${sls:stage}/key}` stays `kdst.ssm("/shared/\(kdst.stage)/key")`.
 
 ## what is left to you
 
@@ -86,5 +101,5 @@ A stage deployed by the serverless framework lives in a CloudFormation stack, wh
 Resources that hold data, such as tables and buckets, should not be recreated. Give them `DeletionPolicy: Retain` in `serverless.yml` before removing the stack, so they survive it, then take each one over with `kdst import`:
 
 ```bash
-kdst import OrdersTable orders-prod
+kdst import OrdersTable orders-prod --stage prod
 ```

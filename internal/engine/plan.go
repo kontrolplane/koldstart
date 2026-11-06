@@ -47,6 +47,12 @@ type Change struct {
 	// and Drift are the inputs that were changed outside koldstart: what a refresh found.
 	Gone  bool
 	Drift []string
+	// Forces are the inputs of a replace that each need a new resource, a resource's properties
+	// one by one, as properties.KeySchema; the rest of its fields could change in place.
+	Forces []string
+	// Retained is a replace of a resource that is retained, which --allow-replace lets leave in
+	// place beside the new one.
+	Retained bool
 }
 
 // Plan is what a deploy would do to a stage.
@@ -266,10 +272,11 @@ func (e *Engine) planNode(ctx context.Context, n Node, st *state.State, unknownN
 	}
 	c.Action = Update
 	if p.Replaces(prior.Inputs, afterJSON) {
-		c.Action = Replace
-		if prior.DeletionPolicy == PolicyRetain && !e.AllowReplace {
+		c.Action, c.Retained = Replace, prior.DeletionPolicy == PolicyRetain
+		if c.Retained && !e.AllowReplace {
 			return Change{}, retainedReplace(c.Fields)
 		}
+		c.Forces = forcing(p, prior.Inputs, c.Before, c.After, c.Fields)
 	}
 	if len(c.Fields) == 0 && !hasUnknown(after) {
 		c.Fields = []string{SecretChanged}
@@ -380,6 +387,47 @@ func ChangedKeys(before, after map[string]any) []string {
 		}
 	}
 	return out
+}
+
+// forcing are the fields of a replace that need a new resource each on its own, as the provider
+// says when only that field is changed from before: a resource's properties one by one.
+func forcing(p Provider, prior json.RawMessage, before, after map[string]any, fields []string) []string {
+	var out []string
+	try := func(name string, with func(map[string]any)) {
+		candidate := maps.Clone(before)
+		if candidate == nil {
+			candidate = map[string]any{}
+		}
+		with(candidate)
+		if data, err := json.Marshal(candidate); err == nil && p.Replaces(prior, data) {
+			out = append(out, name)
+		}
+	}
+	for _, f := range fields {
+		b, isMapB := before[f].(map[string]any)
+		a, isMapA := after[f].(map[string]any)
+		if f != "properties" || !isMapB || !isMapA {
+			try(f, func(m map[string]any) { setFrom(m, after, f) })
+			continue
+		}
+		for _, k := range ChangedKeys(b, a) {
+			try(f+"."+k, func(m map[string]any) {
+				props := maps.Clone(b)
+				setFrom(props, a, k)
+				m[f] = props
+			})
+		}
+	}
+	return out
+}
+
+// setFrom sets the key k of m to what from holds under it, or deletes it when from has none.
+func setFrom(m, from map[string]any, k string) {
+	if v, ok := from[k]; ok {
+		m[k] = v
+		return
+	}
+	delete(m, k)
 }
 
 func decode(data json.RawMessage) map[string]any {

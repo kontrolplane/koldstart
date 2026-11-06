@@ -25,12 +25,35 @@ urlSuffix: Project.Pseudo = new { name = "urlSuffix" }
 function ref(resourceName: String, attributeName: String): Project.Ref =
   new { resource = resourceName; attribute = attributeName }
 
-/// A parameter of ssm parameter store, read while deploying.
+/// A parameter of ssm parameter store under the app and stage, read while deploying. For app
+/// `shop` on stage `dev`, `kdst.param("api-key")` reads `/shop/dev/api-key`, and on `prod`
+/// `/shop/prod/api-key`. The name has no leading `/`, no `..` and no empty segments.
+function param(parameterName: String): Project.Secret =
+  new { source = "ssm"; scope = "stage"; name = relative("kdst.param", "kdst.ssm", "/<app>/<stage>/", parameterName) }
+
+/// A secret of secrets manager under the app and stage, read while deploying. For app `shop` on
+/// stage `dev`, `kdst.secret("db").field("password")` reads the key `password` of the json
+/// secret `shop/dev/db`. The name has no leading `/`, no `..` and no empty segments.
+function secret(secretName: String): Project.Secret =
+  new { source = "secretsmanager"; scope = "stage"; name = relative("kdst.secret", "kdst.secretsmanager", "<app>/<stage>/", secretName) }
+
+/// A parameter of ssm parameter store by its full name or arn, read while deploying:
+/// `kdst.ssm("/shared/sentry-dsn")`. For one of this app and stage, `kdst.param()` is shorter.
 function ssm(parameterName: String): Project.Secret = new { source = "ssm"; name = parameterName }
 
-/// A secret of secrets manager, read while deploying. `.field("key")` takes one key of a json
-/// secret.
+/// A secret of secrets manager by its full name or arn, read while deploying.
+/// `.field("key")` takes one key of a json secret. For one of this app and stage, `kdst.secret()`
+/// is shorter.
 function secretsmanager(secretName: String): Project.Secret = new { source = "secretsmanager"; name = secretName }
+
+/// [name] when it can go after [prefix], else an error naming [helper], and [absolute] for the
+/// full name.
+local function relative(helper: String, absolute: String, prefix: String, name: String): String =
+  if (name.startsWith("/"))
+    throw("\(helper)(\"\(name)\"): the name goes after \(prefix): drop the leading /, or use \(absolute)(\"\(name)\") for the full name")
+  else if (name.isEmpty || name.endsWith("/") || name.contains("//") || name.contains(".."))
+    throw("\(helper)(\"\(name)\"): the name goes after \(prefix) and has no empty segments or ..: remove them, or use \(absolute)() for the full name")
+  else name
 
 /// An output of another app's stage, read from its state while deploying. One in another region
 /// or account amends it:

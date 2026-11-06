@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"time"
+
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 
@@ -66,12 +68,12 @@ func (m model) applyUnlocked(msg unlockedMsg) (model, tea.Cmd) {
 	return m, tea.Batch(status, load)
 }
 
+// unlockView asks before releasing a lock, saying who holds it in the words a deploy refused by
+// it says.
 func (m model) unlockView() string {
 	u := m.state.unlock
 	return dialog("release the lock of "+u.ref.String()+"?", styles.ToneWarning,
-		styles.Render(styles.S("held by ", styles.ToneFaint), styles.B(u.lock.Who, styles.ToneText),
-			styles.S(" for a "+u.lock.Operation+" from "+u.lock.Where, styles.ToneBody)),
-		styles.Render(styles.S("since "+formatTime(u.lock.Since)+", "+formatAgo(u.lock.Since), styles.ToneFaint)),
+		styles.Render(styles.S(cli.LockHeld(u.lock, time.Now()), styles.ToneBody)),
 		"",
 		styles.Muted("make sure that deploy is really gone: two deploys of one stage at once can leave its state wrong."),
 		"",
@@ -80,7 +82,8 @@ func (m model) unlockView() string {
 }
 
 func (m model) askRemove() (model, tea.Cmd) {
-	c, cmd := newTypedConfirm(m.state.plan.ref.Stage)
+	ref := m.state.plan.ref
+	c, cmd := newTypedConfirm(ref.Stage, "remove "+ref.String())
 	m.state.remove = removeState{confirm: c}
 	m.page = removePage
 	return m, cmd
@@ -94,6 +97,7 @@ func (m model) removeUpdate(msg tea.Msg) (model, tea.Cmd) {
 			return m.leavePlan()
 		case key.Matches(k, m.keys.View):
 			if !r.confirm.ok() {
+				r.confirm.tried = true
 				return m, nil
 			}
 			m.page = planPage
@@ -135,10 +139,19 @@ func (m model) runLocalUpdate(msg tea.Msg) (model, tea.Cmd) {
 	return m, nil
 }
 
+// runLocalView asks before running the function here against prod, naming the event it sends:
+// the file of one kept for it, or {} without any.
 func (m model) runLocalView() string {
+	r := m.state.runLocal
+	event := []styles.Span{styles.S("with ", styles.ToneFaint), styles.B(cmpOr(r.event, defaultEvent), styles.ToneText)}
+	if r.event == "" {
+		event = append(event, styles.S(": no events are kept for it", styles.ToneFaint))
+	}
 	return dialog("run "+m.state.function.name+" against prod?", styles.ToneWarning,
+		styles.Render(event...),
+		"",
 		styles.Muted("it runs on this machine with what prod deployed, its data included."),
 		"",
-		confirmButtons(m.state.runLocal.selected, styles.ToneWarning),
+		confirmButtons(r.selected, styles.ToneWarning),
 	)
 }

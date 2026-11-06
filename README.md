@@ -11,7 +11,7 @@
 > [!NOTE]
 > koldstart has no release yet: 0.1.0 is next. Everything below is built; the plan is in [#1](https://github.com/kontrolplane/koldstart/issues/1).
 
-Here is an http api in typescript and a queue worker in go, sharing a table. [examples/full-featured](./examples/full-featured) is a complete version of it, with the handlers:
+Here is an http api in typescript and a queue worker in go, sharing a table. Neither function sets a runtime or handler: koldstart infers them from the function's name and its files, `src/api.ts` and `cmd/worker/`, as [conventions](docs/configuration.md#conventions) describes. [examples/full-featured](./examples/full-featured) is a complete version of it, with the handlers:
 
 ```pkl
 amends "package://github.com/kontrolplane/koldstart/releases/download/v0.1.0/koldstart@0.1.0#/Project.pkl"
@@ -23,11 +23,9 @@ region = "eu-west-1"
 
 functions {
   ["api"] {
-    runtime = "nodejs22.x"
-    handler = "src/api.handler"
     memory = if (kdst.stage == "prod") 1024 else 256
     environment {
-      ["API_KEY"] = kdst.ssm("/orders/api-key")
+      ["API_KEY"] = kdst.param("api-key")
     }
     link { ["orders"] = "read" }
     events {
@@ -36,8 +34,6 @@ functions {
     }
   }
   ["worker"] {
-    runtime = "provided.al2023"
-    handler = "./cmd/worker"
     link { ["orders"] = "readwrite" }
     events {
       new kdst.Queue { queue = kdst.ref("jobs", "Arn"); batchSize = 10 }
@@ -63,7 +59,7 @@ resources {
 
 The file amends `Project.pkl`, which gives you type checking and completion in any editor with a pkl plugin, and imports `kdst.pkl` for what goes inside functions and resources: `kdst.stage`, `kdst.ref()`, the secrets and the events.
 
-`kdst.stage` is whatever `--stage` was set to, so one file describes every stage; here the api gets more memory in `prod`. `link` lets a function use a resource: its role may read or write it, and its name and arn arrive as `ORDERS_NAME` and `ORDERS_ARN`. `resources` takes any `AWS::*` type, created through the cloud control api. `kdst.ref()` reads an attribute of a resource once it exists, and `kdst.ssm()` is read from parameter store during the deploy.
+`kdst.stage` is whatever `--stage` was set to, so one file describes every stage; here the api gets more memory in `prod`. `link` lets a function use a resource: its role may read or write it, and its name and arn arrive as `ORDERS_NAME` and `ORDERS_ARN`. `resources` takes any `AWS::*` type, created through the cloud control api. `kdst.ref()` reads an attribute of a resource once it exists, and `kdst.param("api-key")` is read from parameter store during the deploy, as `/orders/prod/api-key` for `prod`.
 
 ```bash
 kdst plan --stage prod
@@ -97,30 +93,35 @@ go install github.com/kontrolplane/koldstart/cmd/koldstart@latest
 alias kdst=koldstart
 ```
 
-koldstart evaluates configuration with the `pkl` binary. It uses one on the `PATH`, or the one `KOLDSTART_PKL` points at; without either, it downloads the version it pins to `~/.cache/koldstart` on first use and checks it against the checksum built into koldstart.
+koldstart evaluates configuration with the `pkl` binary. It uses the one `KOLDSTART_PKL` points at, or a `pkl` 0.30 or later on the `PATH`; without either, it downloads the version it pins to `~/.cache/koldstart`, or `$XDG_CACHE_HOME/koldstart`, on first use and checks it against the checksum built into koldstart.
 
 Once released, koldstart installs with `brew install kontrolplane/tap/koldstart`, which installs `kdst` and pkl with it, as binaries for linux and macos on the [GitHub releases](https://github.com/kontrolplane/koldstart/releases), and as a container image, `ghcr.io/kontrolplane/koldstart`, for linux/amd64 and linux/arm64. The image holds koldstart, pkl, go and uv, so it builds typescript, javascript, go and python functions; node and docker are not in it, so `typecheck`, `invoke --local`, `offline` and container image functions run elsewhere.
 
 ## getting started
 
-`init` starts a project: a `koldstart.pkl` with one function behind `GET /hello`, its handler in typescript, or go or python with `--template go` or `--template python`, and the entries koldstart needs in `.gitignore`. It keeps any file that is there already.
+`init` starts a project: a `koldstart.pkl` with one function behind `GET /hello`, its handler in typescript, or go or python with `--template go` or `--template python`, and the entries koldstart needs in `.gitignore`. It keeps any other file that is there already, and writes over a `koldstart.pkl` only with `--force`.
 
 ```bash
 kdst init orders
 cd orders
 ```
 
-From there, or with a `koldstart.pkl` like the one above, a handler for each function. Without `--stage`, every command works on `dev`. The first plan lists everything as a create: each function with its role and log group, the http api with its routes, the queue mapping, the table and the queue.
+Until 0.1.0 is released, the schema package the file amends cannot be downloaded: point its `amends` and `import` at `pkl/Project.pkl` and `pkl/kdst.pkl` of a checkout of this repository instead.
+
+Without `--stage`, every command works on `dev`. The first plan lists everything as a create: here the function with its role and log group, and the http api with its route, integration and permission. A project like the one above has the queue mapping, the table and the queue too.
 
 ```bash
 kdst plan
 kdst deploy
 ```
 
-The first deploy in an account and region also creates the state bucket. When it finishes, it prints the outputs, the url of the http api among them:
+`plan` prints a line for each change, `+` to create, `~` to update, `-/+` to replace and `-` to delete, and counts them: `7 to create`. `deploy` prints the same plan and asks before applying it. While it applies, a line on stderr says what was done to each resource and how long it took, `✓ function/api  created in 1.2s`, and it ends with what it did, `deployed orders/dev in 9.8s: 7 created`. `plan -o json` prints the plan as one json object, for a script to check before a deploy.
+
+The first deploy in an account and region also creates the state bucket. When it finishes, it prints the outputs, the url of the http api, `httpApiUrl`, among them. `outputs` prints them again, and `-o json` prints them as one json object for a script:
 
 ```bash
 kdst outputs
+curl "$(kdst outputs -o json | jq -r .httpApiUrl)/hello"
 ```
 
 Invoke a function with an event from a file or inline, and follow its logs:
@@ -130,13 +131,19 @@ kdst invoke -f api --path events/get-order.json
 kdst logs -f api --tail
 ```
 
-After changing only a function's code, deploy just that function. It replaces the code in place, and refuses when the function's configuration changed too:
+On a terminal, `invoke` indents and colours the json the function returned, and piped it prints it byte for byte, so `kdst invoke -f api | jq` works. A function that fails prints its error and stack trace on stderr and exits with 1. `logs` shows a line of json from a structured logger, such as powertools, pino or zap, with its level and message first, and `-o json` prints each event as one json object a line:
+
+```bash
+kdst logs -f api --since 1h -o json | jq -r 'select(.fields.level == "ERROR") | .message'
+```
+
+After changing only a function's code, deploy just that function. It replaces the code in place without asking, and refuses when the function's configuration changed too:
 
 ```bash
 kdst deploy function -f api
 ```
 
-`remove` deletes everything the stage deployed, after asking you to type the stage name. Tables, buckets and other resources that hold data are left in place, and the next deploy of the stage takes them over again:
+`remove` deletes everything the stage deployed, after listing it and asking you to type the stage name. Tables, buckets and other resources that hold data are left in place and listed, and the next deploy of the stage takes them over again:
 
 ```bash
 kdst remove
@@ -164,7 +171,7 @@ One app can read another's outputs with `kdst.stageOutput("payments", kdst.stage
 
 ## secrets
 
-`kdst.ssm("/path")` reads a parameter from ssm parameter store, `kdst.secretsmanager("name")` reads a secret from secrets manager, and `.field("key")` takes one key of a json secret. They are read during the deploy and become environment variables of the function, so anyone who can read the function's configuration can read them too. Their values never go into the state.
+`kdst.param("api-key")` reads the parameter `/<app>/<stage>/api-key` from ssm parameter store, `kdst.secret("db")` reads the secret `<app>/<stage>/db` from secrets manager, and `.field("key")` takes one key of a json secret. For a full name or arn, such as one every stage shares, use `kdst.ssm("/path")` and `kdst.secretsmanager("name")`. They are read during the deploy and become environment variables of the function, so anyone who can read the function's configuration can read them too. Their values never go into the state.
 
 To keep a secret out of the configuration, add `.readAtRuntime()`: the variable then holds the arn of the parameter or secret, the function's role may read it, and the function reads it itself. With a `.field()`, a second variable, `<NAME>_KEY`, says which key to take.
 
@@ -240,7 +247,7 @@ jobs:
 
 The image runs as root, so the checkout it builds in is writable. To run it on your machine, pass your own user, so the files it writes stay yours: `docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" ghcr.io/kontrolplane/koldstart:0.1 plan`.
 
-`--yes` applies the plan without asking, which a deploy without a terminal needs. The role needs permission to manage what the configuration describes, and to read and write the state bucket. When a job is cancelled halfway, running it again finishes the deploy. When the runner itself was killed and the lock was left behind, `kdst unlock --stage prod` releases it.
+`--yes` applies the plan without asking, which a deploy without a terminal needs. Without a terminal, progress is a plain line for each resource as it finishes, and one still going after 30 seconds says so every 30 seconds. The role needs permission to manage what the configuration describes, and to read and write the state bucket. A cancelled job gets a SIGTERM, which stops the deploy, records what it did and releases the lock: running it again finishes the deploy. When the runner itself was killed and the lock was left behind, a deploy names who holds it and the url of their run, and `kdst unlock --stage prod --yes` releases it.
 
 ## what ends up in your account
 
@@ -264,7 +271,7 @@ Everything koldstart creates is tagged with its app, stage and node, together wi
 | `init [directory]`               | start a project: a `koldstart.pkl`, a handler and the `.gitignore` entries      |
 | `package`                        | build and zip every function, without deploying                                 |
 | `plan`                           | show what a deploy would create, change and delete, `--refresh` to read aws too  |
-| `deploy`                         | build, upload, and apply the plan                                               |
+| `deploy`                         | build, upload and apply the plan                                                |
 | `deploy function -f <fn>`        | deploy only the code of one function                                            |
 | `remove`                         | delete everything the stage deployed, leaving resources that hold data in place |
 | `import <resource> <identifier>` | take over a resource koldstart did not create                                   |
@@ -276,6 +283,8 @@ Everything koldstart creates is tagged with its app, stage and node, together wi
 | `ui`                             | open the terminal interface                                                     |
 | `unlock`                         | release a stage's lock left by a deploy that did not finish                     |
 | `version`                        | print the version                                                               |
+| `completion <shell>`             | print the completion script for bash, fish, powershell or zsh                   |
+| `help [command]`                 | print the help of a command                                                     |
 
 ## flags
 
@@ -285,16 +294,27 @@ Everything koldstart creates is tagged with its app, stage and node, together wi
 | `--config`, `-c` | `KOLDSTART_CONFIG`   | configuration file, defaults to `koldstart.pkl`                 |
 | `--profile`      | `AWS_PROFILE`        | aws profile from the shared aws config                          |
 | `--region`       | `AWS_REGION`         | aws region, takes precedence over `region` in the configuration |
-| `--debug`        |                      | write debug logs to `debug.log`                                 |
-| `--version`      |                      | print the version and exit                                      |
-| `--help`, `-h`   |                      | print the flags and exit                                        |
+| `--debug`        |                      | write debug logs to `debug.log` in the current directory        |
+| `--version`      |                      | print the version and exit, as `kdst --version`                 |
+| `--help`, `-h`   |                      | print the help of the command and exit                          |
 
 Credentials come from the standard aws chain: environment variables, the shared config and credentials files, sso, and the role of the machine or ci job koldstart runs on.
+
+A few more environment variables change what koldstart does:
+
+| environment variable                 | description                                                                  |
+| ------------------------------------ | ---------------------------------------------------------------------------- |
+| `KOLDSTART_PKL`                      | the pkl binary to evaluate configuration with                                |
+| `AWS_ENDPOINT_URL`                   | an endpoint for every aws api, such as an emulator; `endpoint_url` in a profile does the same, as in [hack/floci/aws-config](./hack/floci/aws-config) |
+| `NO_COLOR`                           | no colour in the output of `plan`, `deploy`, `remove`, `invoke` and `logs`   |
+| `VISUAL`, `EDITOR`                   | the editor `ui` edits events in, `vi` without either                         |
+
+A command that fails exits with 1, and a command line that is refused, such as an unknown flag, with 2. One that ctrl+c or SIGTERM stops before it is done, such as a deploy, exits with 130; `logs --tail` and `offline`, which run until they are stopped, exit with 0.
 
 ## documentation
 
 - [configuration](./docs/configuration.md): the pkl schema, functions, events, resources, references, stages and secrets
-- [how it works](./docs/how-it-works.md): planning, applying, state, locking and what happens when a deploy fails
+- [how it works](./docs/how-it-works.md): planning, applying, the output for scripts, state, locking and what happens when a deploy fails
 - [terminal interface](./docs/ui.md): the views and keys of `kdst ui`
 - [migrating from the serverless framework](./docs/migrating.md): what `kdst migrate` converts and what it leaves to you
 

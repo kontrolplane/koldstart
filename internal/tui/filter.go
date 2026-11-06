@@ -17,6 +17,8 @@ type filterBox struct {
 	active bool
 	input  textinput.Model
 	text   string
+	// label names it in the frame: filter, or search for one that finds rather than hides.
+	label string
 }
 
 func newFilterBox(placeholder string) filterBox {
@@ -28,6 +30,16 @@ func newFilterBox(placeholder string) filterBox {
 	return filterBox{input: input}
 }
 
+// newSearchBox is a filterBox that searches: it finds what it holds rather than hiding the rest.
+func newSearchBox(placeholder string) filterBox {
+	f := newFilterBox(placeholder)
+	f.label = "search"
+	return f
+}
+
+// name is what the frame calls it.
+func (f filterBox) name() string { return cmpOr(f.label, "filter") }
+
 func (f *filterBox) open() tea.Cmd {
 	f.active = true
 	f.input.SetValue(f.text)
@@ -35,14 +47,16 @@ func (f *filterBox) open() tea.Cmd {
 	return f.input.Focus()
 }
 
-// update takes a key while the filter is active. It reports whether the filter text changed.
-func (f *filterBox) update(msg tea.KeyPressMsg, k keys.KeyMap) (bool, tea.Cmd) {
+// update takes a key while the filter is active, or another message for its input, as the blink
+// of its cursor or a paste. It reports whether the filter text changed.
+func (f *filterBox) update(msg tea.Msg, k keys.KeyMap) (bool, tea.Cmd) {
+	press, _ := msg.(tea.KeyPressMsg)
 	switch {
-	case key.Matches(msg, k.View):
+	case key.Matches(press, k.View):
 		f.active = false
 		f.input.Blur()
 		return false, nil
-	case key.Matches(msg, k.Back):
+	case key.Matches(press, k.Back):
 		f.active = false
 		f.input.Blur()
 		f.input.SetValue("")
@@ -79,6 +93,7 @@ func (f filterBox) matches(fields ...string) bool {
 	return false
 }
 
+// view draws the filter as it is typed.
 func (f filterBox) view(width int, k keys.KeyMap) string {
 	f.input.SetWidth(max(10, width-30))
 	return styles.Accent("/ ") + f.input.View() + "  " + hints(hint(k.View, "apply"), hint(k.Back, "clear"))

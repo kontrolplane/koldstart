@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -17,12 +18,14 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awsmiddleware "github.com/aws/aws-sdk-go-v2/aws/middleware"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	lambdatypes "github.com/aws/aws-sdk-go-v2/service/lambda/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	"github.com/kontrolplane/koldstart/internal/config"
 	"github.com/kontrolplane/koldstart/internal/engine"
+	"github.com/kontrolplane/koldstart/internal/local"
 	"github.com/kontrolplane/koldstart/internal/provider/cloudcontrol"
 	"github.com/kontrolplane/koldstart/internal/state"
 )
@@ -58,6 +61,11 @@ type StageRef struct {
 
 func (r StageRef) String() string { return r.App + "/" + r.Stage }
 
+// Compare orders stages by app, stage and region, as Stages lists them.
+func (r StageRef) Compare(o StageRef) int {
+	return cmp.Or(cmp.Compare(r.App, o.App), cmp.Compare(r.Stage, o.Stage), cmp.Compare(r.Region, o.Region))
+}
+
 // StageSummary is what the list of stages shows of one.
 type StageSummary struct {
 	StageRef
@@ -87,10 +95,12 @@ type Invocation struct {
 	// Error is the kind of error the function failed with, or "".
 	Error    string
 	Duration time.Duration
+	// RequestID is the id lambda gave the invocation, "" for one on this machine.
+	RequestID string
 }
 
-// maxLogEvents bounds the log lines one read returns, keeping the newest.
-const maxLogEvents = 2000
+// MaxLogEvents bounds the log lines one read of LogsBetween returns, keeping the newest.
+const MaxLogEvents = 2000
 
 // openConsole connects to the account of the global flags. The configuration here is loaded
 // when there is one, for its app and region; one that does not load is reported, not fatal.
@@ -141,13 +151,12 @@ func (c *Console) Local(ref StageRef) bool {
 }
 
 // EventsDir is where the events to invoke a function with are kept: .koldstart/events/<function>
-// in the project, or in this directory without one.
+// in the project, or "" without a project here, as there is nowhere they belong.
 func (c *Console) EventsDir(function string) string {
-	root := "."
-	if c.project != nil {
-		root = c.project.Root
+	if c.project == nil {
+		return ""
 	}
-	return filepath.Join(root, ".koldstart", "events", function)
+	return filepath.Join(c.project.Root, ".koldstart", "events", function)
 }
 
 // backend returns the state bucket of a region, or nil when it has none. Only a bucket that
@@ -234,9 +243,7 @@ func (c *Console) Stages(ctx context.Context) ([]StageSummary, error) {
 		})
 	}
 	wg.Wait()
-	slices.SortFunc(out, func(a, b StageSummary) int {
-		return cmp.Or(cmp.Compare(a.App, b.App), cmp.Compare(a.Stage, b.Stage), cmp.Compare(a.Region, b.Region))
-	})
+	slices.SortFunc(out, func(a, b StageSummary) int { return a.Compare(b.StageRef) })
 	return out, nil
 }
 
@@ -285,7 +292,7 @@ func (c *Console) Version(ctx context.Context, ref StageRef, id string) (*state.
 		return nil, err
 	}
 	if rb.backend == nil {
-		return nil, fmt.Errorf("no state bucket in %s", ref.Region)
+		return nil, fmt.Errorf("no state bucket in %s: nothing is deployed there yet", ref.Region)
 	}
 	return rb.backend.ReadVersion(ctx, ref.App, ref.Stage, id)
 }
@@ -301,6 +308,7 @@ func (c *Console) Invoke(ctx context.Context, ref StageRef, function string, pay
 		return Invocation{}, fmt.Errorf("invoking %s: %w", function, err)
 	}
 	inv := Invocation{Payload: out.Payload, Error: aws.ToString(out.FunctionError), Duration: time.Since(started)}
+	inv.RequestID, _ = awsmiddleware.GetRequestIDMetadata(out.ResultMetadata)
 	if logs, err := base64.StdEncoding.DecodeString(aws.ToString(out.LogResult)); err == nil {
 		inv.Logs = string(logs)
 	}
@@ -333,6 +341,9 @@ func (c *Console) InvokeLocal(ctx context.Context, ref StageRef, function string
 	if err != nil {
 		inv.Error = err.Error()
 	}
+	if failed, ok := errors.AsType[*local.FunctionError](err); ok && len(result) == 0 {
+		inv.Payload, _ = json.Marshal(failed)
+	}
 	return inv, nil
 }
 
@@ -353,7 +364,7 @@ func (c *Console) stored(ctx context.Context, ref StageRef) (*stage, error) {
 		return nil, err
 	}
 	if rb.backend == nil {
-		return nil, fmt.Errorf("no state bucket in %s", ref.Region)
+		return nil, fmt.Errorf("no state bucket in %s: nothing is deployed there yet", ref.Region)
 	}
 	p := &project{Project: &config.Project{App: ref.App, Stage: ref.Stage, Region: ref.Region}}
 	s := &stage{project: p, sess: rb.sess, backend: rb.backend, exists: true}
@@ -376,8 +387,9 @@ func (c *Console) Plan(ctx context.Context, ref StageRef, function string, refre
 }
 
 // Deploy takes the stage's lock, plans again with the zips uploaded, refreshed when the plan
-// shown was, and applies the plan when it is the one shown, telling onEvent as each node starts and finishes. When the configuration
-// or the state changed since, it applies nothing and returns the new plan, with applied false.
+// shown was, and applies the plan when it is the one shown, telling onEvent as each node starts
+// and finishes. When the configuration or the state changed since, it applies nothing and
+// returns the new plan, with applied false. A failed apply says what to run to finish it.
 func (c *Console) Deploy(ctx context.Context, ref StageRef, function string, shown *engine.Plan, onEvent func(engine.Event)) (plan *engine.Plan, applied bool, err error) {
 	s, err := c.stage(ctx, ref, true)
 	if err != nil {
@@ -406,11 +418,7 @@ func (c *Console) Deploy(ctx context.Context, ref StageRef, function string, sho
 		_, err = s.applyPlan(ctx, e, plan, nodes, onEvent)
 		return plan, true, c.existsHint(err)
 	}
-	e.OnEvent = onEvent
-	if plan.HasChanges() {
-		err = e.Apply(ctx, plan, nodes, engine.NewStore(s.backend, s.state, s.etag, whoIsDeploying()))
-	}
-	return plan, true, err
+	return plan, true, s.applyFunction(ctx, e, plan, nodes, function, onEvent)
 }
 
 // existsHint says how to take over a resource that exists already, outside koldstart.

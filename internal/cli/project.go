@@ -20,6 +20,24 @@ type project struct {
 	Path string
 }
 
+// shownPath is the configuration's path as errors show it: relative to the working directory.
+func (p *project) shownPath() string {
+	return relative(p.Path)
+}
+
+// relative returns path relative to the working directory, or as it is when it cannot be.
+func relative(path string) string {
+	wd, err := os.Getwd()
+	if err != nil {
+		return path
+	}
+	rel, err := filepath.Rel(wd, path)
+	if err != nil {
+		return path
+	}
+	return rel
+}
+
 // loadProject evaluates the configuration the global flags name, for their stage.
 func loadProject(ctx context.Context, opts *Options) (*project, error) {
 	path, err := filepath.Abs(opts.Config)
@@ -27,7 +45,7 @@ func loadProject(ctx context.Context, opts *Options) (*project, error) {
 		return nil, fmt.Errorf("finding %s: %w", opts.Config, err)
 	}
 	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
-		return nil, fmt.Errorf("no %s here: write one, see docs/configuration.md, or pass --config", opts.Config)
+		return nil, fmt.Errorf("no %s here: run %s init to start a project, or pass --config", opts.Config, opts.binary())
 	} else if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", opts.Config, err)
 	}
@@ -35,7 +53,7 @@ func loadProject(ctx context.Context, opts *Options) (*project, error) {
 	if err != nil {
 		return nil, fmt.Errorf("finding pkl: %w", err)
 	}
-	p, err := config.Load(ctx, pkl.Evaluator{Binary: binary}, path, opts.Stage)
+	p, err := config.Load(ctx, pkl.Evaluator{Binary: binary}, relative(path), opts.Stage)
 	if err != nil {
 		return nil, err
 	}

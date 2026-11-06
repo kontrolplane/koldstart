@@ -3,6 +3,9 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
+	"runtime/debug"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -78,9 +81,11 @@ type metricsLoadedMsg struct {
 	err     error
 }
 
+// queuesLoadedMsg is the depth of each queue read, and why each of the others could not be.
 type queuesLoadedMsg struct {
 	gen    int
 	depths map[string]cli.QueueDepth
+	errs   map[string]error
 }
 
 type liveLoadedMsg struct {
@@ -92,9 +97,9 @@ type liveLoadedMsg struct {
 type invokedMsg struct {
 	gen   int
 	event string
-	local bool
-	inv   cli.Invocation
-	err   error
+	// result is what the invocation returned, read off the interface's goroutine, as a payload
+	// can be megabytes.
+	result invocationResult
 }
 
 type planLoadedMsg struct {
@@ -211,7 +216,9 @@ func (m model) loadLogs(since, until time.Time, how logsHow) (model, tea.Cmd) {
 }
 
 // startTail follows the function's logs with a live tail, until the function is left or
-// following stops, its lines sent on a channel the returned command reads from.
+// following stops, its lines sent on a channel the returned command reads from. Once it is
+// stopped nothing may read the channel, so a send gives up when its context ends rather than
+// leave the goroutine waiting.
 func (m model) startTail() (model, tea.Cmd) {
 	f := &m.state.function
 	if f.logGroupARN == "" || f.logs.tailing || f.logs.noTail {
@@ -222,17 +229,43 @@ func (m model) startTail() (model, tea.Cmd) {
 	ch := make(chan tea.Msg, 64)
 	f.logs.tailGen, f.logs.tailing, f.logs.stopTail = gen, true, cancel
 	ref, arn := m.state.stage.ref, f.logGroupARN
+	send := func(msg tea.Msg) {
+		select {
+		case ch <- msg:
+		case <-ctx.Done():
+		}
+	}
 	go func() {
 		defer close(ch)
-		err := m.b.Tail(ctx, ref, arn, func(lines []cli.LogEvent) {
-			select {
-			case ch <- tailMsg{gen: gen, lines: lines, ch: ch}:
-			case <-ctx.Done():
+		defer cancel()
+		var err error
+		defer func() {
+			if r := recover(); r != nil {
+				err = recovered("the live tail of the logs", r)
 			}
-		})
-		ch <- tailMsg{gen: gen, ended: true, err: err, ch: ch}
+			send(tailMsg{gen: gen, ended: true, err: err, ch: ch})
+		}()
+		err = m.b.Tail(ctx, ref, arn, func(lines []cli.LogEvent) { send(tailMsg{gen: gen, lines: lines, ch: ch}) })
 	}()
 	return m, waitFor(ch)
+}
+
+// panicError is a panic in a goroutine of the interface, turned into the error of what it was
+// doing.
+type panicError struct {
+	value any
+}
+
+func (e *panicError) Error() string {
+	return fmt.Sprintf("a bug in koldstart stopped it (%v): run %s ui --debug and report what debug.log says", e.value, binary)
+}
+
+// recovered turns a panic in a goroutine the interface started into an error, logging its stack.
+// Bubble Tea restores the terminal after a panic only in its own goroutines: one in a deploy or a
+// tail would end the program with the terminal still raw and the stage's lock held.
+func recovered(what string, value any) error {
+	slog.Error("panic", "in", what, "value", fmt.Sprint(value), "stack", string(debug.Stack()))
+	return &panicError{value: value}
 }
 
 // stopTail ends the live tail of the logs, if one runs.
@@ -258,11 +291,12 @@ func (m model) loadFunctionLive() (model, tea.Cmd) {
 	}
 }
 
-// loadMetrics reads the metrics of the stage's functions, by their names in lambda.
+// loadMetrics reads the metrics of the stage's functions, by their names in lambda, unless a read
+// of them is still out.
 func (m model) loadMetrics() (model, tea.Cmd) {
 	s := &m.state.stage
 	names := s.lambdaNames()
-	if len(names) == 0 {
+	if len(names) == 0 || s.metricsGen != s.metricsAnswered {
 		return m, nil
 	}
 	gen := m.next()
@@ -276,11 +310,12 @@ func (m model) loadMetrics() (model, tea.Cmd) {
 	}
 }
 
-// loadQueues reads how many messages each queue of the stage holds, by its id in the state.
+// loadQueues reads how many messages each queue of the stage holds, by its id in the state,
+// unless a read of them is still out.
 func (m model) loadQueues() (model, tea.Cmd) {
 	s := &m.state.stage
 	queues := s.queueURLs()
-	if len(queues) == 0 {
+	if len(queues) == 0 || s.queuesGen != s.queuesAnswered {
 		return m, nil
 	}
 	gen := m.next()
@@ -289,13 +324,16 @@ func (m model) loadQueues() (model, tea.Cmd) {
 	ctx, cancel := m.withTimeout(loadTimeout)
 	return m, func() tea.Msg {
 		defer cancel()
-		depths := map[string]cli.QueueDepth{}
+		depths, errs := map[string]cli.QueueDepth{}, map[string]error{}
 		for id, url := range queues {
-			if d, err := m.b.Queue(ctx, ref, url); err == nil {
-				depths[id] = d
+			d, err := m.b.Queue(ctx, ref, url)
+			if err != nil {
+				errs[id] = err
+				continue
 			}
+			depths[id] = d
 		}
-		return queuesLoadedMsg{gen: gen, depths: depths}
+		return queuesLoadedMsg{gen: gen, depths: depths, errs: errs}
 	}
 }
 
@@ -317,6 +355,9 @@ func (m model) invoke(event string, payload []byte, local bool) (model, tea.Cmd)
 	gen := m.next()
 	f := &m.state.function
 	f.invokeGen, f.invoking = gen, true
+	r := f.results[event]
+	r.running, r.local = true, local
+	f.results[event] = r
 	ref, lambdaName, name := m.state.stage.ref, f.lambdaName, f.name
 	ctx, cancel := m.withTimeout(invokeTimeout)
 	return m, func() tea.Msg {
@@ -328,7 +369,7 @@ func (m model) invoke(event string, payload []byte, local bool) (model, tea.Cmd)
 		} else {
 			inv, err = m.b.Invoke(ctx, ref, lambdaName, payload)
 		}
-		return invokedMsg{gen: gen, event: event, local: local, inv: inv, err: err}
+		return invokedMsg{gen: gen, event: event, result: newResult(inv, local, err)}
 	}
 }
 
@@ -338,7 +379,8 @@ func (m model) loadPlan() (model, tea.Cmd) {
 	p := &m.state.plan
 	p.gen = gen
 	ref, function, remove, refresh := p.ref, p.function, p.remove, p.refresh
-	ctx, cancel := m.withTimeout(10 * time.Minute)
+	ctx, cancel := m.withTimeout(planTimeout)
+	p.cancel = cancel
 	return m, func() tea.Msg {
 		defer cancel()
 		var plan *engine.Plan
@@ -352,8 +394,13 @@ func (m model) loadPlan() (model, tea.Cmd) {
 	}
 }
 
+// planTimeout bounds building and planning, which bundles every function first.
+const planTimeout = 10 * time.Minute
+
 // apply applies the plan on screen in the background, sending its progress on a channel the
-// returned command reads from. Quitting stops it and waits for it.
+// returned command reads from. Quitting stops it and waits for it: once the interface is gone
+// nothing reads the channel, so a send gives up when the context ends rather than hold the apply,
+// and its lock, open.
 func (m model) apply() tea.Cmd {
 	p := m.state.plan
 	ch := make(chan tea.Msg, 64)
@@ -361,18 +408,30 @@ func (m model) apply() tea.Cmd {
 	if p.remove {
 		name = "the remove of " + p.ref.String()
 	}
+	ctx := m.ctx
+	send := func(msg tea.Msg) {
+		select {
+		case ch <- msg:
+		case <-ctx.Done():
+		}
+	}
 	m.ops.start(name)
 	go func() {
 		defer m.ops.done(name)
 		defer close(ch)
-		onEvent := func(ev engine.Event) { ch <- progressMsg{event: ev, ch: ch} }
+		defer func() {
+			if r := recover(); r != nil {
+				send(appliedMsg{err: recovered(name, r)})
+			}
+		}()
+		onEvent := func(ev engine.Event) { send(progressMsg{event: ev, ch: ch}) }
 		var msg appliedMsg
 		if p.remove {
-			msg.plan, msg.applied, msg.gone, msg.err = m.b.Remove(m.ctx, p.ref, p.plan, onEvent)
+			msg.plan, msg.applied, msg.gone, msg.err = m.b.Remove(ctx, p.ref, p.plan, onEvent)
 		} else {
-			msg.plan, msg.applied, msg.err = m.b.Deploy(m.ctx, p.ref, p.function, p.plan, onEvent)
+			msg.plan, msg.applied, msg.err = m.b.Deploy(ctx, p.ref, p.function, p.plan, onEvent)
 		}
-		ch <- msg
+		send(msg)
 	}()
 	return waitFor(ch)
 }

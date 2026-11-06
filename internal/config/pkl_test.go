@@ -94,6 +94,140 @@ func TestStageFile(t *testing.T) {
 	}
 }
 
+// TestStageSecrets checks kdst.param() and kdst.secret() load as the full names of the app and
+// the stage evaluated, a field and readAtRuntime kept, and kdst.ssm() as it is.
+func TestStageSecrets(t *testing.T) {
+	ev := evaluator(t)
+	dir := t.TempDir()
+	schema, err := filepath.Abs(filepath.Join("..", "..", "pkl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := `amends "` + filepath.Join(schema, "Project.pkl") + `"
+
+import "` + filepath.Join(schema, "kdst.pkl") + `"
+
+app = "shop"
+
+functions {
+  ["api"] {
+    runtime = "nodejs22.x"
+    handler = "src/api.handler"
+    environment {
+      ["API_KEY"] = kdst.param("api-key")
+      ["DB_PASSWORD"] = kdst.secret("db").field("password").readAtRuntime()
+      ["SHARED"] = kdst.ssm("shared-key")
+    }
+  }
+}
+`
+	path := filepath.Join(dir, "koldstart.pkl")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		stage string
+		want  map[string]config.Secret
+	}{
+		{stage: "dev", want: map[string]config.Secret{
+			"API_KEY":     {Source: config.SourceSSM, Name: "/shop/dev/api-key"},
+			"DB_PASSWORD": {Source: config.SourceSecretsManager, Name: "shop/dev/db", Key: "password", AtRuntime: true},
+			"SHARED":      {Source: config.SourceSSM, Name: "shared-key"},
+		}},
+		{stage: "prod", want: map[string]config.Secret{
+			"API_KEY":     {Source: config.SourceSSM, Name: "/shop/prod/api-key"},
+			"DB_PASSWORD": {Source: config.SourceSecretsManager, Name: "shop/prod/db", Key: "password", AtRuntime: true},
+			"SHARED":      {Source: config.SourceSSM, Name: "shared-key"},
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.stage, func(t *testing.T) {
+			p, err := config.Load(context.Background(), ev, path, tt.stage)
+			if err != nil {
+				t.Fatal(err)
+			}
+			env := p.Functions["api"].Environment
+			for key, want := range tt.want {
+				if s := env[key].Secret; s == nil || *s != want {
+					t.Errorf("%s = %+v, want %+v", key, s, want)
+				}
+			}
+		})
+	}
+}
+
+// TestLoadInfers checks functions that set neither runtime nor handler evaluate, and load with
+// what the files beside the configuration, or in the root LoadIn is given, say.
+func TestLoadInfers(t *testing.T) {
+	ev := evaluator(t)
+	schema, err := filepath.Abs(filepath.Join("..", "..", "pkl", "Project.pkl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := `amends "` + schema + `"
+
+app = "shop"
+
+functions {
+  ["api"] { memory = 256 }
+  ["worker"] {}
+  ["report"] { runtime = "nodejs24.x" }
+}
+`
+	root := t.TempDir()
+	files := map[string]string{
+		"koldstart.pkl":      body,
+		"src/api.ts":         "export const handler = async () => 1\n",
+		"src/report.ts":      "export const handler = async () => 1\n",
+		"cmd/worker/main.go": "package main\n",
+	}
+	for name, content := range files {
+		file := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(file), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(file, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	elsewhere := filepath.Join(t.TempDir(), "koldstart.pkl")
+	if err := os.WriteFile(elsewhere, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string][2]string{
+		"api":    {config.RuntimeNode22, "src/api.handler"},
+		"worker": {config.RuntimeGo, "./cmd/worker"},
+		"report": {config.RuntimeNode24, "src/report.handler"},
+	}
+	tests := []struct {
+		name string
+		load func() (*config.Project, error)
+	}{
+		{name: "beside", load: func() (*config.Project, error) {
+			return config.Load(context.Background(), ev, filepath.Join(root, "koldstart.pkl"), "dev")
+		}},
+		{name: "in root", load: func() (*config.Project, error) {
+			return config.LoadIn(context.Background(), ev, elsewhere, root, "dev")
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, err := tt.load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			for name, w := range want {
+				if fn := p.Functions[name]; fn.Runtime != w[0] || fn.Handler != w[1] {
+					t.Errorf("%s: runtime %q, handler %q, want %q, %q", name, fn.Runtime, fn.Handler, w[0], w[1])
+				}
+			}
+		})
+	}
+	if _, err := config.Load(context.Background(), ev, elsewhere, "dev"); err == nil || !strings.Contains(err.Error(), "function api: no src/api.ts, src/api.py or cmd/api/ here") {
+		t.Errorf("Load without the files = %v, want an error that says what is looked for", err)
+	}
+}
+
 // TestSchemaRefuses checks the schema reports mistakes, pointing at the line.
 func TestSchemaRefuses(t *testing.T) {
 	ev := evaluator(t)
@@ -108,16 +242,20 @@ func TestSchemaRefuses(t *testing.T) {
 		{name: "url without auth", body: `functions { ["api"] { runtime = "nodejs22.x"; handler = "x.y"; url = new {} } }`, want: "auth"},
 		{name: "stage set", body: `stage = "prod"`, want: "fixed"},
 		{name: "output of a short account", body: `functions { ["api"] { runtime = "nodejs22.x"; handler = "x.y"; environment { ["X"] = new StageOutput { app = "a"; stage = "b"; output = "c"; account = "1234" } } } }`, want: `\d{12}`},
+		{name: "param with a leading slash", body: `functions { ["api"] { runtime = "nodejs22.x"; handler = "x.y"; environment { ["X"] = kdst.param("/orders/key") } } }`, want: `kdst.param("/orders/key"): the name goes after /<app>/<stage>/: drop the leading /, or use kdst.ssm("/orders/key")`},
+		{name: "secret with dot dot", body: `functions { ["api"] { runtime = "nodejs22.x"; handler = "x.y"; environment { ["X"] = kdst.secret("../prod/db") } } }`, want: `kdst.secret("../prod/db"): the name goes after <app>/<stage>/ and has no empty segments or ..`},
+		{name: "secret with an empty segment", body: `functions { ["api"] { runtime = "nodejs22.x"; handler = "x.y"; environment { ["X"] = kdst.secret("db//main").field("password") } } }`, want: "kdst.secretsmanager() for the full name"},
 	}
 	dir := t.TempDir()
 	schema, err := filepath.Abs(filepath.Join("..", "..", "pkl", "Project.pkl"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	kdst := filepath.Join(filepath.Dir(schema), "kdst.pkl")
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			path := filepath.Join(dir, strings.ReplaceAll(tt.name, " ", "-")+".pkl")
-			body := "amends \"" + schema + "\"\n\napp = \"orders\"\n" + tt.body + "\n"
+			body := "amends \"" + schema + "\"\n\nimport \"" + kdst + "\"\n\napp = \"orders\"\n" + tt.body + "\n"
 			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 				t.Fatal(err)
 			}

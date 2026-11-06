@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
 	"net/http"
 	"os"
@@ -88,8 +89,10 @@ func cacheDir() (string, error) {
 //nolint:gosec // the user names the binary in $KOLDSTART_PKL
 func Find(ctx context.Context) (string, error) {
 	if path := os.Getenv(EnvBinary); path != "" {
-		if _, err := os.Stat(path); err != nil {
-			return "", fmt.Errorf("%s=%s: %w", EnvBinary, path, err)
+		if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
+			return "", fmt.Errorf("%s is %s, which does not exist: set it to a pkl binary, or unset it", EnvBinary, path)
+		} else if err != nil {
+			return "", fmt.Errorf("%s is %s: %w", EnvBinary, path, err)
 		}
 		return path, nil
 	}
@@ -120,6 +123,11 @@ func Download(ctx context.Context, dir, goos, goarch string) (string, error) {
 	return download(ctx, http.DefaultClient, downloadURL, dir, name)
 }
 
+// installHint says how to give koldstart a pkl when it cannot download one.
+func installHint() string {
+	return fmt.Sprintf("install pkl %d.%d or newer on the PATH, or set %s to a pkl binary", minimum[0], minimum[1], EnvBinary)
+}
+
 // download fetches the release binary name from base into dir, unless it is there already, and
 // checks it against its pinned checksum before it can be run.
 //
@@ -134,7 +142,7 @@ func download(ctx context.Context, client *http.Client, base, dir, name string) 
 		return path, nil
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
-		return "", fmt.Errorf("creating the cache for pkl: %w", err)
+		return "", fmt.Errorf("creating the cache for pkl: %w: set XDG_CACHE_HOME to a directory you can write to", err)
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
@@ -145,11 +153,11 @@ func download(ctx context.Context, client *http.Client, base, dir, name string) 
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("downloading pkl %s: %w", Version, err)
+		return "", fmt.Errorf("downloading pkl %s: %w\ncheck this machine is online, or %s", Version, err, installHint())
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("downloading pkl %s from %s: %s", Version, base+name, resp.Status)
+		return "", fmt.Errorf("downloading pkl %s from %s: %s\n%s", Version, base+name, resp.Status, installHint())
 	}
 
 	tmp, err := os.CreateTemp(filepath.Dir(path), "pkl-*")
@@ -160,13 +168,13 @@ func download(ctx context.Context, client *http.Client, base, dir, name string) 
 	hash := sha256.New()
 	if _, err := io.Copy(io.MultiWriter(tmp, hash), resp.Body); err != nil {
 		_ = tmp.Close()
-		return "", fmt.Errorf("downloading pkl %s: %w", Version, err)
+		return "", fmt.Errorf("downloading pkl %s: %w\ncheck this machine is online, or %s", Version, err, installHint())
 	}
 	if err := tmp.Close(); err != nil {
 		return "", err
 	}
 	if got := hex.EncodeToString(hash.Sum(nil)); got != want {
-		return "", fmt.Errorf("pkl %s from %s has sha256 %s, want %s: not using it", Version, base+name, got, want)
+		return "", fmt.Errorf("pkl %s from %s has sha256 %s, want %s: not using it\ntry again, or %s", Version, base+name, got, want, installHint())
 	}
 	if err := os.Chmod(tmp.Name(), 0o755); err != nil {
 		return "", err
@@ -232,9 +240,9 @@ func (e Evaluator) EvalJSON(ctx context.Context, path string, props map[string]s
 	if err := cmd.Run(); err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) && stderr.Len() > 0 {
-			return nil, &EvalError{Path: path, Message: strings.TrimSpace(stderr.String())}
+			return nil, &EvalError{Path: path, Message: report(stderr.String(), path)}
 		}
-		return nil, fmt.Errorf("running pkl on %s: %w", path, err)
+		return nil, fmt.Errorf("running %s on %s: %w\ncheck it runs, or set %s to another pkl binary", e.Binary, path, err, EnvBinary)
 	}
 	return stdout.Bytes(), nil
 }
@@ -247,5 +255,50 @@ type EvalError struct {
 }
 
 func (e *EvalError) Error() string {
-	return fmt.Sprintf("evaluating %s:\n%s", e.Path, e.Message)
+	if e.downloadFailed() {
+		return fmt.Sprintf("pkl cannot evaluate %s: a package it uses did not download; check this machine is online, and that the version it names exists\n\n%s", e.Path, e.Message)
+	}
+	return fmt.Sprintf("pkl cannot evaluate %s: fix it where pkl points\n\n%s", e.Path, e.Message)
+}
+
+// downloadFailed reports whether pkl failed to fetch a package or module, rather than finding
+// the module wrong.
+func (e *EvalError) downloadFailed() bool {
+	for _, marker := range []string{"when making request", "Error connecting to host", "UnknownHostException"} {
+		if strings.Contains(e.Message, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// stdlibFrame marks a frame of pkl's report in pkl's own standard library, which says nothing of
+// where the module is wrong.
+const stdlibFrame = "(https://github.com/apple/pkl/blob/"
+
+// report tidies pkl's report of a module it could not evaluate: without its "Pkl Error" banner
+// or the frames in pkl's standard library, and with the files of the module's directory named
+// as path names the module, not as absolute file uris.
+func report(stderr, path string) string {
+	lines := strings.Split(strings.TrimSpace(stderr), "\n")
+	if len(lines) > 0 && strings.Contains(lines[0], "Pkl Error") {
+		lines = lines[1:]
+	}
+	blocks := strings.Split(strings.Join(lines, "\n"), "\n\n")
+	kept := blocks[:0]
+	for _, block := range blocks {
+		if !strings.Contains(block, stdlibFrame) {
+			kept = append(kept, block)
+		}
+	}
+	out := strings.TrimSpace(strings.Join(kept, "\n\n"))
+	if abs, err := filepath.Abs(path); err == nil {
+		dir := filepath.Dir(path)
+		shown := ""
+		if dir != "." {
+			shown = dir + string(filepath.Separator)
+		}
+		out = strings.ReplaceAll(out, "file://"+filepath.Dir(abs)+string(filepath.Separator), shown)
+	}
+	return out
 }

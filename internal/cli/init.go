@@ -7,7 +7,6 @@ import (
 	"io"
 	"path/filepath"
 	"slices"
-	"strings"
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/spf13/cobra"
@@ -25,17 +24,21 @@ func initCommand(name string, opts *Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "init [directory]",
 		Short: "start a project: a koldstart.pkl, a handler and the .gitignore entries",
-		Long: fmt.Sprintf(`init writes a koldstart.pkl with one function behind an http route, GET /hello, and its
-handler in typescript, go or python, into the directory, this one without it. It adds .koldstart/build/ and
-.koldstart/local/ to .gitignore. Files that are there already are kept; koldstart.pkl is refused
-unless --force is passed.
+		Long: fmt.Sprintf(`init writes a koldstart.pkl with one function behind GET /hello, and its handler in typescript,
+go or python, into the directory, this one without it, and adds .koldstart/build/ and
+.koldstart/local/ to .gitignore. It keeps any other file that is there already, and writes over a
+koldstart.pkl only with --force.
 
-The app is named after the directory, and deploys to --region, or the region of the aws profile,
-or %s.`, defaultRegion),
+The app is named after the directory, or --app, and deploys to --region, the region of the aws
+profile, or %s.`, defaultRegion),
 		Example: fmt.Sprintf(`  %[1]s init
-  %[1]s init orders --template go --region eu-west-1`, name),
+  %[1]s init orders --template go --region eu-west-1
+  %[1]s init --app orders --template python`, name),
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if !slices.Contains(scaffold.Templates, template) {
+				return usage(cmd, fmt.Errorf("-t %q: want %s", template, orList(scaffold.Templates)))
+			}
 			dir := "."
 			if len(args) == 1 {
 				dir = args[0]
@@ -49,19 +52,24 @@ or %s.`, defaultRegion),
 					return fmt.Errorf("%s does not make an app name: pass --app", filepath.Base(abs))
 				}
 			}
+			region := initRegion(cmd.Context(), opts)
 			res, err := scaffold.Write(scaffold.Options{
-				Dir: abs, App: app, Region: initRegion(cmd.Context(), opts), Template: template, Version: schemaVersion(), Force: force,
+				Dir: abs, App: app, Region: region, Template: template, Version: schemaVersion(), Force: force,
 			})
+			if err != nil && dir != "." {
+				return fmt.Errorf("starting a project in %s: %w", dir, err)
+			}
 			if err != nil {
 				return err
 			}
-			printInit(cmd.OutOrStdout(), name, dir, template, res)
+			printInit(cmd.OutOrStdout(), name, dir, app, region, template, res)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&app, "app", "", "the app's name, the directory's by default")
-	cmd.Flags().StringVarP(&template, "template", "t", scaffold.Node, "the handler's language: "+strings.Join(scaffold.Templates, " or "))
+	cmd.Flags().StringVarP(&template, "template", "t", scaffold.Node, "the language: "+orList(scaffold.Templates))
 	cmd.Flags().BoolVar(&force, "force", false, "write over a koldstart.pkl that is there")
+	_ = cmd.RegisterFlagCompletionFunc("template", cobra.FixedCompletions(scaffold.Templates, cobra.ShellCompDirectiveNoFileComp))
 	return cmd
 }
 
@@ -82,7 +90,9 @@ func initRegion(ctx context.Context, opts *Options) string {
 	return cmp.Or(cfg.Region, defaultRegion)
 }
 
-func printInit(w io.Writer, name, dir, template string, res scaffold.Result) {
+// printInit says what init wrote and kept, the app and its region, and what to run next.
+func printInit(w io.Writer, name, dir, app, region, template string, res scaffold.Result) {
+	_, _ = fmt.Fprintf(w, "started %s, which deploys to %s\n\n", app, region)
 	for _, f := range res.Written {
 		_, _ = fmt.Fprintf(w, "  wrote %s\n", f)
 	}
@@ -90,18 +100,42 @@ func printInit(w io.Writer, name, dir, template string, res scaffold.Result) {
 		_, _ = fmt.Fprintf(w, "  kept  %s, which was there already\n", f)
 	}
 	if len(res.Gitignore) > 0 {
-		_, _ = fmt.Fprintf(w, "  added %s to .gitignore\n", strings.Join(res.Gitignore, " and "))
+		_, _ = fmt.Fprintf(w, "  added %s to .gitignore\n", andList(res.Gitignore))
 	}
 	_, _ = fmt.Fprintln(w, "\nnext:")
+	for _, step := range nextSteps(name, dir, template, res) {
+		_, _ = fmt.Fprintln(w, "  "+step)
+	}
+}
+
+// nextSteps are the commands to run after init, each with what it does in a column of its own.
+func nextSteps(name, dir, template string, res scaffold.Result) []string {
+	type step struct{ run, does string }
+	var steps []step
 	if dir != "." {
-		_, _ = fmt.Fprintf(w, "  cd %s\n", dir)
+		steps = append(steps, step{"cd " + dir, ""})
 	}
 	if template == scaffold.Go {
 		if slices.Contains(res.Written, "go.mod") {
-			_, _ = fmt.Fprintln(w, "  go mod tidy")
+			steps = append(steps, step{"go mod tidy", "fetch aws-lambda-go, which the handler imports"})
 		} else {
-			_, _ = fmt.Fprintln(w, "  go get github.com/aws/aws-lambda-go")
+			steps = append(steps, step{"go get github.com/aws/aws-lambda-go", "add it to go.mod, as the handler imports it"})
 		}
 	}
-	_, _ = fmt.Fprintf(w, "  %[1]s plan\n  %[1]s deploy\n", name)
+	steps = append(steps, step{name + " plan", "see what a deploy creates"}, step{name + " deploy", "deploy it, and print the url of GET /hello"})
+	width := 0
+	for _, s := range steps {
+		if s.does != "" {
+			width = max(width, len(s.run))
+		}
+	}
+	lines := make([]string, 0, len(steps))
+	for _, s := range steps {
+		if s.does == "" {
+			lines = append(lines, s.run)
+			continue
+		}
+		lines = append(lines, padRight(s.run, width)+"    "+s.does)
+	}
+	return lines
 }

@@ -1,11 +1,15 @@
 package tui
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -121,6 +125,102 @@ func TestStaleLoadsAreDropped(t *testing.T) {
 	}
 }
 
+// TestFooterKeepsTheCause checks an error too long for the footer keeps what failed and the end
+// of the error from aws, which says why, instead of being cut before either is reached.
+func TestFooterKeepsTheCause(t *testing.T) {
+	err := errors.New(`reading the state of orders/dev: operation error S3: GetObject, exceeded maximum number of attempts, 3, https response error StatusCode: 0, RequestID: , HostID: , request send failed, Get "http://127.0.0.1:4566/koldstart-state/orders/dev/state.json": dial tcp 127.0.0.1:4566: connect: connection refused`)
+	for _, width := range []int{80, 120, 200} {
+		t.Run(fmt.Sprint(width), func(t *testing.T) {
+			m := started(t, newFake(t))
+			m, _ = update(t, m, tea.WindowSizeMsg{Width: width, Height: 30})
+			m, _ = update(t, m, stageLoadedMsg{gen: m.state.stage.gen, err: err})
+			lines := strings.Split(screen(m), "\n")
+			footer := lines[len(lines)-1]
+			wants := []string{"✗ could not read the state of orders/dev: …", "connect: connection refused"}
+			if width == 80 {
+				wants = []string{"✗ …", "connect: connection refused"}
+			}
+			for _, want := range wants {
+				if !strings.Contains(footer, want) {
+					t.Errorf("the footer does not say %q:\n%s", want, footer)
+				}
+			}
+			if w := ansi.StringWidth(footer); w > width {
+				t.Errorf("the footer is %d wide, wider than %d", w, width)
+			}
+		})
+	}
+}
+
+// TestCutError checks an error is cut in its middle, keeping what failed and why.
+func TestCutError(t *testing.T) {
+	tests := []struct {
+		name  string
+		s     string
+		width int
+		want  string
+	}{
+		{name: "fits", s: "could not list the stages: denied", width: 40, want: "could not list the stages: denied"},
+		{name: "head and end", s: "could not list the stages: operation error S3: ListObjectsV2, connection refused", width: 60, want: "could not list the stages: …istObjectsV2, connection refused"},
+		{name: "head too long", s: "could not read the state of a stage with a very long name indeed: connection refused", width: 30, want: "…me indeed: connection refused"},
+		{name: "head leaves too little", s: "could not read the state of orders/dev: dial tcp: connection refused", width: 50, want: "…state of orders/dev: dial tcp: connection refused"},
+		{name: "no colon", s: "the deploy is running and cannot be stopped from here at all", width: 20, want: "…ed from here at all"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := cutError(tt.s, tt.width)
+			if got != tt.want {
+				t.Errorf("cutError = %q, want %q", got, tt.want)
+			}
+			if ansi.StringWidth(got) > tt.width {
+				t.Errorf("cutError is %d wide, want at most %d", ansi.StringWidth(got), tt.width)
+			}
+		})
+	}
+}
+
+// TestRefreshWaitsForSlowLoads checks a refresh tick does not ask again for what the last one is
+// still reading: a read slower than the refresh used to be overtaken every time, so its result
+// was dropped as stale and the page never changed, nor showed the error of an unreachable aws.
+func TestRefreshWaitsForSlowLoads(t *testing.T) {
+	tests := []struct {
+		name string
+		keys []string
+		gens func(m model) []int
+	}{
+		{name: "overview", keys: []string{"q"}, gens: func(m model) []int { return []int{m.state.overview.gen} }},
+		{name: "stage", keys: []string{"shift+tab"}, gens: func(m model) []int {
+			return []int{m.state.stage.gen, m.state.stage.historyGen}
+		}},
+		{name: "function", keys: []string{"enter"}, gens: func(m model) []int {
+			f := m.state.function
+			return []int{m.state.stage.gen, f.liveGen, f.logs.gen, m.state.stage.metricsGen}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := pressKeys(t, started(t, newFake(t)), tt.keys...)
+			before := tt.gens(m)
+			m, slow := m.refresh()
+			asked := tt.gens(m)
+			if slices.Equal(asked, before) {
+				t.Fatal("the first tick read nothing again")
+			}
+			m, again := m.refresh()
+			if got := tt.gens(m); !slices.Equal(got, asked) || len(run(again)) != 0 {
+				t.Errorf("a tick with the last refresh still out asked again: generations %v, then %v", asked, got)
+			}
+			m = settle(t, m, slow)
+			if m.refreshedAt.IsZero() && tt.name != "function" {
+				t.Error("the slow refresh did not land")
+			}
+			if m, next := m.refresh(); slices.Equal(tt.gens(m), asked) || next == nil {
+				t.Error("once the slow refresh landed, the next tick did not read again")
+			}
+		})
+	}
+}
+
 // TestDeploy checks d plans, ctrl+s applies the plan shown with each node's progress, and a
 // plan that changed since is shown again instead of applied.
 func TestDeploy(t *testing.T) {
@@ -173,7 +273,7 @@ func TestDeploy(t *testing.T) {
 // TestDeployOnlyTheProject checks a stage of another app than the project here is not planned.
 func TestDeployOnlyTheProject(t *testing.T) {
 	m := pressKeys(t, started(t, newFake(t)), "q")
-	m = pressKeys(t, m, "enter")
+	m = pressKeys(t, m, "g", "enter")
 	if m.state.stage.ref != billingDev {
 		t.Fatalf("opened %v, want billing/dev", m.state.stage.ref)
 	}
@@ -205,6 +305,9 @@ func TestRemove(t *testing.T) {
 	if f.removes != 1 || m.page != overviewPage || m.status != "removed orders/dev" {
 		t.Fatalf("%d removes, page %v, status %q", f.removes, m.page, m.status)
 	}
+	if s, _ := m.selectedStage(); s.StageRef != ordersDev || !notDeployed(s) {
+		t.Errorf("after the remove the cursor is on %v, want the project's stage, listed as not deployed", s.StageRef)
+	}
 }
 
 // TestUnlock checks ctrl+x shows who holds the lock, n keeps it and y releases it.
@@ -212,7 +315,7 @@ func TestUnlock(t *testing.T) {
 	f := newFake(t)
 	f.locks[ordersDev] = &state.LockInfo{Who: "ci", Where: "github", Operation: "deploy", Since: time.Now().Add(-time.Hour)}
 	m := pressKeys(t, started(t, f), "ctrl+x")
-	if m.page != unlockPage || !strings.Contains(screen(m), "held by") {
+	if m.page != unlockPage || !strings.Contains(screen(m), "ci on github has been running deploy since") {
 		t.Fatalf("ctrl+x: page %v", m.page)
 	}
 	m = pressKeys(t, m, "n")
@@ -304,6 +407,39 @@ func TestHistory(t *testing.T) {
 	}
 }
 
+// TestHistoryAfterDeploy checks the history is read again when the state was written since it
+// was read, and each time its tab is shown, so a deploy made meanwhile is listed.
+func TestHistoryAfterDeploy(t *testing.T) {
+	tests := []struct {
+		name string
+		then func(t *testing.T, m model) model
+	}{
+		{name: "the state is written", then: func(t *testing.T, m model) model {
+			m, cmd := m.loadStage()
+			return settle(t, m, cmd)
+		}},
+		{name: "the tab is shown again", then: func(t *testing.T, m model) model {
+			return pressKeys(t, m, "shift+tab")
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFake(t)
+			m := pressKeys(t, started(t, f), "shift+tab", "tab")
+			f.mu.Lock()
+			written := testState(ordersDev)
+			written.Serial++
+			f.states[ordersDev] = written
+			f.history = append([]state.ObjectVersion{{ID: "v3", LastModified: time.Now().Add(time.Hour), Latest: true}}, f.history...)
+			f.mu.Unlock()
+			m = tt.then(t, m)
+			if n := len(m.state.stage.history); n != 3 {
+				t.Errorf("%d versions listed, want the deploy made since too", n)
+			}
+		})
+	}
+}
+
 // TestStateChanges checks the changes between two versions name what was added, removed and
 // changed.
 func TestStateChanges(t *testing.T) {
@@ -349,6 +485,11 @@ func layoutPages(t *testing.T, w, h int) map[string]model {
 		m = pressKeys(t, m, k)
 		pages["stage "+stageTabs[m.state.stage.tab]] = m
 	}
+	if out, ok := pages["stage outputs"]; ok {
+		pages["output"] = pressKeys(t, out, "G", "enter")
+		pages["output scrolled"] = pressKeys(t, pages["output"], "G")
+		pages["resources folded"] = pressKeys(t, pages["stage resources"], "space")
+	}
 	m = pressKeys(t, m, "enter")
 	pages["version"] = m
 	m = pressKeys(t, m, "q", "tab", "tab", "enter")
@@ -367,6 +508,7 @@ func layoutPages(t *testing.T, w, h int) map[string]model {
 	pages["plan"] = p
 	pages["plan applied"] = pressKeys(t, p, "ctrl+s")
 	pages["plan diff"] = pressKeys(t, p, "enter")
+	pages["plan inputs"] = pressKeys(t, p, "j", "j", "enter")
 	pages["unlock"] = pressKeys(t, m, "q", "ctrl+x")
 	pages["remove"] = pressKeys(t, m, "q", "ctrl+d")
 	o := pressKeys(t, m, "q", "q")
@@ -384,7 +526,7 @@ func layoutPages(t *testing.T, w, h int) map[string]model {
 // TestLayout draws every page at terminal sizes from below the minimum to large, and checks no
 // line is wider than the terminal and there are no more lines than it is high.
 func TestLayout(t *testing.T) {
-	sizes := [][2]int{{20, 5}, {60, 20}, {78, 22}, {80, 24}, {100, 30}, {120, 40}, {200, 60}}
+	sizes := [][2]int{{1, 1}, {20, 5}, {60, 20}, {77, 21}, {78, 22}, {79, 23}, {80, 24}, {100, 30}, {120, 40}, {200, 60}, {300, 80}}
 	for _, size := range sizes {
 		w, h := size[0], size[1]
 		for name, m := range layoutPages(t, w, h) {
@@ -405,7 +547,7 @@ func TestLayout(t *testing.T) {
 // TestEscapesNeverReachTheTerminal puts escape sequences in every string that comes from aws or
 // the state, and checks none reaches the view unescaped.
 func TestEscapesNeverReachTheTerminal(t *testing.T) {
-	evil := "x\x1b]8;;https://evil.example/\x07y\x1b[2J\x9b"
+	evil := "x\x1b]8;;https://evil.example/\x07y\x1b[2J\x9b\u202e\xff"
 	f := newFake(t)
 	f.states = map[cli.StageRef]*state.State{ordersDev: testState(ordersDev)}
 	st := f.states[ordersDev]
@@ -413,10 +555,13 @@ func TestEscapesNeverReachTheTerminal(t *testing.T) {
 	st.Resources["resource/"+evil] = &state.Resource{Type: evil, PhysicalID: evil, Attributes: map[string]string{evil: evil}}
 	st.Resources["function/api"].Attributes["Arn"] = evil
 	st.Outputs[evil] = evil
+	st.Outputs["json"] = `{"` + evil + `":["` + evil + `"]}`
+	f.versions = map[string]*state.State{"v2": st}
 	f.locks[ordersDev] = &state.LockInfo{Who: evil, Where: evil, Operation: evil, Since: time.Now()}
 	f.logs = []cli.LogEvent{{Time: time.Now(), Message: evil}}
 	f.result = cli.Invocation{Payload: []byte(evil), Logs: evil, Error: evil}
-	f.plan = &engine.Plan{Changes: []engine.Change{{ID: evil, Action: engine.Update, Fields: []string{evil}, Before: map[string]any{evil: evil}, After: map[string]any{evil: "y"}}}}
+	f.plan = &engine.Plan{Changes: []engine.Change{{ID: evil, Action: engine.Update, Fields: []string{evil}, Before: map[string]any{evil: evil}, After: map[string]any{evil: "y"}},
+		{ID: evil + "2", Action: engine.Create, After: map[string]any{evil: evil}}}}
 	f.live = map[string]any{evil: evil}
 	f.function = cli.FunctionState{State: evil, StateReason: evil, LastUpdate: evil, LastUpdateReason: evil, Runtime: evil}
 	f.logs = []cli.LogEvent{
@@ -429,7 +574,7 @@ func TestEscapesNeverReachTheTerminal(t *testing.T) {
 	check := func(name string, m model) {
 		t.Helper()
 		v := m.render()
-		if strings.Contains(v, "\x1b]") || strings.Contains(v, "\x07") || strings.Contains(v, "\x1b[2J") || strings.ContainsRune(v, '\u009b') {
+		if strings.Contains(v, "\x1b]") || strings.Contains(v, "\x07") || strings.Contains(v, "\x1b[2J") || strings.ContainsRune(v, '\u009b') || strings.ContainsRune(v, '\u202e') || !utf8.ValidString(v) {
 			t.Errorf("%s: an escape sequence reached the view", name)
 		}
 	}
@@ -439,17 +584,21 @@ func TestEscapesNeverReachTheTerminal(t *testing.T) {
 		m = pressKeys(t, m, k)
 		check("stage "+stageTabs[m.state.stage.tab], m)
 	}
+	check("resources folded", pressKeys(t, m, "shift+tab", "space"))
+	check("output json", pressKeys(t, m, "j", "enter"))
+	check("output", pressKeys(t, m, "j", "j", "enter"))
+	check("history", pressKeys(t, m, "tab"))
 	r := pressKeys(t, m, "tab", "tab", "enter")
 	check("resource", r)
 	fn := pressKeys(t, m, "tab", "tab", "enter")
-	check("function", fn)
-	check("overview", fn)
+	check("function overview", fn)
 	check("logs", pressKeys(t, fn, "tab"))
 	inv := pressKeys(t, fn, "tab", "tab")
 	check("invocations", inv)
 	check("invocation", pressKeys(t, inv, "enter"))
 	check("resource in aws", pressKeys(t, r, "tab"))
 	check("plan diff", pressKeys(t, m, "d", "enter"))
+	check("plan inputs", pressKeys(t, m, "d", "j", "enter"))
 	check("invoke", pressKeys(t, fn, "tab", "tab", "i"))
 	check("unlock", pressKeys(t, m, "ctrl+x"))
 	check("plan", pressKeys(t, m, "d"))
@@ -460,6 +609,31 @@ func TestEscapesNeverReachTheTerminal(t *testing.T) {
 	o.error = ""
 	o, _ = o.setStatus(evil, 0)
 	check("status", o)
+}
+
+// TestPlanResumeNotes checks a change of a node a deploy left unfinished says it finishes it, or,
+// as it deletes or leaves it, only that it was left unfinished.
+func TestPlanResumeNotes(t *testing.T) {
+	tests := []struct {
+		name   string
+		action engine.Action
+		want   string
+		not    string
+	}{
+		{name: "update", action: engine.Update, want: "finishing what a deploy started", not: "left it unfinished"},
+		{name: "delete", action: engine.Delete, want: "a deploy left it unfinished", not: "finishing"},
+		{name: "keep", action: engine.Keep, want: "a deploy left it unfinished", not: "finishing"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFake(t)
+			f.plan = &engine.Plan{App: "orders", Stage: "dev", Changes: []engine.Change{{ID: "resource/jobs", Action: tt.action, Resume: true}}}
+			v := screen(pressKeys(t, started(t, f), "d"))
+			if !strings.Contains(v, tt.want) || strings.Contains(v, tt.not) {
+				t.Errorf("the plan does not say %q, or says %q:\n%s", tt.want, tt.not, v)
+			}
+		})
+	}
 }
 
 // TestRefreshPlan checks r on a plan plans again with every resource read from aws, and shows

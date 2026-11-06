@@ -9,7 +9,7 @@ A shop's orders, in [koldstart.pkl](./koldstart.pkl): an http api in typescript 
 | a schedule            | `report`, every hour, enabled in `prod`                     |
 | a table and a queue   | `resources`, through cloud control                          |
 | `link`                | the access and the variables, such as `ORDERS_NAME`         |
-| a secret              | `API_KEY`, from ssm parameter store, for each stage         |
+| a secret              | `API_KEY`, `kdst.param("api-key")`: `/shop/<stage>/api-key` |
 | a stage of its own    | `memory` is larger in `prod`                                |
 | an output             | `ordersTable`                                               |
 | events to invoke with | [.koldstart/events](./.koldstart/events), for `kdst ui`     |

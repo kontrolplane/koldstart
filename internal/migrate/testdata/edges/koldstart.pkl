@@ -1,4 +1,6 @@
-// Converted from serverless.yml by kdst migrate. Look for TODO: what it could not convert.
+// Converted from serverless.yml by kdst migrate.
+// A TODO comment marks each thing it could not convert, or converted differently.
+
 amends "package://github.com/kontrolplane/koldstart/releases/download/v0.1.0/koldstart@0.1.0#/Project.pkl"
 
 import "package://github.com/kontrolplane/koldstart/releases/download/v0.1.0/koldstart@0.1.0#/kdst.pkl"
@@ -23,6 +25,9 @@ functions {
   ["reports"] {
     runtime = "python3.12"
     handler = "src/reports.build"
+    layers {
+      "arn:aws:lambda:eu-central-1:123456789012:layer:pandas:4"
+    }
     environment {
       ["REGION"] = module.region
       ["BUCKET"] = "\(module.app)-\(kdst.stage)-files"
@@ -31,9 +36,6 @@ functions {
       ["SHARED"] = kdst.stageOutput("shared", "prod", "QueueUrl")
       ["PAYMENTS"] = (kdst.stageOutput("payments", "prod", "ApiUrl")) { region = "us-east-1" }
       ["LOG_LEVEL"] = read?("env:LOG_LEVEL") ?? "info"
-    }
-    layers {
-      "arn:aws:lambda:eu-central-1:123456789012:layer:pandas:4"
     }
   }
   ["thumbs"] {
@@ -57,11 +59,14 @@ functions {
       ["LOG_LEVEL"] = read?("env:LOG_LEVEL") ?? "info"
     }
   }
-  // TODO: image runs a prebuilt image, which koldstart does not take: build it from its dockerfile. was: 123456789012.dkr.ecr.eu-central-1.amazonaws.com/legacy:latest
+  // TODO: koldstart builds images itself: give the function the dockerfile to build, with image { context; dockerfile }
+  // was: {image: {image: '123456789012.dkr.ecr.eu-central-1.amazonaws.com/legacy:latest'}}
   ["worker"] {
     runtime = "provided.al2023"
-    // TODO: the package to build, such as ./cmd/worker; serverless.yml had "bootstrap".
+    // TODO: set handler to the package to build, such as ./cmd/worker: koldstart builds go from source, not "bootstrap"
     handler = "./cmd/worker"
+    // TODO: build what the layers hold into the binary: a go function takes no layers
+    // was: ['arn:aws:lambda:eu-central-1:123456789012:layer:tools:1']
     environment {
       ["REGION"] = module.region
       ["BUCKET"] = "\(module.app)-\(kdst.stage)-files"
@@ -71,9 +76,8 @@ functions {
       ["PAYMENTS"] = (kdst.stageOutput("payments", "prod", "ApiUrl")) { region = "us-east-1" }
       ["LOG_LEVEL"] = read?("env:LOG_LEVEL") ?? "info"
     }
-    // TODO: a go function has no layers: build what they hold into the binary
-    // was: ['arn:aws:lambda:eu-central-1:123456789012:layer:tools:1']
   }
+  // TODO: renamed old-api, as a name takes no _ or .: update what calls the function by name
   ["old-api"] {
     runtime = "nodejs22.x"
     handler = "src/api.handler"
@@ -88,12 +92,15 @@ functions {
       ["LOG_LEVEL"] = read?("env:LOG_LEVEL") ?? "info"
       ["TOPIC"] = kdst.join(List("arn:aws:sns:\(module.region):", kdst.accountId, ":alerts"))
     }
+    // TODO: a function has no tags of its own: set them in tags, which every resource gets
+    // was: {owner: api}
   }
 }
 
 resources {
   ["Files"] {
     type = "AWS::S3::Bucket"
+    // TODO: retained, as koldstart has no Snapshot: take a snapshot before you remove it
     deletionPolicy = "retain"
     properties {
       BucketName = "\(module.app)-\(kdst.stage)-files"
@@ -104,13 +111,15 @@ resources {
         }
       }
     }
-    // TODO: DependsOn has no equivalent. was: Seeder
+    // TODO: koldstart orders resources by their refs: refer with kdst.ref() to what it must wait for
+    // was: Seeder
   }
-  // TODO: Custom::Seed is not an aws type cloud control creates
+  // TODO: cloud control creates AWS:: types only: do what the Custom::Seed did another way
   // was: {Type: 'Custom::Seed', Properties: {ServiceToken: !GetAtt SeedLambdaFunction.Arn}}
 }
 
 outputs {
+  // TODO: koldstart has no exports: read the output in other apps with kdst.stageOutput()
   ["FilesArn"] = kdst.ref("Files", "Arn")
   ["Joined"] = "a-b"
 }

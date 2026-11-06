@@ -1,7 +1,7 @@
 package tui
 
 import (
-	"time"
+	"slices"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
@@ -12,31 +12,58 @@ import (
 
 // overviewState is the list of every app and stage the account holds.
 type overviewState struct {
-	gen    int
-	loaded bool
+	gen int
+	// answered is the generation of the last load that came back; a refresh does not ask again
+	// while gen is still out, or a read slower than the refresh would be dropped every time.
+	answered int
+	loaded   bool
 	// opened says the project's stage was opened on start, which happens once.
 	opened bool
+	// failed says a load of the stages failed, so the next failure goes to the footer rather
+	// than raising the error again every refresh.
+	failed bool
+	// err is why the stages could not be listed, before they ever were.
+	err    string
 	stages []cli.StageSummary
 	shown  []cli.StageSummary
 	table  dataTable
 	filter filterBox
 }
 
+// overviewColumns are the columns of the stages. On a narrow terminal who deployed goes first,
+// then the count of resources: the region stays, as it tells apart a stage of the same name in
+// two regions.
 var overviewColumns = []column{
 	{title: "app", width: 14, grow: 2},
 	{title: "stage", width: 12, grow: 1},
-	{title: "region", width: 14, drop: 2},
+	{title: "region", width: 14, drop: 1},
 	{title: "deployed", width: 10},
 	{title: "by", width: 10, grow: 1, drop: 3},
-	{title: resourcesWord, width: 10, right: true, drop: 1},
+	{title: resourcesWord, width: 10, right: true, drop: 2},
 	{title: "lock", width: 10, grow: 1},
 }
 
 func newOverviewState() overviewState {
 	return overviewState{
-		table:  newTable(overviewColumns, "no stages yet: deploy one with kdst deploy"),
+		table:  newTable(overviewColumns, noStagesYet()),
 		filter: newFilterBox("filter by app, stage or region…"),
 	}
+}
+
+// noStagesYet is what the overview says when the account holds no stage.
+func noStagesYet() string {
+	return "no stages in this account yet: deploy one with " + binary + " deploy"
+}
+
+// emptyText is what the table says without a row: why, and the key that changes it.
+func (o overviewState) emptyText() string {
+	switch {
+	case !o.loaded && o.failed:
+		return "could not list the stages: " + o.err + " · r tries again"
+	case o.filter.text != "":
+		return noMatch("stage", o.filter.text)
+	}
+	return noStagesYet()
 }
 
 // notDeployed is the project's stage before its first deploy, listed so it can be planned.
@@ -44,7 +71,8 @@ func notDeployed(s cli.StageSummary) bool {
 	return s.DeployedAt.IsZero() && s.Resources == 0 && s.Retained == 0 && s.Err == nil
 }
 
-// withProject lists the project's stage when it has no state yet, in the region of the session.
+// withProject lists the project's stage when it has no state yet, in the region of the session,
+// in its place in the order of app, stage and region the stages come in.
 func (m model) withProject(stages []cli.StageSummary) []cli.StageSummary {
 	if m.project == "" {
 		return stages
@@ -54,7 +82,9 @@ func (m model) withProject(stages []cli.StageSummary) []cli.StageSummary {
 			return stages
 		}
 	}
-	return append([]cli.StageSummary{{StageRef: cli.StageRef{Region: m.ident.Region, App: m.project, Stage: m.projectStage}}}, stages...)
+	project := cli.StageSummary{StageRef: cli.StageRef{Region: m.ident.Region, App: m.project, Stage: m.projectStage}}
+	at, _ := slices.BinarySearchFunc(stages, project, func(a, b cli.StageSummary) int { return a.Compare(b.StageRef) })
+	return slices.Insert(slices.Clone(stages), at, project)
 }
 
 func (m model) updateOverviewTable() model {
@@ -73,6 +103,7 @@ func (m model) updateOverviewTable() model {
 		o.shown = append(o.shown, s)
 		rows = append(rows, overviewRow(s, s.App == m.project))
 	}
+	o.table.empty = o.emptyText()
 	o.table.setRows(rows)
 	if cur != nil {
 		for i, s := range o.shown {
@@ -84,6 +115,8 @@ func (m model) updateOverviewTable() model {
 	return m
 }
 
+// overviewRow draws a stage. One whose state or lock cannot be read says so in its lock column,
+// too narrow for the error, which enter shows in full as it reads the stage again.
 func overviewRow(s cli.StageSummary, local bool) tableRow {
 	app := text(s.App, styles.ToneText)
 	if local {
@@ -92,7 +125,7 @@ func overviewRow(s cli.StageSummary, local bool) tableRow {
 	row := tableRow{app, text(s.Stage, styles.ToneBody), text(s.Region, styles.ToneMuted)}
 	switch {
 	case s.Err != nil:
-		return append(row, text("unreadable", styles.ToneDanger), text("", styles.ToneFaint), text("", styles.ToneFaint), text(s.Err.Error(), styles.ToneDanger))
+		return append(row, text("-", styles.ToneFaint), text("", styles.ToneFaint), text("", styles.ToneFaint), cell{styles.S("✗ ", styles.ToneDanger), styles.S("unreadable", styles.ToneDanger)})
 	case notDeployed(s):
 		return append(row, text("not yet", styles.ToneFaint), text("", styles.ToneFaint), text("", styles.ToneFaint), text("", styles.ToneFaint))
 	}
@@ -105,6 +138,16 @@ func overviewRow(s cli.StageSummary, local bool) tableRow {
 		lock = cell{styles.S("● ", styles.ToneWarning), styles.S(s.Lock.Who+" "+s.Lock.Operation, styles.ToneWarning)}
 	}
 	return append(row, text(formatAgo(s.DeployedAt), styles.ToneBody), text(orDash(s.DeployedBy), styles.ToneMuted), resources, lock)
+}
+
+// selectStage puts the overview's cursor on ref, when it is listed, so going back from a stage,
+// also the project's that opened on start, lands on it.
+func (m model) selectStage(ref cli.StageRef) model {
+	o := &m.state.overview
+	if i := slices.IndexFunc(o.shown, func(s cli.StageSummary) bool { return s.StageRef == ref }); i >= 0 {
+		o.table.setCursor(i)
+	}
+	return m
 }
 
 // selectedStage is the stage under the cursor.
@@ -121,15 +164,22 @@ func (m model) applyStages(msg stagesLoadedMsg) (model, tea.Cmd) {
 	if msg.gen != o.gen {
 		return m, nil
 	}
+	o.answered = msg.gen
 	if m.page == overviewPage {
 		m.loading = false
 	}
 	if msg.err != nil {
-		return m.loadError("could not list the stages", msg.err, o.loaded)
+		onScreen := o.loaded || o.failed
+		o.failed = true
+		if !o.loaded {
+			o.err = msg.err.Error()
+		}
+		m = m.updateOverviewTable()
+		return m.loadError("could not list the stages", msg.err, onScreen)
 	}
 	o.stages, o.loaded = m.withProject(msg.stages), true
 	if m.page == overviewPage {
-		m.refreshedAt = time.Now()
+		m = m.markRead()
 	}
 	m = m.updateOverviewTable()
 	if !o.opened && m.page == overviewPage {

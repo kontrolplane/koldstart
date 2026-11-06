@@ -33,8 +33,6 @@ The package is released with koldstart, under the same version. Its schema has a
 ```pkl
 functions {
   ["api"] {
-    runtime = "nodejs22.x"
-    handler = "src/api.handler"
     memory = 512
     timeout = 10.s
     environment {
@@ -46,8 +44,8 @@ functions {
 
 | property              | default   | description                                                                                       |
 | --------------------- | --------- | ------------------------------------------------------------------------------------------------- |
-| `runtime`             |           | `nodejs22.x` or `nodejs24.x` for javascript and typescript, `provided.al2023` for go, `python3.12` or `python3.13` for python; none with an `image` |
-| `handler`             |           | for node and python, the file and its function, `src/api.handler`; for go, the package to build, `./cmd/worker`; none with an `image` |
+| `runtime`             | inferred  | `nodejs22.x` or `nodejs24.x` for javascript and typescript, `provided.al2023` for go, `python3.12` or `python3.13` for python; none with an `image`; see [conventions](#conventions) |
+| `handler`             | inferred  | for node and python, the file and its function, `src/api.handler`; for go, the package to build, `./cmd/worker`; none with an `image`; see [conventions](#conventions) |
 | `image`               |           | a container image to build and run instead, see [container images](#container-images)              |
 | `layers`              |           | lambda layers, by their version's arn, at most five; not for go or an image                         |
 | `memory`              | `1024`    | megabytes, from `128` to `10240`                                                                   |
@@ -66,6 +64,27 @@ functions {
 | `typecheck`           | `false`   | for typescript: run `tsc --noEmit` before bundling, which needs node and typescript installed       |
 
 Each function gets a role and a log group of its own. The role may write to the log group, and has what `link`, `permissions`, its events and its runtime secrets add.
+
+### conventions
+
+A function without an `image` that leaves out `runtime` and `handler` gets them from its name and the files of the project, here for `["api"]`:
+
+| file                                                                  | runtime           | handler           |
+| --------------------------------------------------------------------- | ----------------- | ----------------- |
+| `src/api.ts`, `.mts`, `.cts`, `.tsx`, `.js`, `.mjs`, `.cjs` or `.jsx` | `nodejs22.x`      | `src/api.handler` |
+| `src/api.py`                                                          | `python3.13`      | `src/api.handler` |
+| go files in `cmd/api/`                                                | `provided.al2023` | `./cmd/api`       |
+
+A function that sets `runtime` alone gets that runtime's handler, so `runtime = "nodejs24.x"` runs `src/api.handler`. One that sets `handler` alone gets the runtime of what it names: go for `./services/api` or a directory of go files, otherwise node or python for the file that is there. A function's page in `kdst ui` shows the runtime it ends up with, and the handler lambda runs.
+
+When none of the files is there, or more than one runtime fits, the configuration is refused before anything is built:
+
+```
+function api: no src/api.ts, src/api.py or cmd/api/ here: set runtime and handler
+function api: src/api.ts and src/api.py are both here: set runtime to nodejs22.x or python3.13
+```
+
+`kdst migrate` writes both, as the handlers of a serverless.yml rarely follow the convention.
 
 ### building
 
@@ -228,7 +247,7 @@ Resources that hold data are retained: `kdst remove` leaves them in place, and t
 }
 ```
 
-A plan that would replace a retained resource stops, because the new one starts empty. `--allow-replace` replaces it, and leaves the old one in place; when the new one needs the old one's name, give it another.
+A plan that would replace a retained resource stops, because the new one starts empty, and says which properties need a new one. `kdst plan --allow-replace` and `kdst deploy --allow-replace` replace it, and leave the old one in place; when the new one needs the old one's name, give it another.
 
 ### taking over a resource
 
@@ -271,7 +290,11 @@ outputs {
 }
 ```
 
-`kdst outputs` prints them, as does every deploy, with `httpApiUrl` and a `<function>Url` for each function url.
+Every deploy resolves them, records them in the state and prints them, with `httpApiUrl`, `webSocketUrl`, `httpDomainTarget` with a domain, and a `<function>Url` for each function url. `kdst outputs` prints what the last deploy recorded, one `name = value` a line, and `-o json` prints them as one json object, `{}` when there are none:
+
+```bash
+kdst outputs -o json | jq -r .table
+```
 
 ## stages
 
@@ -302,18 +325,30 @@ environment {
 }
 ```
 
-The state is read from the stage's bucket, `koldstart-<account>-<region>`, at `<app>/<stage>/state.json`, and only from a bucket that account owns. With a `role`, koldstart assumes it to read it, and the stage is in the role's account unless `account` says another. The role needs `s3:GetObject` on that key, and the deploying credentials need `sts:AssumeRole` on the role. Without a role, the deploying credentials read it themselves, which the bucket's policy has to allow for another account.
+The state is read from the stage's bucket, `koldstart-state-<account>-<region>`, at `<app>/<stage>/state.json`, and only from a bucket that account owns. With a `role`, koldstart assumes it to read it, and the stage is in the role's account unless `account` says another. The role needs `s3:GetObject` on that key, and the deploying credentials need `sts:AssumeRole` on the role. Without a role, the deploying credentials read it themselves, which the bucket's policy has to allow for another account.
 
 ## secrets
 
-`kdst.ssm("/path")` is read from ssm parameter store, and `kdst.secretsmanager("name")` from secrets manager; `.field("key")` takes one key of a json secret. They are read while planning and deploying, so a plan shows when one changed, and their values become environment variables of the function. Their values never go into the state.
+`kdst.param("name")` is read from ssm parameter store, and `kdst.secret("name")` from secrets manager, each under the app and stage; `.field("key")` takes one key of a json secret. They are read while planning and deploying, so a plan shows when one changed, and their values become environment variables of the function. Their values never go into the state.
 
 ```pkl
 environment {
-  ["API_KEY"] = kdst.ssm("/orders/api-key")
-  ["DB_USER"] = kdst.secretsmanager("orders-db").field("username")
-  ["DB_PASSWORD"] = kdst.secretsmanager("orders-db").field("password").readAtRuntime()
+  ["API_KEY"] = kdst.param("api-key")
+  ["DB_USER"] = kdst.secret("db").field("username")
+  ["DB_PASSWORD"] = kdst.secret("db").field("password").readAtRuntime()
+  ["SENTRY_DSN"] = kdst.ssm("/shared/sentry-dsn")
 }
 ```
+
+Each stage has its own parameters and secrets, named after the app and the stage:
+
+| helper                  | reads, for app `orders` on stage `prod`     |
+|-------------------------|---------------------------------------------|
+| `kdst.param("api-key")` | the ssm parameter `/orders/prod/api-key`    |
+| `kdst.secret("db")`     | the secrets manager secret `orders/prod/db` |
+
+The name has no leading `/`, no `..` and no empty segments, and the plan and `kdst ui` show the full name, as `(secret ssm:/orders/prod/api-key)`.
+
+For a parameter or secret by its full name or arn, such as one that every stage or another app shares, use `kdst.ssm("/path")` and `kdst.secretsmanager("name")`. They read the name as it is: `kdst.ssm("api-key")` reads the parameter `api-key`, and `kdst.ssm("/orders/\(kdst.stage)/api-key")` the one `kdst.param("api-key")` does.
 
 The values are visible to anyone who can read the function's configuration. With `.readAtRuntime()`, the variable holds the arn of the parameter or secret instead, the function's role may read it, and the function reads it itself; with a `.field()`, `<NAME>_KEY` says which key, here `DB_PASSWORD_KEY=password`. A parameter encrypted with a kms key of your own also needs `kms:Decrypt` on it, through `permissions`.

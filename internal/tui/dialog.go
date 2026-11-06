@@ -110,41 +110,62 @@ func overlay(page, card string) string {
 }
 
 // typedConfirm guards an action that cannot be undone behind typing a phrase, the name of the
-// stage it removes.
+// stage it removes. action is what enter then does, as remove orders/dev.
 type typedConfirm struct {
-	want  string
-	input textinput.Model
+	want   string
+	action string
+	input  textinput.Model
+	// tried is enter pressed on what does not match, until it is typed again.
+	tried bool
 }
 
-func newTypedConfirm(want string) (typedConfirm, tea.Cmd) {
+func newTypedConfirm(want, action string) (typedConfirm, tea.Cmd) {
 	input := textinput.New()
 	input.CharLimit = 255
 	input.SetWidth(min(max(24, ansi.StringWidth(want)+2), dialogTextWidth()-6))
 	input.Prompt = "› "
 	input.SetStyles(styles.TextInput())
 	cmd := input.Focus()
-	return typedConfirm{want: want, input: input}, cmd
+	return typedConfirm{want: want, action: action, input: input}, cmd
 }
 
 func (c typedConfirm) ok() bool {
 	return strings.TrimSpace(c.input.Value()) == c.want
 }
 
+// wrong reports whether what was typed cannot become the phrase, or enter was pressed on it.
+func (c typedConfirm) wrong() bool {
+	typed := strings.TrimSpace(c.input.Value())
+	if typed == "" || c.ok() {
+		return false
+	}
+	return c.tried || !strings.HasPrefix(c.want, typed)
+}
+
 func (c typedConfirm) update(msg tea.Msg) (typedConfirm, tea.Cmd) {
+	before := c.input.Value()
 	var cmd tea.Cmd
 	c.input, cmd = c.input.Update(msg)
+	if c.input.Value() != before {
+		c.tried = false
+	}
 	return c, cmd
 }
 
-// view asks for the phrase, and marks whether what was typed matches it.
+// view asks for the phrase, marks whether what was typed matches it, and says below what enter
+// does or that the phrase is not what was typed. The lines stay the same in number as it is
+// typed, so the dialog does not move.
 func (c typedConfirm) view() string {
 	mark := "  "
+	say := styles.Render(styles.S("esc cancels", styles.ToneFaint))
 	switch {
 	case c.ok():
 		mark = styles.Render(styles.S("✓ ", styles.ToneSuccess))
-	case c.input.Value() != "":
+		say = styles.Render(styles.S("enter to "+c.action, styles.ToneSuccess))
+	case c.wrong():
 		mark = styles.Render(styles.S("✗ ", styles.ToneDanger))
+		say = styles.Render(styles.S("that is not ", styles.ToneDanger), styles.B(c.want, styles.ToneDanger))
 	}
 	ask := styles.Render(styles.S("type ", styles.ToneFaint), styles.B(c.want, styles.ToneText), styles.S(" to confirm", styles.ToneFaint))
-	return lipgloss.JoinVertical(lipgloss.Center, ask, "", mark+c.input.View())
+	return lipgloss.JoinVertical(lipgloss.Center, ask, "", mark+c.input.View()+"  ", "", say)
 }

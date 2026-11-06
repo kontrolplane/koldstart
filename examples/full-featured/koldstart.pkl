@@ -11,12 +11,11 @@ tags {
 
 functions {
   ["api"] {
-    runtime = "nodejs22.x"
-    handler = "src/api.handler"
     memory = if (kdst.stage == "prod") 1024 else 256
     timeout = 10.s
     environment {
-      ["API_KEY"] = kdst.ssm("/shop/\(kdst.stage)/api-key")
+      // /shop/<stage>/api-key in ssm parameter store
+      ["API_KEY"] = kdst.param("api-key")
     }
     link {
       ["orders"] = "read"
@@ -27,9 +26,8 @@ functions {
       new kdst.HttpRoute { method = "POST"; path = "/orders" }
     }
   }
+
   ["worker"] {
-    runtime = "provided.al2023"
-    handler = "./cmd/worker"
     timeout = 30.s
     link {
       ["orders"] = "readwrite"
@@ -38,9 +36,8 @@ functions {
       new kdst.Queue { queue = kdst.ref("jobs", "Arn"); batchSize = 10 }
     }
   }
+
   ["report"] {
-    runtime = "nodejs22.x"
-    handler = "src/report.handler"
     link {
       ["orders"] = "read"
     }
@@ -59,6 +56,7 @@ resources {
       KeySchema { new { AttributeName = "id"; KeyType = "HASH" } }
     }
   }
+
   ["jobs"] {
     type = "AWS::SQS::Queue"
     properties {

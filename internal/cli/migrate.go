@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -36,11 +37,12 @@ func migrateCommand(name string) *cobra.Command {
 		Use:   "migrate [serverless.yml]",
 		Short: "convert a serverless framework project",
 		Long: `migrate converts a serverless.yml, ./serverless.yml without a path, into a koldstart.pkl beside
-it. What it cannot convert is left in the file as a TODO comment above where it belongs, and
-listed at the end. The file is checked with pkl before it is written, so it is valid even where it
-is not complete.`,
+it. What it cannot convert, or converts to something that works differently, is left in the file
+as a TODO comment where it belongs, and listed at the end with what to fix first. The file is
+checked with pkl before it is written, so it is valid even where it is not complete.`,
 		Example: fmt.Sprintf(`  %[1]s migrate
-  %[1]s migrate path/to/serverless.yml --out koldstart.pkl`, name),
+  %[1]s migrate path/to/serverless.yml --out koldstart.pkl
+  %[1]s migrate --force`, name),
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -57,10 +59,16 @@ is not complete.`,
 				return fmt.Errorf("reading %s: %w", out, err)
 			}
 			src, err := os.ReadFile(in)
+			if errors.Is(err, fs.ErrNotExist) && len(args) == 0 {
+				return errors.New("no serverless.yml here: run it in the project's directory, or pass the path to one")
+			}
+			if errors.Is(err, fs.ErrNotExist) {
+				return fmt.Errorf("%s does not exist: pass the path to a serverless.yml", in)
+			}
 			if err != nil {
 				return fmt.Errorf("reading %s: %w", in, err)
 			}
-			res, err := migrate.Convert(src, schemaVersion(), filepath.Dir(in))
+			res, err := migrate.Convert(src, schemaVersion(), filepath.Dir(in), migrate.WithName(name))
 			if err != nil {
 				return err
 			}
@@ -75,24 +83,53 @@ is not complete.`,
 			if err := os.WriteFile(out, []byte(res.Pkl), 0o600); err != nil {
 				return fmt.Errorf("writing %s: %w", out, err)
 			}
-			printMigration(cmd, out, append(res.Todos, problems...))
+			printMigration(cmd.OutOrStdout(), name, out, res.Stage, append(res.Todos, problems...))
 			return nil
 		},
 	}
-	cmd.Flags().StringVarP(&out, "out", "o", "", "where to write the koldstart.pkl, beside serverless.yml without it")
-	cmd.Flags().BoolVar(&force, "force", false, "write over the koldstart.pkl when there is one")
+	cmd.Flags().StringVarP(&out, "out", "o", "", "the file to write, beside serverless.yml by default")
+	cmd.Flags().BoolVar(&force, "force", false, "write over a koldstart.pkl that is there")
 	return cmd
 }
 
-func printMigration(cmd *cobra.Command, out string, todos []migrate.Todo) {
-	w := cmd.OutOrStdout()
-	if len(todos) == 0 {
+// printMigration says where the koldstart.pkl was written, how many todos were left to the person
+// and what they are, by kind, and the plan to run next: in the file's directory, with the stage
+// serverless.yml deployed to.
+func printMigration(w io.Writer, name, out, stage string, todos []migrate.Todo) {
+	switch len(todos) {
+	case 0:
 		_, _ = fmt.Fprintf(w, "wrote %s, with everything converted\n", out)
-		return
+	case 1:
+		_, _ = fmt.Fprintf(w, "wrote %s, with 1 thing left to you\n\n", out)
+	default:
+		_, _ = fmt.Fprintf(w, "wrote %s, with %d things left to you\n\n", out, len(todos))
 	}
-	_, _ = fmt.Fprintf(w, "wrote %s; left to you:\n\n", out)
+	if len(todos) > 0 {
+		_ = migrate.WriteTodos(w, todos)
+	}
+	marked := 0
 	for _, t := range todos {
-		_, _ = fmt.Fprintf(w, "  %s\n", t)
+		if t.Marked {
+			marked++
+		}
 	}
-	_, _ = fmt.Fprintf(w, "\nthe TODO comments in %s say where each one belongs\n", out)
+	switch {
+	case marked == 0:
+	case marked == len(todos):
+		_, _ = fmt.Fprintf(w, "\na TODO comment in %s marks where each goes\n", out)
+	default:
+		_, _ = fmt.Fprintf(w, "\nTODO comments in %s mark where %d of them go\n", out, marked)
+	}
+	plan := name + " plan"
+	if base := filepath.Base(out); base != "koldstart.pkl" {
+		plan += " --config " + base
+	}
+	if stage != "" && stage != "dev" && !strings.Contains(stage, "${") {
+		plan += " --stage " + stage
+	}
+	_, _ = fmt.Fprintln(w, "\nnext:")
+	if dir := filepath.Dir(out); dir != "." {
+		_, _ = fmt.Fprintf(w, "  cd %s\n", dir)
+	}
+	_, _ = fmt.Fprintf(w, "  %s\n", plan)
 }

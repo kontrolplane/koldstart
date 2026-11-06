@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -29,6 +31,14 @@ type fakeBackend struct {
 	states  map[cli.StageRef]*state.State
 	locks   map[cli.StageRef]*state.LockInfo
 	history []state.ObjectVersion
+	// versions are the states of the history by their version, where a test wants others than
+	// testState's; versionReads counts the reads of one, and versionErr is what each read fails
+	// with.
+	versions     map[string]*state.State
+	versionReads int
+	versionErr   error
+	// metrics are what Metrics returns where a test wants others than the series it makes up.
+	metrics map[string]cli.Metrics
 	logs    []cli.LogEvent
 	older   []cli.LogEvent
 	tail    []cli.LogEvent
@@ -139,6 +149,15 @@ func (f *fakeBackend) History(context.Context, cli.StageRef) ([]state.ObjectVers
 }
 
 func (f *fakeBackend) Version(_ context.Context, ref cli.StageRef, id string) (*state.State, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.versionReads++
+	if f.versionErr != nil {
+		return nil, f.versionErr
+	}
+	if st, ok := f.versions[id]; ok {
+		return st, f.err
+	}
 	st := testState(ref)
 	if id == "v1" {
 		delete(st.Resources, "resource/table")
@@ -189,6 +208,9 @@ func (f *fakeBackend) Queue(context.Context, cli.StageRef, string) (cli.QueueDep
 func (f *fakeBackend) Metrics(_ context.Context, _ cli.StageRef, names []string) (map[string]cli.Metrics, error) {
 	if f.metricsErr != nil {
 		return nil, f.metricsErr
+	}
+	if f.metrics != nil {
+		return f.metrics, nil
 	}
 	out := map[string]cli.Metrics{}
 	for _, name := range names {
@@ -297,6 +319,8 @@ func press(s string) tea.KeyPressMsg {
 		return tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift}
 	case "backspace":
 		return tea.KeyPressMsg{Code: tea.KeyBackspace}
+	case "space":
+		return tea.KeyPressMsg{Code: tea.KeySpace, Text: " "}
 	}
 	if ctrl, ok := strings.CutPrefix(s, "ctrl+"); ok {
 		return tea.KeyPressMsg{Code: rune(ctrl[0]), Mod: tea.ModCtrl}
@@ -355,9 +379,9 @@ func settle(t *testing.T, m model, cmd tea.Cmd) model {
 }
 
 // run runs a command and the commands of a batch, returning their messages. A command that
-// does not answer at once is a timer, and is dropped.
+// does not answer at once is a timer, and is dropped, one crTimer knows without waiting.
 func run(cmd tea.Cmd) []tea.Msg {
-	if cmd == nil {
+	if cmd == nil || crTimer(cmd) {
 		return nil
 	}
 	done := make(chan tea.Msg, 1)
@@ -386,9 +410,20 @@ func screen(m model) string {
 	return ansi.Strip(m.render())
 }
 
+// crTimers are the functions of the commands that wait for a timer: a tick of bubbletea, the
+// refresh's, the status's and the spinner's, and the blink of a text input's cursor. Each waits
+// longer than run does, so run and quits drop them at once rather than wait to drop them.
+var crTimers = []string{"charm.land/bubbletea/v2.Tick.", "charm.land/bubbletea/v2.Every.", "charm.land/bubbles/v2/cursor.(*Model).Blink."}
+
+// crTimer reports whether cmd waits for a timer, by the name of its function.
+func crTimer(cmd tea.Cmd) bool {
+	name := runtime.FuncForPC(reflect.ValueOf(cmd).Pointer()).Name()
+	return slices.ContainsFunc(crTimers, func(prefix string) bool { return strings.HasPrefix(name, prefix) })
+}
+
 // quits reports whether a command quits the program.
 func quits(cmd tea.Cmd) bool {
-	if cmd == nil {
+	if cmd == nil || crTimer(cmd) {
 		return false
 	}
 	done := make(chan tea.Msg, 1)

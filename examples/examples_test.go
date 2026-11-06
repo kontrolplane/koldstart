@@ -46,7 +46,7 @@ func TestExamplesEvaluate(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer cleanup()
-				p, err := config.Load(context.Background(), pkl.Evaluator{Binary: binary}, path, stage)
+				p, err := config.LoadIn(context.Background(), pkl.Evaluator{Binary: binary}, path, filepath.Dir(file), stage)
 				if err != nil {
 					t.Fatal(err)
 				}

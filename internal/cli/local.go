@@ -174,7 +174,8 @@ func (p *prefixed) Write(b []byte) (int, error) {
 	}
 }
 
-// eventFrom reads the event to invoke with: --data, --path, or {}.
+// eventFrom reads the event to invoke with: --data, --path, or {}. It refuses one that is not
+// json before anything is built or invoked.
 //
 //nolint:gosec // reads the event file the user names
 func eventFrom(data, path string) ([]byte, error) {
@@ -186,12 +187,24 @@ func eventFrom(data, path string) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("reading the event: %w", err)
 		}
+		if err := checkEvent(b); err != nil {
+			return nil, fmt.Errorf("the event in %s is not json: %w", path, err)
+		}
 		return b, nil
 	case data != "":
+		if err := checkEvent([]byte(data)); err != nil {
+			return nil, fmt.Errorf(`the event in --data is not json: %w: quote it in single quotes, as --data '{"id": 1}'`, err)
+		}
 		return []byte(data), nil
 	default:
 		return []byte("{}"), nil
 	}
+}
+
+// checkEvent says why an event is not json, when it is not.
+func checkEvent(b []byte) error {
+	var v any
+	return json.Unmarshal(b, &v)
 }
 
 // confirmProd asks before code on this machine works with what prod deployed.
@@ -209,11 +222,18 @@ func invokeCommand(name string, opts *Options) *cobra.Command {
 		Use:   "invoke",
 		Short: "invoke a function with an event, in aws or with --local on this machine",
 		Long: `invoke runs a function with the event from --data or --path, {} without either, and prints what it
-returns. In aws, the end of its log follows. With --local, it is built and run here against the
-lambda runtime api, with the variables the stage deployed and your credentials, so it reads and
-writes what the stage deployed; .koldstart/local.<stage>.pkl overrides variables.`,
+returns on stdout: indented and coloured on a terminal, and byte for byte as lambda returned it
+when piped, so jq reads it. The end of its log, or with --local its output, goes to stderr. A
+function that fails prints nothing on stdout: the type and message of its error go to stderr,
+with its stack trace under them, and invoke exits with 1.
+
+With --local, it is built and run here against an emulator of the lambda runtime api, with the
+variables the stage deployed and your credentials, so it reads and writes what the stage
+deployed; .koldstart/local.<stage>.pkl overrides variables, and prod asks first.`,
 		Example: fmt.Sprintf(`  %[1]s invoke -f api --path events/get-order.json
-  %[1]s invoke -f worker --local --data '{"job": 1}'`, name),
+  %[1]s invoke -f api --local --path event.json
+  %[1]s invoke -f worker --local --data '{"job": 1}'
+  %[1]s invoke -f api | jq -r .body`, name),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
@@ -229,6 +249,9 @@ writes what the stage deployed; .koldstart/local.<stage>.pkl overrides variables
 				return err
 			}
 			if !runLocal {
+				if s.state.Resources[desired.FunctionID(function)] == nil {
+					return fmt.Errorf("%s is not deployed to %s: deploy it with %s deploy --stage %s, or run it here with --local", function, s.Stage, name, s.Stage)
+				}
 				return s.invokeRemote(ctx, cmd, function, payload)
 			}
 			if err := confirmProd(cmd, s, yes); err != nil {
@@ -247,7 +270,7 @@ writes what the stage deployed; .koldstart/local.<stage>.pkl overrides variables
 }
 
 // invokeRemote invokes the deployed function, printing the end of its log on stderr and what it
-// returned on stdout.
+// returned on stdout. A function that failed prints nothing on stdout: its error is returned.
 func (s *stage) invokeRemote(ctx context.Context, cmd *cobra.Command, function string, payload []byte) error {
 	out, err := s.sess.Lambda.Invoke(ctx, &lambda.InvokeInput{
 		FunctionName: aws.String(desired.FunctionName(s.Project, function)), Payload: payload, LogType: lambdatypes.LogTypeTail,
@@ -261,15 +284,38 @@ func (s *stage) invokeRemote(ctx context.Context, cmd *cobra.Command, function s
 		}
 		_, _ = cmd.ErrOrStderr().Write(logs)
 	}
-	_, _ = fmt.Fprintln(cmd.OutOrStdout(), string(out.Payload))
 	if out.FunctionError != nil {
-		return fmt.Errorf("%s failed: %s", function, aws.ToString(out.FunctionError))
+		return fmt.Errorf("%s failed: %s\nsee its logs with %s logs -f %s --stage %s", function, functionError(out.Payload, aws.ToString(out.FunctionError)), cmd.Root().Name(), function, s.Stage)
 	}
-	return nil
+	return writePayload(cmd.OutOrStdout(), out.Payload)
+}
+
+// writePayload writes what a function returned: byte for byte where w is not a terminal, so a
+// script or jq reads it as lambda returned it, and on a terminal indented and coloured, when it
+// is json, with a newline after.
+func writePayload(w io.Writer, payload []byte) error {
+	f, ok := w.(*os.File)
+	return printPayload(w, payload, ok && isTerminal(f), paletteFor(w))
+}
+
+// printPayload writes a payload as writePayload does, to a terminal or not.
+func printPayload(w io.Writer, payload []byte, terminal bool, colour palette) error {
+	if !terminal {
+		_, err := w.Write(payload)
+		return err
+	}
+	if len(payload) == 0 || prettyJSON(w, payload, colour) {
+		return nil
+	}
+	if !bytes.HasSuffix(payload, []byte("\n")) {
+		payload = append(slices.Clip(payload), '\n')
+	}
+	_, err := w.Write(payload)
+	return err
 }
 
 // invokeLocal runs the function once on this machine, its output on stderr and what it returned
-// on stdout.
+// on stdout. A function that failed prints nothing on stdout: its error is returned.
 func (s *stage) invokeLocal(ctx context.Context, cmd *cobra.Command, function string, payload []byte) error {
 	f, err := s.localFunction(ctx, function, cmd.ErrOrStderr())
 	if err != nil {
@@ -281,11 +327,11 @@ func (s *stage) invokeLocal(ctx context.Context, cmd *cobra.Command, function st
 	}
 	defer func() { _ = r.Close() }()
 	result, err := r.Invoke(ctx, payload)
-	if len(result) > 0 {
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), string(result))
+	if failed, ok := errors.AsType[*local.FunctionError](err); ok {
+		return fmt.Errorf("%s failed: %s", function, describeFailure(failed.Type, failed.Message, failed.Trace))
 	}
 	if err != nil {
 		return fmt.Errorf("%s failed: %w", function, err)
 	}
-	return nil
+	return writePayload(cmd.OutOrStdout(), result)
 }

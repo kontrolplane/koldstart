@@ -1,9 +1,13 @@
 package tui
 
 import (
+	"fmt"
+	"maps"
 	"strings"
 	"testing"
 	"time"
+
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/kontrolplane/koldstart/internal/cli"
 	"github.com/kontrolplane/koldstart/internal/engine"
@@ -29,6 +33,69 @@ func requestLogs(at time.Time) []cli.LogEvent {
 		line(2*time.Second+time.Millisecond, "b", `{"time":"2026-11-05T10:00:02Z","level":"INFO","msg":"stored an order"}`),
 		line(2*time.Second+2*time.Millisecond, "b", "END RequestId: 33333333-3333-3333-3333-333333333333"),
 		line(2*time.Second+3*time.Millisecond, "b", "REPORT RequestId: 33333333-3333-3333-3333-333333333333\tDuration: 30.00 ms\tBilled Duration: 31 ms\tMemory Size: 256 MB\tMax Memory Used: 80 MB\tInit Duration: 150.20 ms"),
+	}
+}
+
+// TestLineIDs checks the request a line starts, reports or names is read from lambda's START and
+// REPORT and a line of node, and nothing from a line like them that is not one.
+func TestLineIDs(t *testing.T) {
+	const id = "11111111-1111-1111-1111-111111111111"
+	tests := []struct {
+		name                string
+		line                string
+		start, report, node string
+	}{
+		{name: "start", line: "START RequestId: " + id + " Version: $LATEST", start: id},
+		{name: "report", line: "REPORT RequestId: " + id + "\tDuration: 1.00 ms", report: id},
+		{name: "node", line: "2026-11-05T10:00:00.001Z\t" + id + "\tINFO\thi", node: id},
+		{name: "start without an id", line: "START RequestId:  x"},
+		{name: "node without a tab after the id", line: "2026-11-05T10:00:00.001Z\t" + id + " INFO hi"},
+		{name: "node with a short id", line: "2026-11-05T10:00:00.001Z\t1111\tINFO\thi"},
+		{name: "node with words before the tab", line: "a b\t" + id + "\tINFO\thi"},
+		{name: "node with an id of capitals", line: "t\t" + strings.ToUpper("aaaaaaaa-1111-1111-1111-111111111111") + "\tINFO\thi"},
+		{name: "plain", line: "order placed"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			start, report, node := lineIDs(tt.line)
+			if start != tt.start || report != tt.report || node != tt.node {
+				t.Errorf("lineIDs = %q %q %q, want %q %q %q", start, report, node, tt.start, tt.report, tt.node)
+			}
+		})
+	}
+}
+
+// TestReportItems checks the numbers of a REPORT and an INIT_REPORT line are read by their label,
+// whether tabs or spaces separate them.
+func TestReportItems(t *testing.T) {
+	tests := []struct {
+		name string
+		line string
+		want map[string]float64
+	}{
+		{
+			name: "tabs",
+			line: "REPORT RequestId: r\tDuration: 12.50 ms\tBilled Duration: 13 ms\tMemory Size: 256 MB\tMax Memory Used: 70 MB\tInit Duration: 150.20 ms\tStatus: timeout",
+			want: map[string]float64{"Duration": 12.5, "Billed Duration": 13, "Memory Size": 256, "Max Memory Used": 70, "Init Duration": 150.2},
+		},
+		{
+			name: "spaces",
+			line: "REPORT RequestId: r Duration: 12.50 ms Billed Duration: 13 ms Memory Size: 256 MB Max Memory Used: 70 MB",
+			want: map[string]float64{"Duration": 12.5, "Billed Duration": 13, "Memory Size": 256, "Max Memory Used": 70},
+		},
+		{
+			name: "init report",
+			line: "INIT_REPORT Init Duration: 10005.31 ms\tPhase: init\tStatus: timeout",
+			want: map[string]float64{"Init Duration": 10005.31},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := maps.Collect(reportItems(tt.line))
+			if fmt.Sprint(got) != fmt.Sprint(tt.want) {
+				t.Errorf("reportItems = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -63,18 +130,6 @@ func TestRequests(t *testing.T) {
 	}
 }
 
-// TestLineDiff checks the diff keeps the common lines and marks what was removed and added.
-func TestLineDiff(t *testing.T) {
-	got := lineDiff([]string{"{", `  "memory": 128,`, `  "timeout": 6`, "}"}, []string{"{", `  "memory": 256,`, `  "timeout": 6`, "}"})
-	var ops strings.Builder
-	for _, l := range got {
-		ops.WriteByte(l.op)
-	}
-	if ops.String() != " -+  " {
-		t.Errorf("ops %q, want %q", ops.String(), " -+  ")
-	}
-}
-
 // TestSparkline checks a series is drawn scaled to its largest point, an empty period blank.
 func TestSparkline(t *testing.T) {
 	if got := sparkline([]float64{0, 1, 2, 4, 8}, 5); got != " ▁▂▄█" {
@@ -106,7 +161,7 @@ func TestResourceTree(t *testing.T) {
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("tree:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
-	if v := screen(m); !strings.Contains(v, "└ route/GET /orders") || !strings.Contains(v, "12 queued · 3 in flight") {
+	if v := screen(m); !strings.Contains(v, "└─ route/GET /orders") || !strings.Contains(v, "12 queued · 3 in flight") {
 		t.Errorf("the tree or the queue's depth is not drawn:\n%s", v)
 	}
 }
@@ -117,12 +172,12 @@ func TestFunctionOverview(t *testing.T) {
 	f := newFake(t)
 	f.function = cli.FunctionState{State: "Active", LastUpdate: "Successful", LastModified: time.Now(), CodeSize: 4 << 20, CodeSHA256: "ff", Memory: 2048, Timeout: 6, Runtime: "nodejs22.x"}
 	m := started(t, f)
-	if v := screen(m); !strings.Contains(v, "calls 1h") || !strings.Contains(v, "1,740") {
+	if v := screen(m); !strings.Contains(v, "last hour") || !strings.Contains(v, "1,740") {
 		t.Errorf("the functions tab does not show the calls of the last hour:\n%s", v)
 	}
 	m = pressKeys(t, m, "enter")
 	v := screen(m)
-	for _, want := range []string{"last hour", "invocations", "▁", "active", "changed outside koldstart", "memory 1024 → 2048", "4.0 mb"} {
+	for _, want := range []string{"last hour", "invocations", "█", "active", "changed outside koldstart", "memory 1,024 → 2,048 mb", "4.0 mb"} {
 		if !strings.Contains(v, want) {
 			t.Errorf("the overview has no %q:\n%s", want, v)
 		}
@@ -135,7 +190,7 @@ func TestMetricsUnavailable(t *testing.T) {
 	f := newFake(t)
 	f.metricsErr = errAWS
 	m := pressKeys(t, started(t, f), "enter")
-	if m.error != "" || !strings.Contains(screen(m), "no metrics: aws said no") {
+	if m.error != "" || !strings.Contains(screen(m), "could not read the metrics: aws said no") {
 		t.Errorf("error %q; screen:\n%s", m.error, screen(m))
 	}
 }
@@ -164,8 +219,8 @@ func TestLogsTail(t *testing.T) {
 	}
 }
 
-// TestLogsFilterAndOlder checks / keeps the lines that match, and ↑ at the top reads the hour
-// before.
+// TestLogsFilterAndOlder checks / keeps the lines that match, and ↑ on the first line reads the
+// hour before.
 func TestLogsFilterAndOlder(t *testing.T) {
 	f := newFake(t)
 	f.logs = requestLogs(time.Now().Add(-time.Minute))
@@ -176,7 +231,7 @@ func TestLogsFilterAndOlder(t *testing.T) {
 	if v := screen(m); strings.Contains(v, "START") || !strings.Contains(v, "order placed") || !strings.Contains(v, "no order 9") || !strings.Contains(v, "stored an order") {
 		t.Fatalf("the lines that have order:\n%s", v)
 	}
-	m = pressKeys(t, m, "esc", "k")
+	m = pressKeys(t, m, "esc", "g", "k")
 	if f.olderReads != 1 || !strings.Contains(screen(m), "from the hour before") || m.state.function.logs.follow {
 		t.Errorf("%d reads of older lines, follow %v:\n%s", f.olderReads, m.state.function.logs.follow, screen(m))
 	}
@@ -203,7 +258,7 @@ func TestInvocations(t *testing.T) {
 }
 
 // TestPlanDiff checks enter on a change of a plan shows its full diff, and q goes back to the
-// plan.
+// plan, where the second change is past the heading of its group.
 func TestPlanDiff(t *testing.T) {
 	m := pressKeys(t, started(t, newFake(t)), "d", "enter")
 	v := screen(m)
@@ -213,9 +268,35 @@ func TestPlanDiff(t *testing.T) {
 	if m = pressKeys(t, m, "q"); m.page != planPage {
 		t.Errorf("q goes back to the plan, not %v", m.page)
 	}
-	m = pressKeys(t, m, "j", "enter")
+	m = pressKeys(t, m, "j", "j", "enter")
 	if !strings.Contains(screen(m), "resource/table") {
 		t.Errorf("the second change:\n%s", screen(m))
+	}
+}
+
+// TestDiffOpensOnTheChange checks a diff longer than the terminal opens with its first change in
+// sight, as the change of a function's timeout sat below the fold of an 80 by 24 terminal.
+func TestDiffOpensOnTheChange(t *testing.T) {
+	before, after := map[string]any{}, map[string]any{}
+	for i := range 40 {
+		before[fmt.Sprintf("key%02d", i)], after[fmt.Sprintf("key%02d", i)] = i, i
+	}
+	after["key30"] = "changed"
+	for _, size := range [][2]int{{80, 24}, {120, 40}, {200, 60}} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			m := started(t, newFake(t))
+			m, _ = update(t, m, tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+			m, _ = m.openDiff("function/api", "update", before, after)
+			v := screen(m)
+			if !strings.Contains(v, `-   "key30": 30`) || !strings.Contains(v, `+   "key30": "changed"`) || !strings.Contains(v, `"key29": 29`) {
+				t.Errorf("the change is not in sight:\n%s", v)
+			}
+		})
+	}
+	m := started(t, newFake(t))
+	after = map[string]any{"key00": "changed"}
+	if m, _ = m.openDiff("function/api", "update", map[string]any{"key00": 0}, after); m.state.diff.scroll != 0 {
+		t.Errorf("a change in sight from the top scrolled to %d", m.state.diff.scroll)
 	}
 }
 
@@ -232,7 +313,7 @@ func TestVersionDiff(t *testing.T) {
 func TestResourceLive(t *testing.T) {
 	f := newFake(t)
 	f.live = map[string]any{"BillingMode": "PROVISIONED", "Arn": "arn:aws:dynamodb:table"}
-	m := pressKeys(t, started(t, f), "tab", "j", "j", "j", "j", "enter")
+	m := pressKeys(t, started(t, f), "tab", "G", "enter")
 	if m.page != resourcePage || m.state.resource.res.id != "resource/table" {
 		t.Fatalf("page %v on %s", m.page, m.state.resource.res.id)
 	}
@@ -251,7 +332,7 @@ func TestResourceLive(t *testing.T) {
 // with more than the reference.
 func TestPresentable(t *testing.T) {
 	lines := jsonLines(map[string]any{"KEY": engine.Ref("resource/x", "Arn")})
-	if !strings.Contains(strings.Join(lines, "\n"), `"ref resource/x.Arn"`) {
+	if !strings.Contains(strings.Join(lines, "\n"), `"KEY": (ref resource/x.Arn)`) {
 		t.Errorf("jsonLines = %q", lines)
 	}
 }

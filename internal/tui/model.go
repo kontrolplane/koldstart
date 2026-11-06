@@ -58,6 +58,9 @@ const (
 	runLocalPage
 	diffPage
 	invocationPage
+	outputPage
+	inputsPage
+	logLinePage
 )
 
 type model struct {
@@ -87,6 +90,8 @@ type model struct {
 	paused        bool
 	refreshGen    int
 	refreshedAt   time.Time
+	// stale says the last read of the page on screen failed, so it shows the one at refreshedAt.
+	stale bool
 	// gen numbers the loads; a page keeps the one it waits for and drops the others.
 	gen int
 }
@@ -103,6 +108,9 @@ type pages struct {
 	runLocal   runLocalState
 	diff       diffState
 	invocation invocationState
+	output     outputState
+	inputs     inputsState
+	logLine    logLineState
 }
 
 func newModel(ctx context.Context, b backend) model {
@@ -143,26 +151,26 @@ func (m model) withTimeout(d time.Duration) (context.Context, context.CancelFunc
 // spinner.
 func (m model) switchPage(p page) model {
 	if p != m.page {
-		m.refreshedAt = time.Time{}
+		m.refreshedAt, m.stale = time.Time{}, false
 	}
 	m.page = p
 	m.loading = false
 	return m
 }
 
+// markRead notes the page on screen was read now.
+func (m model) markRead() model {
+	m.refreshedAt, m.stale = time.Now(), false
+	return m
+}
+
 // typing reports whether keys go into a text input, so letters are not shortcuts.
 func (m model) typing() bool {
-	switch m.page {
-	case overviewPage:
-		return m.state.overview.filter.active
-	case stagePage:
-		return m.state.stage.filter.active
-	case functionPage:
-		return m.state.function.tab == logsTab && m.state.function.logs.filter.active
-	case removePage:
+	if m.page == removePage {
 		return true
 	}
-	return false
+	f := m.pageFilter()
+	return f != nil && f.active
 }
 
 // refreshes reports whether the page on screen reads its data again every few seconds.
@@ -187,7 +195,6 @@ func (m model) resize() model {
 		s.tables[i].setSize(tableWidth(), stageTableHeight())
 	}
 	f := &m.state.function
-	f.events.setSize(eventsWidth(), functionBodyHeight()-tableHeaderRows)
-	f.invocations.setSize(tableWidth(), functionBodyHeight()-tableHeaderRows)
-	return m
+	f.invocations.setSize(tableWidth(), invocationsTableHeight())
+	return m.fitEvents()
 }

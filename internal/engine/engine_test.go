@@ -295,6 +295,47 @@ func checkConverged(t *testing.T, name string, h *harness, nodes []Node) {
 	}
 }
 
+// TestUnresolvedNodeIsTold checks a node whose inputs cannot be resolved once what it depends
+// on is applied is told as failed, though it never started, so progress counts it.
+func TestUnresolvedNodeIsTold(t *testing.T) {
+	tests := []struct {
+		name      string
+		attribute string
+		wantErr   bool
+	}{
+		{name: "attribute there", attribute: "Arn"},
+		{name: "attribute missing", attribute: "QueueArn", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHarness(t)
+			var events []Event
+			h.engine.Concurrency = 1
+			h.engine.OnEvent = func(ev Event) { events = append(events, ev) }
+			nodes := []Node{
+				{ID: "loggroup/api", Type: fakeType, Name: "loggroup", Inputs: map[string]any{"retention": 30}},
+				{ID: "role/api", Type: fakeType, Name: "role", Inputs: map[string]any{"logGroup": Ref("loggroup/api", tt.attribute)}},
+			}
+			_, err := h.deploy(nodes)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("deploy = %v, want an error: %t", err, tt.wantErr)
+			}
+			var done *Event
+			for i := range events {
+				if events[i].ID == "role/api" && events[i].Done {
+					done = &events[i]
+				}
+			}
+			if done == nil {
+				t.Fatalf("no done event for role/api in %+v", events)
+			}
+			if (done.Err != nil) != tt.wantErr || done.Action != Create {
+				t.Errorf("done event = %+v, want action create and an error: %t", *done, tt.wantErr)
+			}
+		})
+	}
+}
+
 // TestFailureKeepsWhatWasDone checks a failing node stops the deploy after its level, keeps
 // what was done in the state, and the next deploy picks up from there.
 func TestFailureKeepsWhatWasDone(t *testing.T) {
@@ -314,6 +355,25 @@ func TestFailureKeepsWhatWasDone(t *testing.T) {
 	}
 	if got := actions(plan); got["role/api"] != NoOp || got["function/api"] != Create {
 		t.Errorf("deploy after the failure: %v", got)
+	}
+}
+
+// TestPanicFailsTheNode checks a panic while a node is applied fails the deploy with an error,
+// rather than end the program, and keeps what was done before it.
+func TestPanicFailsTheNode(t *testing.T) {
+	h := newHarness(t)
+	h.engine.OnEvent = func(ev Event) {
+		if ev.ID == "function/api" && !ev.Done {
+			panic("boom")
+		}
+	}
+	_, err := h.deploy(uniqueNames(stack(256)))
+	if err == nil || !strings.Contains(err.Error(), "a bug in koldstart stopped it (boom)") {
+		t.Fatalf("deploy = %v, want the panic as its error", err)
+	}
+	st, _ := h.read()
+	if st.Resources["role/api"] == nil {
+		t.Errorf("the role was not recorded: %v", slices.Sorted(maps.Keys(st.Resources)))
 	}
 }
 
@@ -395,6 +455,27 @@ func TestSecrets(t *testing.T) {
 	}}}
 	if _, err := h.engine.Plan(context.Background(), missing, state.New("orders", "dev", "eu-west-1", "")); err == nil {
 		t.Error("planning a new node with a missing secret: want an error")
+	}
+}
+
+// TestStageSecrets checks a secret of kdst.param() is resolved by its full name under the app
+// and stage, and its value reaches the provider.
+func TestStageSecrets(t *testing.T) {
+	p, err := config.Decode([]byte(`{"schemaVersion": 1, "app": "orders", "stage": "dev", "functions": {"api": {"environment": {
+		"KEY": {"$koldstart": "secret", "source": "ssm", "name": "api-key", "scope": "stage", "key": "", "atRuntime": false}}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := newHarness(t)
+	h.engine.Secrets = fakeSecrets{"ssm:/orders/dev/api-key:": "one"}
+	nodes := []Node{{ID: "function/api", Type: fakeType, Name: "api", Inputs: map[string]any{
+		"env": map[string]any{"KEY": SecretValue(*p.Functions["api"].Environment["KEY"].Secret)},
+	}}}
+	if _, err := h.deploy(nodes); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.fake.Resources()["api"].Inputs["env"].(map[string]any)["KEY"]; got != "one" {
+		t.Errorf("the provider got %v, want the value of /orders/dev/api-key", got)
 	}
 }
 
@@ -510,5 +591,82 @@ func TestRefresh(t *testing.T) {
 	plan, err = h.deploy(nodes)
 	if err != nil || plan.HasChanges() {
 		t.Errorf("a deploy after = %v, %v", actions(plan), err)
+	}
+}
+
+// cancelProvider cancels the deploy's context once each call has gone through, as ctrl+c
+// pressed while aws did the work would.
+type cancelProvider struct {
+	*Fake
+	cancel context.CancelFunc
+}
+
+// Create implements Provider.
+func (p cancelProvider) Create(ctx context.Context, req Request) (Result, error) {
+	defer p.cancel()
+	return p.Fake.Create(ctx, req)
+}
+
+// Update implements Provider.
+func (p cancelProvider) Update(ctx context.Context, req Request) (Result, error) {
+	defer p.cancel()
+	return p.Fake.Update(ctx, req)
+}
+
+// Delete implements Provider.
+func (p cancelProvider) Delete(ctx context.Context, req Request) error {
+	defer p.cancel()
+	return p.Fake.Delete(ctx, req)
+}
+
+// TestCancelRecordsWhatWasDone checks a create, update or delete that went through before ctrl+c
+// is in the state afterwards, with nothing left pending, so the next deploy plans nothing for it.
+func TestCancelRecordsWhatWasDone(t *testing.T) {
+	logGroup := func(retention int) []Node {
+		return []Node{{ID: "loggroup/api", Type: fakeType, Name: "loggroup/api", Inputs: map[string]any{"retention": retention}}}
+	}
+	tests := []struct {
+		name   string
+		before []Node
+		after  []Node
+	}{
+		{name: "create", after: logGroup(30)},
+		{name: "update", before: logGroup(30), after: logGroup(60)},
+		{name: "delete", before: logGroup(30)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHarness(t)
+			if tt.before != nil {
+				if _, err := h.deploy(tt.before); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			e := &Engine{Providers: map[string]Provider{fakeType: cancelProvider{Fake: h.fake, cancel: cancel}}, Concurrency: 1}
+			st, etag := h.read()
+			plan, err := e.Plan(ctx, tt.after, st)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = e.Apply(ctx, plan, tt.after, NewStore(h.backend, st, etag, "test"))
+			if ctx.Err() == nil {
+				t.Fatal("the provider did not cancel the context")
+			}
+
+			got, _ := h.read()
+			r := got.Resources["loggroup/api"]
+			switch {
+			case tt.after == nil && r != nil:
+				t.Errorf("the deleted log group is still in the state: %+v", r)
+			case tt.after != nil && (r == nil || r.Pending != nil):
+				t.Errorf("the log group in the state = %+v, want it recorded with nothing pending", r)
+			}
+			plan, err = h.deploy(tt.after)
+			if err != nil || plan.HasChanges() {
+				t.Errorf("the deploy after = %v, %v, want no changes", actions(plan), err)
+			}
+		})
 	}
 }

@@ -133,6 +133,40 @@ func TestNodeRuntime(t *testing.T) {
 	}
 }
 
+// TestNodeRuntimeInAModuleProject checks a function runs here in a project whose package.json
+// makes .js files es modules, with the bundle under the project as kdst invoke --local puts it.
+func TestNodeRuntimeInAModuleProject(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("no node on the PATH")
+	}
+	tests := []struct {
+		name    string
+		project string
+	}{
+		{name: "type module", project: `{"type": "module"}`},
+		{name: "type commonjs", project: `{"type": "commonjs"}`},
+		{name: "no type", project: `{}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			write(t, root, map[string]string{"src/api.ts": nodeHandler, "package.json": tt.project})
+			fn := config.Function{Runtime: config.RuntimeNode22, Handler: "src/api.handler", Memory: 128, Timeout: 5}
+			var out syncBuffer
+			l := Runner{Root: root, Stage: "dev", Dir: filepath.Join(root, ".koldstart", "local")}
+			f := Function{Name: "api", LambdaName: "orders-dev-api", ARN: "arn:aws:lambda:eu-west-1:123456789012:function:orders-dev-api", Config: fn, Region: "eu-west-1", Output: &out}
+			r, err := l.Start(context.Background(), f)
+			if err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			t.Cleanup(func() { _ = r.Close() })
+			if _, err := r.Invoke(context.Background(), []byte(`{"kind": "ok"}`)); err != nil {
+				t.Fatalf("Invoke: %v\n%s", err, &out)
+			}
+		})
+	}
+}
+
 // TestNodeInitError checks a module that fails to load is reported as lambda reports it.
 func TestNodeInitError(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {

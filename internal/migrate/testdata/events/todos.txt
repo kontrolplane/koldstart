@@ -1,3 +1,6 @@
-functions.onOrder.events[1]: an eventBridge event without a pattern, such as a schedule: use kdst.Schedule
-functions.legacy.events[0].conditions.header: a condition on the header has no equivalent yet
-functions.api.events[2]: a route of the rest api, now one of the http api: request validation, api keys and usage plans have no equivalent
+left out, to write by hand:
+  functions.onOrder.events[1]: an EventRule needs a pattern: write a schedule as new kdst.Schedule { expression = ... }
+  functions.legacy.events[0].conditions.header: koldstart has no alb condition on the header yet
+
+works differently, to check:
+  functions.api.events[2]: a route of the rest api is one of the http api now: check it does without request validation, api keys and usage plans

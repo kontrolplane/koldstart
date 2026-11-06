@@ -31,18 +31,21 @@ func evaluator(t *testing.T) pkl.Evaluator {
 	return pkl.Evaluator{Binary: binary}
 }
 
-// TestTemplatesEvaluate checks what each template writes evaluates against the schema, passes
-// the checks of a deploy, and plans a function with its route.
+// TestTemplatesEvaluate checks what each template writes evaluates against the schema, with the
+// runtime and handler inferred from the handler it writes, passes the checks of a deploy, and
+// plans a function with its route, and that its commented secret evaluates once uncommented,
+// under the app and stage.
 func TestTemplatesEvaluate(t *testing.T) {
 	ev := evaluator(t)
 	tests := []struct {
 		template string
 		files    []string
 		runtime  string
+		handler  string
 	}{
-		{template: Node, files: []string{"koldstart.pkl", "src/api.ts"}, runtime: config.RuntimeNode22},
-		{template: Go, files: []string{"cmd/api/main.go", "go.mod", "koldstart.pkl"}, runtime: config.RuntimeGo},
-		{template: Python, files: []string{"koldstart.pkl", "requirements.txt", "src/api.py"}, runtime: config.RuntimePy313},
+		{template: Node, files: []string{"koldstart.pkl", "src/api.ts"}, runtime: config.RuntimeNode22, handler: "src/api.handler"},
+		{template: Go, files: []string{"cmd/api/main.go", "go.mod", "koldstart.pkl"}, runtime: config.RuntimeGo, handler: "./cmd/api"},
+		{template: Python, files: []string{"koldstart.pkl", "requirements.txt", "src/api.py"}, runtime: config.RuntimePy313, handler: "src/api.handler"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.template, func(t *testing.T) {
@@ -64,11 +67,11 @@ func TestTemplatesEvaluate(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer cleanup()
-			p, err := config.Load(context.Background(), ev, path, "dev")
+			p, err := config.LoadIn(context.Background(), ev, path, dir, "dev")
 			if err != nil {
 				t.Fatalf("the %s template does not evaluate: %v", tt.template, err)
 			}
-			if p.App != "orders" || p.Region != "eu-west-1" || p.Functions["api"].Runtime != tt.runtime {
+			if p.App != "orders" || p.Region != "eu-west-1" || p.Functions["api"].Runtime != tt.runtime || p.Functions["api"].Handler != tt.handler {
 				t.Fatalf("evaluated to %+v", p)
 			}
 			nodes, err := desired.Build(p, desired.Target{Account: "123456789012", Region: "eu-west-1", Bucket: "b",
@@ -78,6 +81,23 @@ func TestTemplatesEvaluate(t *testing.T) {
 			}
 			if !slices.ContainsFunc(nodes, func(n engine.Node) bool { return n.ID == "route/GET /hello" }) {
 				t.Error("no route for GET /hello")
+			}
+
+			uncommented := strings.Replace(string(source), "// environment {", "environment {", 1)
+			if uncommented == string(source) {
+				t.Fatal("no commented environment with a secret")
+			}
+			path, cleanup, err = schema.Local([]byte(uncommented), "0.1.0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer cleanup()
+			p, err = config.LoadIn(context.Background(), ev, path, dir, "dev")
+			if err != nil {
+				t.Fatalf("the %s template's secret does not evaluate: %v", tt.template, err)
+			}
+			if s := p.Functions["api"].Environment["API_KEY"].Secret; s == nil || s.Name != "/orders/dev/api-key" {
+				t.Errorf("API_KEY = %+v, want /orders/dev/api-key", s)
 			}
 		})
 	}
@@ -142,14 +162,22 @@ func TestAppName(t *testing.T) {
 	}
 }
 
-// TestWriteRefuses checks an unknown template and an app name aws would refuse are refused.
+// TestWriteRefuses checks an unknown template and an app name aws would refuse are refused, each
+// saying what to pass instead.
 func TestWriteRefuses(t *testing.T) {
-	for _, o := range []Options{
-		{Dir: t.TempDir(), App: "orders", Template: "ruby"},
-		{Dir: t.TempDir(), App: "Orders", Template: Node},
-	} {
-		if _, err := Write(o); err == nil {
-			t.Errorf("Write(%+v): want an error", o)
-		}
+	tests := []struct {
+		name string
+		opts Options
+		want string
+	}{
+		{name: "template", opts: Options{Dir: t.TempDir(), App: "orders", Template: "ruby"}, want: `no template "ruby": want node, go or python`},
+		{name: "app", opts: Options{Dir: t.TempDir(), App: "Orders", Template: Node}, want: "pass --app with lowercase letters"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := Write(tt.opts); err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("Write = %v, want an error with %q", err, tt.want)
+			}
+		})
 	}
 }

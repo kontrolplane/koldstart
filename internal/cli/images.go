@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -39,7 +40,7 @@ func (s *stage) imageRegistry(ctx context.Context) (registry, error) {
 		return registry{}, fmt.Errorf("reading the ecr registry: %w", err)
 	}
 	if len(out.AuthorizationData) == 0 {
-		return registry{}, fmt.Errorf("reading the ecr registry: no authorization data")
+		return registry{}, errors.New("reading the ecr registry: aws gave no authorization data")
 	}
 	data := out.AuthorizationData[0]
 	decoded, err := base64.StdEncoding.DecodeString(aws.ToString(data.AuthorizationToken))
@@ -113,7 +114,11 @@ func dockerLogin(ctx context.Context, reg registry) error {
 	cmd.Stdin = strings.NewReader(reg.password)
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
-	if err := cmd.Run(); err != nil {
+	err := cmd.Run()
+	if errors.Is(err, exec.ErrNotFound) {
+		return errors.New("container image functions need docker on the PATH: install docker and deploy again")
+	}
+	if err != nil {
 		return fmt.Errorf("docker login to %s: %w\n%s", reg.host, err, strings.TrimSpace(out.String()))
 	}
 	return nil

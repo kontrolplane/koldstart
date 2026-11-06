@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"slices"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
@@ -28,9 +29,14 @@ func indent(s string) string {
 // tableWidth is the width of a table that fills the content area, a column in from each side.
 func tableWidth() int { return contentWidth - 2 }
 
-// spread places left and right on one line of the given width.
+// spread places left and right on one line of the given width. When they do not fit, left is cut
+// to an ellipsis so right stays whole.
 func spread(left, right string, width int) string {
-	gap := max(1, width-ansi.StringWidth(left)-ansi.StringWidth(right))
+	rw := ansi.StringWidth(right)
+	if ansi.StringWidth(left)+1+rw > width {
+		left = truncate(left, width-rw-1)
+	}
+	gap := max(1, width-ansi.StringWidth(left)-rw)
 	return left + strings.Repeat(" ", gap) + right
 }
 
@@ -122,26 +128,156 @@ func moveCursor(msg tea.KeyPressMsg, k keys.KeyMap, cursor, n, page int) (int, b
 	return max(0, min(cursor, n-1)), true
 }
 
-// selectable draws height lines of a page with rows that can be selected, rows holding the index
-// of the line of each, the selected one marked. It scrolls so the selected row is in sight, and
-// returns the scroll it drew at.
-func selectable(lines []string, rows []int, cursor, scroll, height int) (string, int) {
+// pickList is a page of lines some of which can be chosen, as the changes of a plan: rows holds
+// the index of the line of each, and lit the line of each drawn chosen, on the selection's ground.
+// The lines are drawn only where they are in sight, so a plan of thousands of changes draws a frame
+// as quickly as one of a screenful. The first head lines are the page's head, drawn one column in
+// as the heads of the other pages are, rather than beside the cursor's gutter.
+type pickList struct {
+	lines lazyLines
+	rows  []int
+	lit   []func() string
+	head  int
+}
+
+// addDrawn appends a line that can be chosen, drawn by line, and by lit when it is chosen, only
+// when it is in sight.
+func (l *pickList) addDrawn(line, lit func() string) {
+	l.rows = append(l.rows, l.lines.len())
+	l.lines.addDrawn(1, func(int) string { return line() })
+	l.lit = append(l.lit, lit)
+}
+
+// position names the chosen row among the rows, as the tables do.
+func (l pickList) position(cursor int) string {
+	return ofCount(cursor, len(l.rows))
+}
+
+// selectable draws height lines of a page with rows that can be selected, the selected one marked
+// and painted as a table paints the row under its cursor. It scrolls so the selected row is in
+// sight, and returns the scroll it drew at.
+func selectable(l pickList, cursor, scroll, height int) (string, int) {
 	selected := -1
-	if cursor >= 0 && cursor < len(rows) {
-		selected = rows[cursor]
+	if cursor >= 0 && cursor < len(l.rows) {
+		selected = l.rows[cursor]
 	}
 	if selected >= 0 {
 		scroll = min(scroll, selected)
 		scroll = max(scroll, selected-height+1)
 	}
-	scroll = max(0, min(scroll, len(lines)-height))
+	scroll = max(0, min(scroll, l.lines.len()-height))
 	out := make([]string, 0, height)
-	for i := scroll; i < min(len(lines), scroll+height); i++ {
-		mark := "  "
-		if i == selected {
-			mark = styles.Accent("▌") + " "
+	for i, line := range l.lines.window(scroll, scroll+height) {
+		switch {
+		case scroll+i == selected && cursor < len(l.lit):
+			out = append(out, cursorMark(styles.P.Selection)+l.lit[cursor]())
+		case scroll+i == selected:
+			out = append(out, styles.Accent("▌")+" "+line)
+		case scroll+i < l.head:
+			out = append(out, " "+line)
+		default:
+			out = append(out, "  "+line)
 		}
-		out = append(out, mark+lines[i])
 	}
 	return strings.Join(out, "\n"), scroll
+}
+
+// scrollCue says which lines of a page that scrolls are in sight, as lines 12–40 of 230: shown
+// lines from the one at first, of total. It is empty when every line is in sight.
+func scrollCue(first, shown, total int) string {
+	first = max(0, min(first, total-1))
+	shown = min(shown, total-first)
+	if shown <= 0 || shown >= total {
+		return ""
+	}
+	return "lines " + formatInt(first+1) + "–" + formatInt(first+shown) + " of " + formatInt(total)
+}
+
+// lazyLines are the lines of a page, drawn only where they are in sight, so a page of thousands
+// of lines draws a frame as quickly as one of a screenful: lines drawn already, and blocks of
+// lines each drawn when a frame asks for it.
+type lazyLines struct {
+	blocks []lineBlock
+	n      int
+}
+
+// lineBlock is a run of lazyLines: lines drawn already, or n lines that draw draws one at a time.
+type lineBlock struct {
+	lines []string
+	n     int
+	draw  func(i int) string
+}
+
+// add appends lines drawn already.
+func (l *lazyLines) add(lines ...string) {
+	if len(lines) == 0 {
+		return
+	}
+	if last := len(l.blocks) - 1; last >= 0 && l.blocks[last].draw == nil {
+		l.blocks[last].lines = append(l.blocks[last].lines, lines...)
+		l.blocks[last].n += len(lines)
+	} else {
+		l.blocks = append(l.blocks, lineBlock{lines: slices.Clip(lines), n: len(lines)})
+	}
+	l.n += len(lines)
+}
+
+// addDrawn appends n lines that draw draws when they are in sight.
+func (l *lazyLines) addDrawn(n int, draw func(i int) string) {
+	if n <= 0 {
+		return
+	}
+	l.blocks = append(l.blocks, lineBlock{n: n, draw: draw})
+	l.n += n
+}
+
+// join appends the lines of o.
+func (l *lazyLines) join(o lazyLines) {
+	for _, b := range o.blocks {
+		if b.draw == nil {
+			l.add(b.lines...)
+		} else {
+			l.addDrawn(b.n, b.draw)
+		}
+	}
+}
+
+func (l lazyLines) len() int { return l.n }
+
+// window draws the lines from from up to to, as far as there are.
+func (l lazyLines) window(from, to int) []string {
+	from, to = max(0, from), min(to, l.n)
+	if from >= to {
+		return nil
+	}
+	out := make([]string, 0, to-from)
+	at := 0
+	for _, b := range l.blocks {
+		if at >= to {
+			break
+		}
+		lo, hi := max(from, at)-at, min(to, at+b.n)-at
+		for i := lo; i < hi; i++ {
+			if b.draw != nil {
+				out = append(out, b.draw(i))
+			} else {
+				out = append(out, b.lines[i])
+			}
+		}
+		at += b.n
+	}
+	return out
+}
+
+// lazyOf is lines drawn already, as lazyLines.
+func lazyOf(lines []string) lazyLines {
+	var l lazyLines
+	l.add(lines...)
+	return l
+}
+
+// scrolledLines draws height lines of l from offset, as far as there are.
+func scrolledLines(l lazyLines, offset, height int) string {
+	offset = max(0, min(offset, l.len()-height))
+	return strings.Join(l.window(offset, offset+height), "\n")
 }

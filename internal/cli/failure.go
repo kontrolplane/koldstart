@@ -1,0 +1,196 @@
+package cli
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"slices"
+	"strings"
+)
+
+// Failure is the error a function failed with, as a person reads it: its type, its message, and
+// its stack trace a line at a time.
+type Failure struct {
+	Type    string
+	Message string
+	// Trace is the stack trace, its common indentation taken off, without the first line when it
+	// only says the type and message again, as node's does.
+	Trace []TraceLine
+}
+
+// TraceLine is a line of a stack trace. Internal is set on the lines of a frame of the runtime
+// or of a dependency, which a person reads past to the frames of their own code.
+type TraceLine struct {
+	Text     string
+	Internal bool
+}
+
+// Head is the type and message of the error, the type left out when there is none.
+func (f Failure) Head() string {
+	if f.Type == "" {
+		return f.Message
+	}
+	return f.Type + ": " + f.Message
+}
+
+// TimedOut reports whether lambda, or invoke --local, ended the function at its timeout.
+func (f Failure) TimedOut() bool {
+	return f.Type == "Sandbox.Timedout" || strings.Contains(f.Message, "Task timed out after")
+}
+
+// failure is the error a function returned, as its runtime writes it: its type, its message and
+// its stack trace, as lines in node and python and as frames in go. Stack is the trace as node's
+// runtime logs it, in the Invoke Error line: a list of lines, or the lines in one string.
+type failure struct {
+	Type    string            `json:"errorType"`
+	Message string            `json:"errorMessage"`
+	Trace   []json.RawMessage `json:"stackTrace"`
+	Stack   json.RawMessage   `json:"stack"`
+}
+
+// ReadFailure reads the error a function returned from what it returned, as node, python and go
+// write one, or from the line of json node's runtime logs it in. It is false for a payload
+// without an errorMessage.
+func ReadFailure(payload []byte) (Failure, bool) {
+	var f failure
+	if json.Unmarshal(payload, &f) != nil || f.Message == "" {
+		return Failure{}, false
+	}
+	if len(f.Trace) == 0 && len(f.Stack) > 0 && json.Unmarshal(f.Stack, &f.Trace) != nil {
+		f.Trace = []json.RawMessage{f.Stack}
+	}
+	return newFailure(f.Type, f.Message, f.Trace), true
+}
+
+// newFailure splits the frames of a trace into its lines, marks the frames that are not the
+// function's own, leaves out a first line that says the head again, and dedents the rest.
+func newFailure(typ, message string, frames []json.RawMessage) Failure {
+	f := Failure{Type: typ, Message: message}
+	for _, frame := range frames {
+		text, internal := traceLine(frame)
+		for line := range strings.SplitSeq(strings.TrimRight(text, "\n"), "\n") {
+			if strings.TrimSpace(line) != "" {
+				f.Trace = append(f.Trace, TraceLine{Text: strings.TrimRight(line, " \t\r"), Internal: internal})
+			}
+		}
+	}
+	if len(f.Trace) > 0 && strings.TrimSpace(f.Trace[0].Text) == f.Head() {
+		f.Trace = f.Trace[1:]
+	}
+	common := -1
+	for _, line := range f.Trace {
+		n := len(line.Text) - len(strings.TrimLeft(line.Text, " \t"))
+		if common < 0 || n < common {
+			common = n
+		}
+	}
+	for i := range f.Trace {
+		f.Trace[i].Text = f.Trace[i].Text[common:]
+	}
+	return f
+}
+
+// traceLine is one frame of a stack trace, and whether it is the runtime's or a dependency's: a
+// line of node or python as it is, and a frame of go as its function and where it is.
+func traceLine(frame json.RawMessage) (string, bool) {
+	var line string
+	if json.Unmarshal(frame, &line) == nil {
+		return line, InternalLine(line)
+	}
+	var g struct {
+		Path  string `json:"path"`
+		Line  int    `json:"line"`
+		Label string `json:"label"`
+	}
+	if json.Unmarshal(frame, &g) == nil && g.Path != "" {
+		return fmt.Sprintf("%s (%s:%d)", g.Label, g.Path, g.Line), InternalGoPath(g.Path) || InternalGoCall(g.Label)
+	}
+	return string(frame), false
+}
+
+// internalLines are what a line of a node or python trace holds when the frame is the runtime's
+// or a dependency's: node_modules and node's own modules, lambda's runtime in /var/runtime, and
+// python's library, its packages and its frozen modules.
+var internalLines = []string{"node_modules/", "node:", "(internal/", "/var/runtime/", "/var/lang/", "site-packages/", "dist-packages/", "<frozen "}
+
+// InternalLine reports whether a line of a node or python trace is the runtime's or a
+// dependency's, which a person reads past to the frames of their own code. kdst ui dims the same
+// lines in the logs.
+func InternalLine(line string) bool {
+	for _, s := range internalLines {
+		if strings.Contains(line, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// goStd are the packages of go's own a stack trace runs through most.
+var goStd = []string{"runtime", "net", "sync", "reflect", "context", "syscall", "internal", "encoding", "fmt", "io", "os", "testing"}
+
+// internalGoPaths are what the file of a go frame holds when it is the runtime's or a
+// dependency's: a module with a version, as -trimpath writes one from the module cache, the
+// module cache, go's own source, and aws-lambda-go.
+var internalGoPaths = []string{"@v", "/pkg/mod/", "/go/src/", "aws-lambda-go"}
+
+// InternalGoPath reports whether the file of a go frame is the runtime's or a dependency's, or
+// code go generated.
+func InternalGoPath(path string) bool {
+	for _, s := range internalGoPaths {
+		if strings.Contains(path, s) {
+			return true
+		}
+	}
+	return strings.HasPrefix(path, "<autogenerated>")
+}
+
+// InternalGoCall reports whether the function of a go frame, as runtime.gopanic or
+// net/http.(*conn).serve, is in go's runtime or library by its package, or in aws-lambda-go.
+func InternalGoCall(call string) bool {
+	if strings.Contains(call, "aws-lambda-go") {
+		return true
+	}
+	pkg := call
+	if i := strings.IndexAny(pkg, "/.("); i >= 0 {
+		pkg = pkg[:i]
+	}
+	return slices.Contains(goStd, pkg)
+}
+
+// functionError says what a function that failed in aws returned: the type and message of its
+// error, as invoke --local says them, with its stack trace indented under them; or what lambda
+// calls the failure, such as Unhandled, with what the function returned when it was not empty.
+func functionError(payload []byte, kind string) string {
+	f, ok := ReadFailure(payload)
+	if !ok {
+		var b bytes.Buffer
+		if len(bytes.TrimSpace(payload)) == 0 || !prettyJSON(&b, payload, palette{}) {
+			return kind
+		}
+		return kind + ", returning\n" + indentLines(strings.TrimRight(b.String(), "\n"))
+	}
+	return f.String()
+}
+
+// describeFailure says what a function that failed on this machine failed with, as functionError
+// says one that failed in aws.
+func describeFailure(typ, message string, trace []json.RawMessage) string {
+	return newFailure(typ, message, trace).String()
+}
+
+// String is the head of a failure with its stack trace under it, indented, as the cli writes it.
+func (f Failure) String() string {
+	if len(f.Trace) == 0 {
+		return f.Head()
+	}
+	lines := make([]string, len(f.Trace))
+	for i, line := range f.Trace {
+		lines[i] = line.Text
+	}
+	return f.Head() + "\n" + indentLines(strings.Join(lines, "\n"))
+}
+
+// indentLines indents every line of s by four spaces, under the line of an error.
+func indentLines(s string) string {
+	return "    " + strings.ReplaceAll(s, "\n", "\n    ")
+}

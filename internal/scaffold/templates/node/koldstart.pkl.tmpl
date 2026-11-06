@@ -7,9 +7,9 @@ region = "{{.Region}}"
 
 functions {
   ["api"] {
-    runtime = "nodejs22.x"
-    handler = "src/api.handler"
     memory = 256
+    // a secret of the stage, /{{.App}}/<stage>/api-key in ssm parameter store:
+    // environment { ["API_KEY"] = kdst.param("api-key") }
     events {
       new kdst.HttpRoute { method = "GET"; path = "/hello" }
     }

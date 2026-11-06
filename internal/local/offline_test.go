@@ -1,6 +1,7 @@
 package local
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -119,6 +121,32 @@ func TestOffline(t *testing.T) {
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusInternalServerError {
 		t.Errorf("a failing function = %d, want 500", resp.StatusCode)
+	}
+}
+
+// TestOfflineLog checks each request is logged with its status and how long it took, never 0s,
+// and with the function it invoked, why it failed, or that no route matched; the routes leave out
+// $default, which matches everything.
+func TestOfflineLog(t *testing.T) {
+	tests := []struct {
+		name    string
+		invoker Invoker
+		path    string
+		want    string
+	}{
+		{name: "invoked", invoker: echo{}, path: "/orders/42", want: `^GET /orders/42 201 (<1ms|\d+ms)  get\n$`},
+		{name: "failed", invoker: echo{fail: true}, path: "/orders/42", want: `^GET /orders/42 500 (<1ms|\d+ms)  get: crashed\n$`},
+		{name: "no route", invoker: echo{}, path: "/nope", want: `^GET /nope 404 (<1ms|\d+ms)  no route\n$`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var log bytes.Buffer
+			o := &Offline{Routes: routes[:5], Invoker: tt.invoker, Log: &log}
+			o.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, tt.path, nil))
+			if !regexp.MustCompile(tt.want).MatchString(log.String()) {
+				t.Errorf("logged %q, want it to match %s", log.String(), tt.want)
+			}
+		})
 	}
 }
 

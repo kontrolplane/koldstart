@@ -1,14 +1,19 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"net"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials/ssocreds"
 	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/service/apigatewayv2"
 	awscloudcontrol "github.com/aws/aws-sdk-go-v2/service/cloudcontrol"
@@ -24,6 +29,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sns"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/aws/smithy-go"
 
 	"github.com/kontrolplane/koldstart/internal/engine"
 	"github.com/kontrolplane/koldstart/internal/provider/awsp"
@@ -60,11 +66,14 @@ func awsConfig(ctx context.Context, opts *Options, region string) (aws.Config, e
 		loaders = append(loaders, awsconfig.WithRegion(region))
 	}
 	cfg, err := awsconfig.LoadDefaultConfig(ctx, loaders...)
+	if missing, ok := errors.AsType[awsconfig.SharedConfigProfileNotExistError](err); ok {
+		return aws.Config{}, fmt.Errorf("no aws profile %q in the shared aws config: set it up with aws configure sso --profile %[1]s, or pass another --profile", missing.Profile)
+	}
 	if err != nil {
 		return aws.Config{}, fmt.Errorf("loading the aws config: %w", err)
 	}
 	if cfg.Region == "" {
-		return aws.Config{}, errors.New("no region: set region in the configuration, or pass --region")
+		return aws.Config{}, errors.New("no aws region: set region in the configuration or the aws profile, or pass --region")
 	}
 	return cfg, nil
 }
@@ -77,11 +86,59 @@ func openSession(ctx context.Context, opts *Options, region string) (*session, e
 	}
 	ident, err := sts.NewFromConfig(cfg).GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
 	if err != nil {
-		return nil, fmt.Errorf("finding the aws account: are there credentials? %w", err)
+		return nil, accountError(err, cfg, opts.Profile)
 	}
 	s := newSession(cfg, aws.ToString(ident.Account))
 	s.Caller = aws.ToString(ident.Arn)
 	return s, nil
+}
+
+// The error codes of credentials aws refused, and of credentials that have expired.
+var (
+	refusedCodes = []string{"InvalidClientTokenId", "SignatureDoesNotMatch", "UnrecognizedClientException", "IncompleteSignature", "AuthFailure"}
+	expiredCodes = []string{"ExpiredToken", "ExpiredTokenException", "RequestExpired", "TokenRefreshRequired"}
+)
+
+// accountError says what to do when sts could not say whose cfg's credentials are, by where they
+// came from and why they failed: sign in again, fix the keys, set up a profile, or check the
+// region. Where there are no credentials at all, the sdk's error is only logged.
+func accountError(err error, cfg aws.Config, profile string) error {
+	var sources []aws.CredentialSource
+	if p, ok := cfg.Credentials.(aws.CredentialProviderSource); ok {
+		sources = p.ProviderSources()
+	}
+	from := func(want ...aws.CredentialSource) bool {
+		return slices.ContainsFunc(sources, func(s aws.CredentialSource) bool { return slices.Contains(want, s) })
+	}
+	withProfile := ""
+	if profile != "" {
+		withProfile = " --profile " + profile
+	}
+	var code string
+	if apiErr, ok := errors.AsType[smithy.APIError](err); ok {
+		code = apiErr.ErrorCode()
+	}
+	_, invalidToken := errors.AsType[*ssocreds.InvalidTokenError](err)
+	_, offline := errors.AsType[*net.DNSError](err)
+
+	switch {
+	case offline:
+		return fmt.Errorf("finding the aws account: %w\naws cannot be reached in %s: check the region, and that this machine is online", err, cfg.Region)
+	case invalidToken || from(aws.CredentialSourceSSO, aws.CredentialSourceProfileSSO, aws.CredentialSourceSSOLegacy, aws.CredentialSourceProfileSSOLegacy):
+		return fmt.Errorf("finding the aws account: %w\nthe sso session has expired or was never started: run aws sso login%s", err, withProfile)
+	case from(aws.CredentialSourceLogin, aws.CredentialSourceProfileLogin):
+		return fmt.Errorf("finding the aws account: %w\nthe aws login session has expired: run aws login%s", err, withProfile)
+	case slices.Contains(expiredCodes, code):
+		return fmt.Errorf("finding the aws account: %w\nthe aws credentials have expired: get new ones, or pass another --profile", err)
+	case slices.Contains(refusedCodes, code) && from(aws.CredentialSourceEnvVars):
+		return fmt.Errorf("finding the aws account: %w\naws refused the keys in AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY: check them, or unset them to use a profile", err)
+	case slices.Contains(refusedCodes, code):
+		return fmt.Errorf("finding the aws account: %w\naws refused the credentials: check the access keys of profile %s, or pass another --profile", err, cmp.Or(profile, "default"))
+	case code == "" && (len(sources) == 0 || slices.Equal(sources, []aws.CredentialSource{aws.CredentialSourceIMDS})):
+		slog.Debug("no aws credentials", "error", err)
+		return errors.New("no aws credentials: pass --profile or set AWS_PROFILE, or set up a profile with aws configure sso")
+	}
+	return fmt.Errorf("finding the aws account: %w", err)
 }
 
 // newSession makes the clients for an account, in the config's region. With an endpoint of an

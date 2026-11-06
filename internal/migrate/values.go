@@ -133,10 +133,10 @@ func splitVariables(s string) ([]part, error) {
 // variable converts what is inside a ${...}.
 func (c *converter) variable(inner string) value {
 	primary, fallback := splitFallback(inner)
-	if strings.Contains(primary, "${") {
+	source, path, _ := strings.Cut(primary, ":")
+	if strings.Contains(primary, "${") && source != "ssm" {
 		return notConverted("${" + inner + "} has a variable inside a variable")
 	}
-	source, path, _ := strings.Cut(primary, ":")
 	switch {
 	case primary == "sls:stage" || primary == "opt:stage" || primary == "self:provider.stage":
 		return literal("kdst.stage")
@@ -161,16 +161,49 @@ func (c *converter) variable(inner string) value {
 		}
 		return literal(fmt.Sprintf("read(%s)", quote("env:"+path)))
 	case source == "ssm":
-		name := strings.TrimSuffix(path, "~true")
-		if !strings.HasPrefix(name, "/") && !strings.HasPrefix(name, "arn:") {
-			return notConverted("${" + inner + "}: ssm with a region or another form")
-		}
-		return value{expr: fmt.Sprintf("kdst.ssm(%s)", quote(name)), ok: true}
+		return c.ssm(path, inner)
 	case source == "cf" || strings.HasPrefix(source, "cf(") || strings.HasPrefix(source, "cf."):
 		return stackOutput(source, path, inner)
 	default:
 		return notConverted("${" + inner + "} has no equivalent: an import, a read() or a value of your own")
 	}
+}
+
+// secretsManagerPath is where ssm reads the secrets of secrets manager:
+// ${ssm:/aws/reference/secretsmanager/<name>}.
+const secretsManagerPath = "/aws/reference/secretsmanager"
+
+// ssm converts ${ssm:/path}, its variables interpolated, to kdst.ssm(). A parameter of the
+// service's own app and stage, /<service>/<stage>/<rest>, becomes kdst.param("<rest>"), and a
+// secret of secrets manager of them, /aws/reference/secretsmanager/<service>/<stage>/<rest>,
+// kdst.secret("<rest>").
+func (c *converter) ssm(path, inner string) value {
+	name := strings.TrimSuffix(path, "~true")
+	if !strings.HasPrefix(name, "/") && !strings.HasPrefix(name, "arn:") {
+		return notConverted("${" + inner + "}: ssm with a region or another form")
+	}
+	v := c.text(name)
+	if !v.ok {
+		return v
+	}
+	app := c.service()
+	if app != "" && str(c.serviceNode()) == app {
+		for _, scoped := range []struct{ under, helper string }{{"", "kdst.param"}, {secretsManagerPath, "kdst.secret"}} {
+			for _, service := range []string{`\(module.app)`, strings.Trim(quote(app), `"`)} {
+				rest, ok := strings.CutPrefix(v.expr, `"`+scoped.under+"/"+service+`/\(kdst.stage)/`)
+				if ok && relativeName(strings.TrimSuffix(rest, `"`)) {
+					return value{expr: scoped.helper + `("` + rest + ")", ok: true}
+				}
+			}
+		}
+	}
+	return value{expr: "kdst.ssm(" + v.expr + ")", ok: true}
+}
+
+// relativeName reports whether name, the inside of a pkl string, can go after the app and stage:
+// it has no leading /, no .. and no empty segments.
+func relativeName(name string) bool {
+	return name != "" && !strings.HasPrefix(name, "/") && !strings.HasSuffix(name, "/") && !strings.Contains(name, "//") && !strings.Contains(name, "..")
 }
 
 // stackOutput converts ${cf:stack.output}, the output of a stack of <service>-<stage>, to the
@@ -189,10 +222,22 @@ func stackOutput(source, path, inner string) value {
 	return value{expr: expr, ok: true}
 }
 
-// splitFallback splits ${a, b} into a and its fallback b.
+// splitFallback splits ${a, b} into a and its fallback b, at the first comma outside the
+// variables inside it.
 func splitFallback(inner string) (string, string) {
-	primary, fallback, _ := strings.Cut(inner, ",")
-	return strings.TrimSpace(primary), strings.TrimSpace(fallback)
+	depth := 0
+	for i := 0; i < len(inner); i++ {
+		switch {
+		case strings.HasPrefix(inner[i:], "${"):
+			depth++
+			i++
+		case inner[i] == '}':
+			depth--
+		case inner[i] == ',' && depth == 0:
+			return strings.TrimSpace(inner[:i]), strings.TrimSpace(inner[i+1:])
+		}
+	}
+	return strings.TrimSpace(inner), ""
 }
 
 func unquoteFallback(s string) string {
@@ -678,9 +723,7 @@ func (c *converter) assign(w *writer, where, head string, v value, n *yaml.Node)
 
 // leaveOut writes what could not be converted as a todo, with the yaml it came from.
 func (c *converter) leaveOut(w *writer, where, why string, n *yaml.Node) {
-	c.todo(where, why)
-	w.comment("TODO: " + why)
-	w.comment("was: " + flow(n))
+	c.leave(w, Add, where, why, n)
 }
 
 // flow is a node as one line of yaml.

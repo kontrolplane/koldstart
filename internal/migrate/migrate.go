@@ -6,6 +6,7 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -17,14 +18,74 @@ import (
 	schema "github.com/kontrolplane/koldstart/pkl"
 )
 
-// Todo is something migrate left for you, and where.
+// Kind is what a todo asks of you. The kinds are in the order they matter most.
+type Kind int
+
+const (
+	// Fix is what a deploy or a build refuses until it is done.
+	Fix Kind = iota
+	// Add is what was left out of koldstart.pkl, to write by hand.
+	Add
+	// Review is what was converted but works differently, to check.
+	Review
+	// Drop is what koldstart does itself or does without: nothing to write.
+	Drop
+)
+
+// kinds are the kinds in the order todos are listed.
+var kinds = []Kind{Fix, Add, Review, Drop}
+
+// String is the heading the todos of a kind are listed under.
+func (k Kind) String() string {
+	switch k {
+	case Fix:
+		return "fix before you deploy"
+	case Add:
+		return "left out, to write by hand"
+	case Review:
+		return "works differently, to check"
+	default:
+		return "not needed in koldstart"
+	}
+}
+
+// Todo is something migrate left for you: what to do, and the key of serverless.yml it is about.
 type Todo struct {
+	Kind  Kind
 	Where string
 	What  string
+	// Marked says a TODO comment in koldstart.pkl marks where it goes.
+	Marked bool
 }
 
 func (t Todo) String() string {
 	return t.Where + ": " + t.What
+}
+
+// WriteTodos lists todos under the heading of their kind, the kinds that matter most first, and
+// in the order they came within a kind.
+func WriteTodos(w io.Writer, todos []Todo) error {
+	first := true
+	for _, kind := range kinds {
+		var lines []string
+		for _, t := range todos {
+			if t.Kind == kind {
+				lines = append(lines, "  "+t.String()+"\n")
+			}
+		}
+		if len(lines) == 0 {
+			continue
+		}
+		heading := kind.String() + ":\n"
+		if !first {
+			heading = "\n" + heading
+		}
+		first = false
+		if _, err := io.WriteString(w, heading+strings.Join(lines, "")); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Result is a converted serverless.yml.
@@ -41,6 +102,8 @@ type converter struct {
 	doc     *yaml.Node
 	version string
 	region  string
+	// name is the name the binary was run as, which the file and the todos give its commands by.
+	name string
 	// functionNames are the names functions get in koldstart.pkl, by their name in serverless.yml,
 	// and functionsByLogicalID the same by their logical id, such as ApiLambdaFunction.
 	functionNames        map[string]string
@@ -61,14 +124,25 @@ type converter struct {
 	conditions   map[string]string
 }
 
-// addedResource is a resource of an event that serverless.yml names but does not declare.
+// addedResource is a resource of an event that serverless.yml names but does not declare, and
+// where is the event.
 type addedResource struct {
-	name, typ, property, value string
+	name, typ, property, value, where string
+}
+
+// Option changes how Convert converts.
+type Option func(*converter)
+
+// WithName gives the name the binary was run as, kdst or koldstart, for the commands the file and
+// the todos name. Without it they say koldstart.
+func WithName(name string) Option {
+	return func(c *converter) { c.name = name }
 }
 
 // Convert converts a serverless.yml into a koldstart.pkl that amends the schema of version. A
-// ${file()} is read relative to dir, the directory of serverless.yml.
-func Convert(src []byte, version, dir string) (*Result, error) {
+// ${file()} is read relative to dir, the directory of serverless.yml. The todos come in the order
+// of their kinds.
+func Convert(src []byte, version, dir string, opts ...Option) (*Result, error) {
 	var file yaml.Node
 	if err := yaml.Unmarshal(src, &file); err != nil {
 		return nil, fmt.Errorf("reading serverless.yml: %w", err)
@@ -76,15 +150,35 @@ func Convert(src []byte, version, dir string) (*Result, error) {
 	if len(file.Content) == 0 || file.Content[0].Kind != yaml.MappingNode {
 		return nil, errors.New("serverless.yml is not a mapping")
 	}
-	c := &converter{doc: file.Content[0], version: version, dir: dir, resourceNames: map[string]string{}}
+	c := &converter{doc: file.Content[0], version: version, dir: dir, name: "koldstart", resourceNames: map[string]string{}}
+	for _, opt := range opts {
+		opt(c)
+	}
 	return c.convert()
 }
 
 // todo records something left for you, once, however often provider's settings repeat it.
-func (c *converter) todo(where, what string) {
-	t := Todo{Where: where, What: what}
-	if !slices.Contains(c.todos, t) {
+func (c *converter) todo(kind Kind, where, what string) {
+	c.record(Todo{Kind: kind, Where: where, What: what})
+}
+
+// record records t, or marks the one recorded already when t is marked.
+func (c *converter) record(t Todo) {
+	i := slices.IndexFunc(c.todos, func(o Todo) bool { return o.Kind == t.Kind && o.Where == t.Where && o.What == t.What })
+	if i < 0 {
 		c.todos = append(c.todos, t)
+		return
+	}
+	c.todos[i].Marked = c.todos[i].Marked || t.Marked
+}
+
+// leave records a todo and writes it as a TODO comment where it belongs, with the yaml it is
+// about when there is some.
+func (c *converter) leave(w *writer, kind Kind, where, what string, n *yaml.Node) {
+	c.record(Todo{Kind: kind, Where: where, What: what, Marked: true})
+	w.comment("TODO: " + what)
+	if n != nil {
+		w.comment("was: " + flow(n))
 	}
 }
 
@@ -101,7 +195,13 @@ func (c *converter) convert() (*Result, error) {
 	c.convertConditions()
 
 	var w writer
-	w.comment("Converted from serverless.yml by kdst migrate. Look for TODO: what it could not convert.")
+	w.comment(fmt.Sprintf("Converted from serverless.yml by %s migrate.\nA TODO comment marks each thing it could not convert, or converted differently.", c.name))
+	stage := str(get(provider, "stage"))
+	if stage != "" && stage != "dev" && !strings.Contains(stage, "${") {
+		w.comment(fmt.Sprintf("serverless.yml deployed to %s by default; koldstart deploys to dev: pass --stage %s.", stage, stage))
+		c.todo(Review, "provider.stage", fmt.Sprintf("deploy with --stage %s, or set KOLDSTART_STAGE=%s: koldstart deploys to dev by default", stage, stage))
+	}
+	w.blank()
 	w.line("amends %s", quote(schema.PackageURI(c.version, schema.Project)))
 	w.blank()
 	w.line("import %s", quote(schema.PackageURI(c.version, schema.Kdst)))
@@ -111,12 +211,6 @@ func (c *converter) convert() (*Result, error) {
 	w.line("app = %s", quote(app))
 	if c.region != "" {
 		w.line("region = %s", quote(c.region))
-	}
-	stage := str(get(provider, "stage"))
-	if stage != "" && !strings.Contains(stage, "${") {
-		w.blank()
-		w.comment(fmt.Sprintf("serverless.yml deployed to %s by default; koldstart deploys to dev: pass --stage %s.", stage, stage))
-		c.todo("provider.stage", fmt.Sprintf("koldstart deploys to dev by default: pass --stage %s, or set KOLDSTART_STAGE", stage))
 	}
 	c.tags(&w, provider)
 	c.http(&w, provider)
@@ -140,18 +234,39 @@ func (c *converter) convert() (*Result, error) {
 	c.leftOver()
 
 	if !appName.MatchString(app) {
-		c.todo("service", fmt.Sprintf("%q is not a name koldstart takes: lowercase letters, digits and dashes, at most 24", app))
+		c.todo(Fix, "service", fmt.Sprintf("rename the app %q: lowercase letters, digits and dashes, at most 24", app))
 	}
+	slices.SortStableFunc(c.todos, func(a, b Todo) int {
+		return cmp.Or(cmp.Compare(a.Kind, b.Kind), cmp.Compare(section(a.Where), section(b.Where)))
+	})
 	return &Result{Pkl: w.String(), Stage: stage, Todos: c.todos}, nil
+}
+
+// sections are the keys of serverless.yml in the order their todos are listed within a kind.
+var sections = []string{"service", "provider", "params", "functions", "resources", "layers", "stepFunctions", "useDotenv", "custom", "plugins"}
+
+// section is where the key a todo is about comes among sections, the ones not in it last.
+func section(where string) int {
+	top, _, _ := strings.Cut(where, ".")
+	top, _, _ = strings.Cut(top, "[")
+	if i := slices.Index(sections, top); i >= 0 {
+		return i
+	}
+	return len(sections)
 }
 
 // service is the app's name: the service, lowercase.
 func (c *converter) service() string {
+	return strings.ToLower(str(c.serviceNode()))
+}
+
+// serviceNode is the service's name as serverless.yml gives it.
+func (c *converter) serviceNode() *yaml.Node {
 	service := get(c.doc, "service")
 	if name := get(service, "name"); name != nil {
 		service = name
 	}
-	return strings.ToLower(str(service))
+	return service
 }
 
 var functionName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9-]{0,39}$`)
@@ -164,14 +279,19 @@ func (c *converter) nameFunctions() {
 	for _, name := range keys(get(c.doc, "functions")) {
 		pklName := strings.NewReplacer("_", "-", ".", "-").Replace(name)
 		if pklName != name {
-			c.todo("functions."+name, "named "+pklName+" in koldstart.pkl, which also renames it and its logs in lambda")
+			c.todo(Review, "functions."+name, renamed(pklName))
 		}
 		if !functionName.MatchString(pklName) {
-			c.todo("functions."+name, "the name is not one koldstart takes: letters, digits and dashes, at most 40")
+			c.todo(Fix, "functions."+name, "rename the function: letters, digits and dashes, at most 40")
 		}
 		c.functionNames[name] = pklName
 		c.functionsByLogicalID[logicalID(name)] = pklName
 	}
+}
+
+// renamed is the todo of a function whose name koldstart does not take as it is.
+func renamed(pklName string) string {
+	return "renamed " + pklName + ", as a name takes no _ or .: update what calls the function by name"
 }
 
 // nameResources gives each resource its name in koldstart.pkl, its logical id.
@@ -246,7 +366,7 @@ func (c *converter) authorizer(w *writer, name string, n *yaml.Node) {
 	if str(get(n, "type")) == "request" {
 		fn, ok := c.functionNames[str(get(n, "functionName"))]
 		if !ok {
-			c.leaveOut(w, where, "a lambda authorizer of a function that is not in functions", n)
+			c.leaveOut(w, where, "its functionName names no function in functions", n)
 			return
 		}
 		w.open(fmt.Sprintf("[%s] = new kdst.LambdaAuthorizer", quote(name)))
@@ -290,32 +410,50 @@ var (
 	olderPython    = []string{"python3.7", "python3.8", "python3.9", "python3.10", "python3.11"}
 )
 
+// unconverted are the keys of a function that are not converted: the kind of todo each is, and
+// what to do instead.
+var unconverted = []struct {
+	key string
+	hint
+}{
+	{"destinations", hint{Add, "koldstart has no destinations yet: send the result on from the function"}},
+	{"onError", hint{Add, "koldstart has no dead letter queue yet: send what fails on from the function"}},
+	{"provisionedConcurrency", hint{Add, "koldstart has no provisioned concurrency yet"}},
+	{"fileSystemConfig", hint{Add, "koldstart mounts no efs yet"}},
+	{"tags", hint{Add, "a function has no tags of its own: set them in tags, which every resource gets"}},
+	{"role", hint{Review, "every function gets a role of its own: give it what it needs with permissions or link"}},
+	{"name", hint{Review, "koldstart names the function <app>-<stage>-<function>: update what calls it by name"}},
+}
+
 // function writes one function, with what provider sets for every function.
 func (c *converter) function(w *writer, name string, fn, provider *yaml.Node) {
 	where := "functions." + name
 	pklName := c.functionNames[name]
+	if pklName != name {
+		c.leave(w, Review, where, renamed(pklName), nil)
+	}
 	if image := get(fn, "image"); image != nil {
 		c.imageFunction(w, name, fn, provider, image)
 		return
 	}
-	runtime := str(get(fn, "runtime"))
+	runtime, runtimeAt := str(get(fn, "runtime")), where+".runtime"
 	if runtime == "" {
-		runtime = str(get(provider, "runtime"))
+		runtime, runtimeAt = str(get(provider, "runtime")), "provider.runtime"
 	}
 	switch {
 	case slices.Contains(nodeRuntimes, runtime):
 	case slices.Contains(olderNode, runtime):
-		c.todo(where, runtime+" is deprecated on lambda: it runs on nodejs22.x now")
-		runtime = "nodejs22.x"
+		c.todo(Review, runtimeAt, upgraded(runtime, config.RuntimeNode22))
+		runtime = config.RuntimeNode22
 	case slices.Contains(customRuntime, runtime):
 		runtime = config.RuntimeGo
 	case slices.Contains(pythonRuntimes, runtime):
 	case slices.Contains(olderPython, runtime):
-		c.todo(where, runtime+" is deprecated or old on lambda: it runs on python3.12 now")
+		c.todo(Review, runtimeAt, upgraded(runtime, config.RuntimePy312))
 		runtime = config.RuntimePy312
 	default:
-		c.todo(where, fmt.Sprintf("the runtime %q is not one koldstart builds yet: the function is left out", runtime))
-		w.comment(fmt.Sprintf("TODO: %s runs on %s, which koldstart does not build yet.", name, runtime))
+		what := fmt.Sprintf("koldstart does not build %s: build the function from a dockerfile with image, or port it to node, python or go", runtime)
+		c.leave(w, Add, where, what, keyed(name, fn))
 		return
 	}
 
@@ -323,31 +461,39 @@ func (c *converter) function(w *writer, name string, fn, provider *yaml.Node) {
 	w.line("runtime = %s", quote(runtime))
 	handler := str(get(fn, "handler"))
 	if runtime == config.RuntimeGo {
-		c.todo(where+".handler", "a go function's handler is the package to build, such as ./cmd/"+pklName)
-		w.comment("TODO: the package to build, such as ./cmd/" + pklName + "; serverless.yml had " + quote(handler) + ".")
+		c.leave(w, Fix, where+".handler", fmt.Sprintf("set handler to the package to build, such as ./cmd/%s: koldstart builds go from source, not %q", pklName, handler), nil)
 		handler = "./cmd/" + pklName
 	}
 	if strings.HasPrefix(runtime, "python") {
 		handler = pythonHandler(handler)
 	}
 	w.line("handler = %s", quote(handler))
+	if layers := get(fn, "layers"); layers != nil && runtime == config.RuntimeGo {
+		c.leaveOut(w, where+".layers", "build what the layers hold into the binary: a go function takes no layers", layers)
+	} else if layers != nil {
+		c.member(w, where+".layers", "layers", layers)
+	}
 	c.settings(w, where, fn, provider)
 	c.environment(w, where, fn, provider)
 	c.permissions(w, where, fn, provider)
 	c.url(w, where, get(fn, "url"))
 	c.events(w, where, get(fn, "events"))
-	if layers := get(fn, "layers"); layers != nil && runtime == config.RuntimeGo {
-		c.leaveOut(w, where+".layers", "a go function has no layers: build what they hold into the binary", layers)
-	} else if layers != nil {
-		c.member(w, where+".layers", "layers", layers)
-	}
-	for _, key := range []string{"destinations", "onError", "provisionedConcurrency", "role", "tags", "name", "fileSystemConfig"} {
-		if v := get(fn, key); v != nil {
-			c.todo(where+"."+key, key+" has no equivalent in koldstart yet")
-			w.comment("TODO: " + key + " has no equivalent in koldstart yet. was: " + flow(v))
+	for _, u := range unconverted {
+		if v := get(fn, u.key); v != nil {
+			c.leave(w, u.kind, where+"."+u.key, u.what, v)
 		}
 	}
 	w.close()
+}
+
+// keyed is n under its key, name: what a TODO comment shows of a function left out.
+func keyed(name string, n *yaml.Node) *yaml.Node {
+	return &yaml.Node{Kind: yaml.MappingNode, Content: []*yaml.Node{{Kind: yaml.ScalarNode, Tag: tagString, Value: name}, n}}
+}
+
+// upgraded is the todo of a function that runs on a newer runtime than serverless.yml gave it.
+func upgraded(from, to string) string {
+	return fmt.Sprintf("runs on %s now, as koldstart does not build %s: test it there", to, from)
 }
 
 // pythonHandler writes a python handler as koldstart takes it, the module's path and the
@@ -372,8 +518,7 @@ func (c *converter) imageFunction(w *writer, name string, fn, provider, image *y
 	built := get(get(get(provider, "ecr"), "images"), imageName)
 	path := str(get(built, "path"))
 	if built == nil || path == "" {
-		c.todo(where, "a prebuilt image or one without a path to build it from: koldstart builds images from a dockerfile; set image { dockerfile; context }")
-		w.comment(fmt.Sprintf("TODO: %s runs a prebuilt image, which koldstart does not take: build it from its dockerfile. was: %s", name, flow(image)))
+		c.leave(w, Add, where+".image", "koldstart builds images itself: give the function the dockerfile to build, with image { context; dockerfile }", keyed(name, fn))
 		return
 	}
 	context := strings.TrimSuffix(strings.TrimPrefix(path, "./"), "/")
@@ -498,9 +643,9 @@ func (c *converter) envValue(n *yaml.Node) value {
 // permissions writes the statements of provider.iam, which serverless.yml gives every function,
 // and those of the function itself.
 func (c *converter) permissions(w *writer, where string, fn, provider *yaml.Node) {
-	statements := get(get(get(provider, "iam"), "role"), "statements")
+	statements, at := get(get(get(provider, "iam"), "role"), "statements"), "provider.iam.role.statements"
 	if statements == nil {
-		statements = get(provider, "iamRoleStatements")
+		statements, at = get(provider, "iamRoleStatements"), "provider.iamRoleStatements"
 	}
 	own := get(fn, "iamRoleStatements")
 	if statements == nil && own == nil {
@@ -508,10 +653,10 @@ func (c *converter) permissions(w *writer, where string, fn, provider *yaml.Node
 	}
 	w.open("permissions")
 	if statements != nil {
+		c.todo(Review, at, "every function got these statements: keep in each what it needs, or use link")
 		w.comment("TODO: serverless.yml gave these statements to every function: keep what this one needs, or use link.")
-		c.todo(where+".permissions", "the statements of provider.iam are on every function: narrow them")
 		for i, s := range statements.Content {
-			c.statement(w, fmt.Sprintf("provider.iam.role.statements[%d]", i), s)
+			c.statement(w, fmt.Sprintf("%s[%d]", at, i), s)
 		}
 	}
 	if own != nil {
@@ -525,7 +670,7 @@ func (c *converter) permissions(w *writer, where string, fn, provider *yaml.Node
 func (c *converter) statement(w *writer, where string, n *yaml.Node) {
 	for _, key := range []string{intrinsicCondition, "NotAction", "NotResource", "Principal"} {
 		if get(n, key) != nil {
-			c.leaveOut(w, where, key+" in a statement has no equivalent: write the statement as a resource policy, or without it", n)
+			c.leaveOut(w, where, "a statement here takes no "+key+": write it as a resource policy, or without it", n)
 			return
 		}
 	}
@@ -571,7 +716,8 @@ func (c *converter) resources(w *writer) {
 		c.resource(w, id, get(resources, id))
 	}
 	for _, r := range c.added {
-		w.comment("serverless.yml made this for an event of a function.")
+		noun := strings.ToLower(r.typ[strings.LastIndex(r.typ, ":")+1:])
+		w.comment(fmt.Sprintf("serverless.yml made this %s for %s.", noun, r.where))
 		w.open(fmt.Sprintf("[%s]", quote(r.name)))
 		w.line("type = %s", quote(r.typ))
 		w.line("properties { %s = %s }", r.property, quote(r.value))
@@ -584,16 +730,16 @@ func (c *converter) resource(w *writer, id string, n *yaml.Node) {
 	where := "resources.Resources." + id
 	typ := str(get(n, "Type"))
 	if !strings.HasPrefix(typ, "AWS::") {
-		c.leaveOut(w, where, fmt.Sprintf("%s is not an aws type cloud control creates", typ), n)
+		c.leaveOut(w, where, fmt.Sprintf("cloud control creates AWS:: types only: do what the %s did another way", typ), n)
 		return
 	}
 	if !functionName.MatchString(id) {
-		c.todo(where, "the logical id is not a name koldstart takes: letters, digits and dashes, at most 40")
+		c.todo(Fix, where, "rename the resource: letters, digits and dashes, at most 40")
 	}
 	if cond := get(n, intrinsicCondition); cond != nil {
 		condition, ok := c.conditionName(cond.Value)
 		if !ok {
-			c.leaveOut(w, where, "the condition "+cond.Value+" is not converted", n)
+			c.leaveOut(w, where, notConvertedCondition(cond.Value), n)
 			return
 		}
 		w.open(fmt.Sprintf("when (%s)", condition))
@@ -607,19 +753,29 @@ func (c *converter) resource(w *writer, id string, n *yaml.Node) {
 	case "delete":
 		w.line(`deletionPolicy = "delete"`)
 	case "snapshot":
-		c.todo(where+".DeletionPolicy", "Snapshot has no equivalent: the resource is retained")
+		c.leave(w, Review, where+".DeletionPolicy", "retained, as koldstart has no Snapshot: take a snapshot before you remove it", nil)
 		w.line(`deletionPolicy = "retain"`)
 	}
 	if props := get(n, "Properties"); props != nil {
 		c.property(w, where+".Properties", "properties", props)
 	}
-	for _, key := range []string{"DependsOn", "Metadata", "CreationPolicy", "UpdatePolicy"} {
+	if v := get(n, "DependsOn"); v != nil {
+		c.leave(w, Review, where+".DependsOn", "koldstart orders resources by their refs: refer with kdst.ref() to what it must wait for", v)
+	}
+	if v := get(n, "Metadata"); v != nil {
+		c.leave(w, Drop, where+".Metadata", "koldstart has no Metadata", v)
+	}
+	for _, key := range []string{"CreationPolicy", "UpdatePolicy"} {
 		if v := get(n, key); v != nil {
-			c.todo(where+"."+key, key+" has no equivalent: koldstart orders resources by their refs")
-			w.comment("TODO: " + key + " has no equivalent. was: " + flow(v))
+			c.leave(w, Add, where+"."+key, "koldstart has no "+key, v)
 		}
 	}
 	w.close()
+}
+
+// notConvertedCondition is the todo of what refers to a condition that is not converted.
+func notConvertedCondition(name string) string {
+	return "its condition " + name + " is not converted: see resources.Conditions." + name
 }
 
 // outputs writes resources.Outputs: each one's value.
@@ -638,12 +794,12 @@ func (c *converter) outputs(w *writer) {
 			continue
 		}
 		if get(o, "Export") != nil {
-			c.todo(where+".Export", "exports have no equivalent: other apps read outputs with kdst.stageOutput()")
+			c.leave(w, Review, where+".Export", "koldstart has no exports: read the output in other apps with kdst.stageOutput()", nil)
 		}
 		if cond := get(o, intrinsicCondition); cond != nil {
 			condition, ok := c.conditionName(cond.Value)
 			if !ok {
-				c.leaveOut(w, where, "the condition "+cond.Value+" is not converted", o)
+				c.leaveOut(w, where, notConvertedCondition(cond.Value), o)
 				continue
 			}
 			w.open(fmt.Sprintf("when (%s)", condition))
@@ -656,53 +812,93 @@ func (c *converter) outputs(w *writer) {
 	w.close()
 }
 
-// plugins say what each well known plugin is in koldstart.
-var plugins = map[string]string{
-	"serverless-esbuild":                "koldstart bundles typescript with esbuild itself: it can go",
-	"serverless-plugin-typescript":      "koldstart bundles typescript with esbuild itself: it can go",
-	"serverless-webpack":                "koldstart bundles with esbuild itself: it can go",
-	"serverless-offline":                "kdst offline serves the http routes on this machine",
-	"serverless-iam-roles-per-function": "every function has a role of its own already",
-	"serverless-prune-plugin":           "koldstart keeps no old versions: it can go",
-	"serverless-domain-manager":         "set http.domain and http.certificate",
-	"serverless-dotenv-plugin":          "read variables with read(\"env:NAME\")",
-	"serverless-plugin-log-retention":   "set logRetention on the function",
-	"serverless-python-requirements":    "koldstart installs requirements.txt or pyproject.toml with uv itself: it can go",
+// hint is a todo of a key that is not converted: its kind, and what to do instead.
+type hint struct {
+	kind Kind
+	what string
 }
+
+// plugin is what a plugin is in koldstart: what the well known ones do there, or what to do about
+// another.
+func (c *converter) plugin(name string) hint {
+	switch name {
+	case "serverless-esbuild", "serverless-plugin-typescript":
+		return hint{Drop, "koldstart bundles typescript with esbuild itself"}
+	case "serverless-webpack":
+		return hint{Drop, "koldstart bundles with esbuild itself"}
+	case "serverless-offline":
+		return hint{Drop, c.name + " offline serves the http routes on this machine"}
+	case "serverless-iam-roles-per-function":
+		return hint{Drop, "every function has a role of its own already"}
+	case "serverless-prune-plugin":
+		return hint{Drop, "koldstart keeps no old versions"}
+	case "serverless-python-requirements":
+		return hint{Drop, "koldstart installs requirements.txt or pyproject.toml with uv itself"}
+	case "serverless-domain-manager":
+		return hint{Add, "set http.domain and http.certificate"}
+	case "serverless-dotenv-plugin":
+		return hint{Add, `read each variable with read("env:NAME")`}
+	case "serverless-plugin-log-retention":
+		return hint{Add, "set logRetention on each function"}
+	}
+	return hint{Add, "plugins do not run in koldstart: do what it did another way"}
+}
+
+// topLevel and providerLevel are the keys of serverless.yml and of provider that are not
+// converted, and what to do about each.
+var (
+	topLevel = []struct {
+		key string
+		hint
+	}{
+		{"layers", hint{Add, "publish the layers yourself, and give functions their arns in layers: koldstart does not build layers"}},
+		{"stepFunctions", hint{Add, "declare the state machines in resources, as AWS::StepFunctions::StateMachine"}},
+		{"useDotenv", hint{Add, `koldstart reads no .env: export the variables before you deploy, and read them with read("env:NAME")`}},
+	}
+	providerLevel = []struct {
+		key string
+		hint
+	}{
+		{"apiGateway", hint{Add, "koldstart deploys an http api, not a rest api: set what it needs on http"}},
+		{"stackTags", hint{Add, "set them in tags, which every resource gets"}},
+		{"kmsKeyArn", hint{Add, "koldstart has no kmsKeyArn yet: the variables are encrypted with lambda's own key"}},
+		{"tracing", hint{Add, "koldstart has no tracing yet"}},
+		{"logs", hint{Add, "koldstart has no access logs yet; set logRetention on a function for how long its logs are kept"}},
+		{"deploymentBucket", hint{Drop, "koldstart keeps its zips and state in a bucket of its own"}},
+	}
+)
 
 // leftOver lists what serverless.yml has that is not converted: custom, plugins, and the rest.
 func (c *converter) leftOver() {
 	if custom := get(c.doc, "custom"); custom != nil {
-		c.todo("custom", "custom is not converted; what refers to it with ${self:custom...} got its value: "+strings.Join(keys(custom), ", "))
+		c.todo(Drop, "custom", "each ${self:custom...} got its value where it was used: "+strings.Join(keys(custom), ", "))
 	}
 	if list := get(c.doc, "plugins"); list != nil {
 		items := list.Content
 		if modules := get(list, "modules"); modules != nil {
 			items = modules.Content
 		}
-		for _, p := range items {
-			if hint, ok := plugins[p.Value]; ok {
-				c.todo("plugins."+p.Value, hint)
-			} else {
-				c.todo("plugins."+p.Value, "plugins do not run in koldstart: do what it did another way")
+		for i, p := range items {
+			h := c.plugin(p.Value)
+			if strings.HasPrefix(p.Value, ".") || strings.HasPrefix(p.Value, "/") {
+				c.todo(h.kind, fmt.Sprintf("plugins[%d]", i), p.Value+" does not run in koldstart: do what it did another way")
+				continue
 			}
+			c.todo(h.kind, "plugins."+p.Value, h.what)
 		}
 	}
-	if get(c.doc, "layers") != nil {
-		c.todo("layers", "koldstart does not build layers: publish them, and give functions their arns in layers")
-	}
-	for _, key := range []string{"stepFunctions", "useDotenv"} {
-		if get(c.doc, key) != nil {
-			c.todo(key, key+" has no equivalent in koldstart")
+	for _, k := range topLevel {
+		if get(c.doc, k.key) != nil {
+			c.todo(k.kind, k.key, k.what)
 		}
 	}
 	provider := get(c.doc, "provider")
-	for _, key := range []string{"apiGateway", "deploymentBucket", "stackTags", "kmsKeyArn", "tracing", "logs"} {
-		if get(provider, key) != nil {
-			c.todo("provider."+key, key+" is not converted")
+	for _, k := range providerLevel {
+		if get(provider, k.key) != nil {
+			c.todo(k.kind, "provider."+k.key, k.what)
 		}
 	}
 	if role := get(get(provider, "iam"), "role"); role != nil && role.Kind == yaml.ScalarNode {
-		c.todo("provider.iam.role", "a role of your own is not taken over: every function has its own")
+		c.todo(Review, "provider.iam.role", "every function gets a role of its own: give each what it needs with permissions or link")
 	}
 }

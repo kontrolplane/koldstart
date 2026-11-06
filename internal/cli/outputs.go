@@ -17,20 +17,46 @@ import (
 )
 
 func outputsCommand(name string, opts *Options) *cobra.Command {
-	return &cobra.Command{
-		Use:     "outputs",
-		Short:   "print the stage's outputs, such as the http api url",
-		Example: fmt.Sprintf("  %[1]s outputs --stage prod", name),
-		Args:    cobra.NoArgs,
+	var output string
+	cmd := &cobra.Command{
+		Use:   "outputs",
+		Short: "print the stage's outputs, such as the http api url",
+		Long: `outputs prints the outputs the last deploy of the stage recorded: those of the configuration,
+httpApiUrl, webSocketUrl and a <function>Url for each function url. -o json prints them as one
+json object of strings, its keys sorted, and {} when there are none:
+
+  {
+    "apiUrl": "https://abc123.lambda-url.eu-west-1.on.aws/",
+    "httpApiUrl": "https://abc123.execute-api.eu-west-1.amazonaws.com"
+  }`,
+		Example: fmt.Sprintf(`  %[1]s outputs
+  %[1]s outputs --stage prod
+  %[1]s outputs -o json | jq -r .httpApiUrl`, name),
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := checkOutput(cmd, output); err != nil {
+				return err
+			}
 			s, err := openStage(cmd.Context(), opts, false)
 			if err != nil {
 				return err
 			}
-			printOutputs(cmd.OutOrStdout(), s.state.Outputs)
+			if s.etag == "" {
+				return fmt.Errorf("%s/%s is not deployed: deploy it with %s deploy --stage %s", s.App, s.Stage, name, s.Stage)
+			}
+			if output == outputJSON {
+				return writeOutputsJSON(cmd.OutOrStdout(), s.state.Outputs)
+			}
+			if len(s.state.Outputs) == 0 {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "%s/%s has no outputs\n", s.App, s.Stage)
+				return nil
+			}
+			writeOutputs(cmd.OutOrStdout(), "", s.state.Outputs)
 			return nil
 		},
 	}
+	outputFlag(cmd, &output)
+	return cmd
 }
 
 // outputs resolves the configuration's outputs against the state, and adds the urls.
@@ -54,7 +80,7 @@ func (s *stage) outputValue(st *state.State, v config.Value) (string, error) {
 	case v.Ref != nil:
 		r := st.Resources[desired.NodeID(s.Project, v.Ref.Resource)]
 		if r == nil {
-			return "", fmt.Errorf("%s does not exist", v.Ref.Resource)
+			return "", fmt.Errorf("%s is not deployed: deploy the stage", v.Ref.Resource)
 		}
 		return r.Attributes[v.Ref.Attribute], nil
 	case v.Join != nil:
@@ -104,12 +130,31 @@ func (s *stage) urlOutputs(st *state.State) map[string]string {
 	return out
 }
 
+// printOutputs writes the outputs under a heading, after a deploy.
 func printOutputs(w io.Writer, outputs map[string]string) {
 	if len(outputs) == 0 {
 		return
 	}
 	_, _ = fmt.Fprintln(w, "\noutputs:")
-	for _, k := range slices.Sorted(maps.Keys(outputs)) {
-		_, _ = fmt.Fprintf(w, "  %s = %s\n", k, outputs[k])
+	writeOutputs(w, "  ", outputs)
+}
+
+// writeOutputs writes the outputs one a line, sorted, with their values lined up.
+func writeOutputs(w io.Writer, indent string, outputs map[string]string) {
+	keys := slices.Sorted(maps.Keys(outputs))
+	width := 0
+	for _, k := range keys {
+		width = max(width, len(k))
 	}
+	for _, k := range keys {
+		_, _ = fmt.Fprintf(w, "%s%-*s = %s\n", indent, width, k, outputs[k])
+	}
+}
+
+// writeOutputsJSON writes the outputs as one json object, {} when there are none.
+func writeOutputsJSON(w io.Writer, outputs map[string]string) error {
+	if outputs == nil {
+		outputs = map[string]string{}
+	}
+	return writeJSON(w, outputs)
 }

@@ -6,14 +6,16 @@ package tui
 import (
 	"context"
 	"fmt"
+	"io"
 	"maps"
 	"os"
 	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 
 	"github.com/kontrolplane/koldstart/internal/cli"
 	"github.com/kontrolplane/koldstart/internal/engine"
@@ -21,7 +23,12 @@ import (
 	"github.com/kontrolplane/koldstart/internal/tui/styles"
 )
 
-// backend is what the interface reads and changes, a *cli.Console outside tests.
+// binary is the name the binary was run by, kdst or koldstart, for the commands the interface
+// suggests.
+var binary = cli.Name(os.Args[0])
+
+// backend is what the interface reads and changes, a *cli.Console outside tests. EventsDir is
+// "" without a project here to keep events in.
 type backend interface {
 	Identity() cli.Identity
 	Project() (app, stage string, err error)
@@ -82,20 +89,31 @@ func Run(ctx context.Context, c *cli.Console, theme string) error {
 	defer cancel()
 	m := newModel(ctx, c)
 	_, err := tea.NewProgram(m, tea.WithContext(ctx)).Run()
-	stopped := m.ops.names()
-	cancel()
-	m.ops.Wait()
-	for _, name := range stopped {
-		_, _ = fmt.Fprintf(os.Stderr, "stopped %s: what was done is in the state, run it again to finish\n", name)
-	}
+	m.ops.stop(os.Stderr, cancel)
 	if err != nil {
 		return fmt.Errorf("running the terminal interface: %w", err)
 	}
 	return nil
 }
 
-// useTheme picks the palette: auto follows the terminal's background, dark and light paint their
-// own.
+// stop cancels the operations still running and waits for them, saying on w what it waits for
+// first, as the calls in flight can take a while to answer once the interface is gone.
+func (o *operations) stop(w io.Writer, cancel context.CancelFunc) {
+	stopped := o.names()
+	cancel()
+	for _, name := range stopped {
+		_, _ = fmt.Fprintf(w, "stopping %s: waiting for the calls to aws in flight, then releasing its lock…\n", name)
+	}
+	o.Wait()
+	for _, name := range stopped {
+		_, _ = fmt.Fprintf(w, "stopped %s: what was done is in the state, run it again to finish\n", name)
+	}
+}
+
+// useTheme picks the palette: dark and light paint their own background, and auto starts from
+// what COLORFGBG says of the terminal's, dark without it, until the terminal answers Init's query
+// of its background. Asking within the program, not before it, means a terminal that does not
+// answer, as some multiplexers do not, costs no wait and leaves no reply to echo.
 func useTheme(theme string) {
 	switch theme {
 	case "dark":
@@ -105,6 +123,19 @@ func useTheme(theme string) {
 		styles.Use(false)
 		styles.Paint = true
 	default:
-		styles.Use(lipgloss.HasDarkBackground(os.Stdin, os.Stdout))
+		styles.Use(darkGround(os.Getenv("COLORFGBG")))
+		styles.Paint = false
 	}
+}
+
+// darkGround reports whether COLORFGBG, as rxvt, konsole and tmux set it, names a dark
+// background: its last field is the colour of the background, 0 to 6 and 8 dark. Anything else,
+// or nothing, is taken as dark, as most terminals are.
+func darkGround(colorfgbg string) bool {
+	fields := strings.Split(colorfgbg, ";")
+	bg, err := strconv.Atoi(fields[len(fields)-1])
+	if err != nil || bg < 0 || bg > 15 {
+		return true
+	}
+	return bg <= 6 || bg == 8
 }

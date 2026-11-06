@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -26,10 +27,17 @@ var (
 	routePattern = regexp.MustCompile(`^(\$default|/[A-Za-z0-9._~{}+/-]*)$`)
 )
 
-// Load evaluates the configuration at path for stage, and checks it.
+// Load evaluates the configuration at path for stage, infers the runtimes and handlers its
+// functions leave out from the files beside it, and checks it.
 func Load(ctx context.Context, ev Evaluator, path, stage string) (*Project, error) {
+	return LoadIn(ctx, ev, path, filepath.Dir(path), stage)
+}
+
+// LoadIn is Load for a project in root whose configuration is evaluated at path elsewhere, such
+// as the copy schema.Local writes.
+func LoadIn(ctx context.Context, ev Evaluator, path, root, stage string) (*Project, error) {
 	if !stagePattern.MatchString(stage) {
-		return nil, fmt.Errorf("stage %q: use lowercase letters, digits and dashes, starting with a letter, at most 16", stage)
+		return nil, fmt.Errorf("stage %q is not a stage name: pass --stage with lowercase letters, digits and dashes, starting with a letter, at most 16", stage)
 	}
 	out, err := ev.EvalJSON(ctx, path, map[string]string{"stage": stage})
 	if err != nil {
@@ -42,6 +50,9 @@ func Load(ctx context.Context, ev Evaluator, path, stage string) (*Project, erro
 	if project.Stage != stage {
 		return nil, fmt.Errorf("%s sets stage to %q, but --stage is %q: leave stage to --stage", path, project.Stage, stage)
 	}
+	if err := project.Infer(root); err != nil {
+		return nil, fmt.Errorf("checking %s: %w", path, err)
+	}
 	if err := project.Validate(); err != nil {
 		return nil, fmt.Errorf("checking %s: %w", path, err)
 	}
@@ -51,7 +62,9 @@ func Load(ctx context.Context, ev Evaluator, path, stage string) (*Project, erro
 // Decode reads the json pkl renders for a koldstart.pkl.
 func Decode(data []byte) (*Project, error) {
 	var head struct {
-		SchemaVersion int `json:"schemaVersion"`
+		SchemaVersion int    `json:"schemaVersion"`
+		App           string `json:"app"`
+		Stage         string `json:"stage"`
 	}
 	if err := json.Unmarshal(data, &head); err != nil {
 		return nil, err
@@ -61,6 +74,10 @@ func Decode(data []byte) (*Project, error) {
 	}
 	if head.SchemaVersion > SchemaVersion {
 		return nil, fmt.Errorf("the file uses schema %d, this koldstart reads up to %d: upgrade koldstart", head.SchemaVersion, SchemaVersion)
+	}
+	data, err := scopeSecrets(data, head.App, head.Stage)
+	if err != nil {
+		return nil, err
 	}
 
 	var raw struct {

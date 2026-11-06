@@ -6,22 +6,26 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/kontrolplane/koldstart/internal/scaffold"
 )
 
 // TestInit checks init writes the template into the directory it is given, names the app after
-// it, and says what to run next.
+// it, and says the app, its region and what to run next.
 func TestInit(t *testing.T) {
 	tests := []struct {
 		name     string
 		args     []string
 		files    []string
 		app      string
+		started  string
 		next     string
 		failWith string
 	}{
-		{name: "node", args: []string{"orders"}, files: []string{"koldstart.pkl", "src/api.ts", ".gitignore"}, app: `app = "orders"`, next: "kdst deploy"},
-		{name: "go", args: []string{"orders", "-t", "go", "--app", "shop"}, files: []string{"koldstart.pkl", "cmd/api/main.go", "go.mod"}, app: `app = "shop"`, next: "go mod tidy"},
-		{name: "unknown template", args: []string{"orders", "-t", "ruby"}, failWith: "no template"},
+		{name: "node", args: []string{"orders"}, files: []string{"koldstart.pkl", "src/api.ts", ".gitignore"}, app: `app = "orders"`, started: "started orders, which deploys to eu-west-1", next: "kdst deploy"},
+		{name: "go", args: []string{"orders", "-t", "go", "--app", "shop"}, files: []string{"koldstart.pkl", "cmd/api/main.go", "go.mod"}, app: `app = "shop"`, started: "started shop, which deploys to eu-west-1", next: "go mod tidy"},
+		{name: "python", args: []string{"orders", "-t", "python"}, files: []string{"koldstart.pkl", "src/api.py", "requirements.txt"}, app: `app = "orders"`, started: "started orders", next: "kdst plan"},
+		{name: "unknown template", args: []string{"orders", "-t", "ruby"}, failWith: `-t "ruby": want node, go or python`},
 		{name: "no app name", args: []string{"日本"}, failWith: "pass --app"},
 	}
 	for _, tt := range tests {
@@ -51,8 +55,54 @@ func TestInit(t *testing.T) {
 			if !strings.Contains(string(data), tt.app) || !strings.Contains(string(data), `region = "eu-west-1"`) {
 				t.Errorf("koldstart.pkl:\n%s", data)
 			}
-			if !strings.Contains(out.String(), tt.next) || !strings.Contains(out.String(), "cd orders") {
+			if !strings.Contains(out.String(), tt.started) || !strings.Contains(out.String(), tt.next) || !strings.Contains(out.String(), "cd orders") {
 				t.Errorf("printed:\n%s", out.String())
+			}
+		})
+	}
+}
+
+// TestNextSteps checks what init says to run next lines up what each command does in one column,
+// the go steps included, and leaves cd without one.
+func TestNextSteps(t *testing.T) {
+	tests := []struct {
+		name     string
+		binary   string
+		dir      string
+		template string
+		written  []string
+		want     []string
+	}{
+		{
+			name: "node here", binary: "kdst", dir: ".", template: "node",
+			want: []string{
+				"kdst plan      see what a deploy creates",
+				"kdst deploy    deploy it, and print the url of GET /hello",
+			},
+		},
+		{
+			name: "go in a directory", binary: "kdst", dir: "orders", template: "go", written: []string{"go.mod"},
+			want: []string{
+				"cd orders",
+				"go mod tidy    fetch aws-lambda-go, which the handler imports",
+				"kdst plan      see what a deploy creates",
+				"kdst deploy    deploy it, and print the url of GET /hello",
+			},
+		},
+		{
+			name: "go with a go.mod of its own", binary: "koldstart", dir: ".", template: "go",
+			want: []string{
+				"go get github.com/aws/aws-lambda-go    add it to go.mod, as the handler imports it",
+				"koldstart plan                         see what a deploy creates",
+				"koldstart deploy                       deploy it, and print the url of GET /hello",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := strings.Join(nextSteps(tt.binary, tt.dir, tt.template, scaffold.Result{Written: tt.written}), "\n")
+			if want := strings.Join(tt.want, "\n"); got != want {
+				t.Errorf("nextSteps =\n%s\nwant\n%s", got, want)
 			}
 		})
 	}

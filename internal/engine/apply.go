@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
+	"runtime/debug"
 	"slices"
 	"sync"
 	"time"
@@ -100,7 +102,7 @@ func (e *Engine) run(todo []func() error) error {
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			if err := fn(); err != nil {
+			if err := protect(fn); err != nil {
 				mu.Lock()
 				errs = append(errs, err)
 				mu.Unlock()
@@ -109,6 +111,18 @@ func (e *Engine) run(todo []func() error) error {
 	}
 	wg.Wait()
 	return errors.Join(errs...)
+}
+
+// protect calls fn, turning a panic in it into its error, so a bug in a provider fails its node
+// rather than end the program: the deploy then still records what it did and releases its lock.
+func protect(fn func() error) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("panic", "value", fmt.Sprint(r), "stack", string(debug.Stack()))
+			err = fmt.Errorf("a bug in koldstart stopped it (%v): run again with --debug and report what debug.log says", r)
+		}
+	}()
+	return fn()
 }
 
 func (e *Engine) event(ev Event) {
@@ -131,7 +145,8 @@ func (e *Engine) tags(id string, app, stage string) map[string]string {
 // applyNode creates or updates one node, its refs resolved against the state as it is now that
 // what it depends on is applied. When its inputs come out the same as before, nothing is done.
 // The operation is recorded as pending before the call, so a deploy that dies during it knows
-// the resource may exist.
+// the resource may exist. A node whose inputs cannot be resolved is told as failed, though it
+// never started, so what shows progress counts it.
 func (e *Engine) applyNode(ctx context.Context, n Node, c Change, store *Store) (err error) {
 	start := time.Now()
 	p, err := e.provider(n.Type)
@@ -141,7 +156,9 @@ func (e *Engine) applyNode(ctx context.Context, n Node, c Change, store *Store) 
 	snap := store.Snapshot()
 	in, err := e.prepare(ctx, n, snap)
 	if err != nil {
-		return fmt.Errorf("%s: %w", n.ID, err)
+		err = fmt.Errorf("%s: %w", n.ID, err)
+		e.event(Event{ID: n.ID, Action: c.Action, Done: true, Err: err, Duration: time.Since(start)})
+		return err
 	}
 	prior := snap.Resources[n.ID]
 	if prior == nil {
@@ -237,10 +254,21 @@ func (e *Engine) recordPending(ctx context.Context, store *Store, n Node, prior 
 	})
 }
 
-// recordApplied writes what exists after action on the node. A retained resource that was
-// replaced stays in the state, as retained, under its node and its old id. An imported resource
-// stays retained unless the configuration says delete.
+// recordTimeout bounds a write to the state of what a call to aws did.
+const recordTimeout = 15 * time.Second
+
+// recording returns the context to write what a call to aws did with: ctx without its cancel,
+// so ctrl+c during the call still leaves what it did in the state, bounded by recordTimeout.
+func recording(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), recordTimeout)
+}
+
+// recordApplied writes what exists after action on the node, also when ctx was cancelled during
+// the call. A retained resource that was replaced stays in the state, as retained, under its
+// node and its old id. An imported resource stays retained unless the configuration says delete.
 func (e *Engine) recordApplied(ctx context.Context, store *Store, n Node, prior *state.Resource, action Action, res Result, in prepared) error {
+	ctx, cancel := recording(ctx)
+	defer cancel()
 	policy := n.DeletionPolicy
 	imported := prior != nil && prior.Imported && action != Replace
 	if policy == "" && imported {
@@ -421,6 +449,8 @@ func dependedOn(snap *state.State, todo map[string]Change, id string) bool {
 	return false
 }
 
+// deleteNode deletes a node gone from the configuration, or keeps it as retained. A delete that
+// went through is recorded also when ctx was cancelled during it.
 func (e *Engine) deleteNode(ctx context.Context, c Change, store *Store) (err error) {
 	start := time.Now()
 	snap := store.Snapshot()
@@ -458,7 +488,12 @@ func (e *Engine) deleteNode(ctx context.Context, c Change, store *Store) (err er
 	if err := p.Delete(ctx, req); err != nil {
 		return fmt.Errorf("%s: %w", c.ID, err)
 	}
-	return store.Update(ctx, func(st *state.State) { delete(st.Resources, c.ID) })
+	recordCtx, cancel := recording(ctx)
+	defer cancel()
+	if err := store.Update(recordCtx, func(st *state.State) { delete(st.Resources, c.ID) }); err != nil {
+		return fmt.Errorf("%s: recording the delete: %w", c.ID, err)
+	}
+	return nil
 }
 
 // changedMarker stands, in the inputs a provider is given as the prior ones, for a secret or a
