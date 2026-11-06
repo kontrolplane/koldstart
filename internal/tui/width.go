@@ -138,13 +138,6 @@ type pickList struct {
 	lit   []func() string
 }
 
-// add appends a line that can be chosen, as it is drawn and as it is drawn chosen.
-func (l *pickList) add(line, lit string) {
-	l.rows = append(l.rows, l.lines.len())
-	l.lines.add(line)
-	l.lit = append(l.lit, func() string { return lit })
-}
-
 // addDrawn appends a line that can be chosen, drawn by line, and by lit when it is chosen, only
 // when it is in sight.
 func (l *pickList) addDrawn(line, lit func() string) {

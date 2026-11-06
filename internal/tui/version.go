@@ -187,16 +187,6 @@ func (m model) versionLines() pickList {
 		return pickList{}
 	}
 	cur := v.current
-	lines := []string{
-		styles.SectionHeader("deploy of "+formatTime(v.version.LastModified), width),
-		row("saved", text(formatAgo(v.version.LastModified), styles.ToneBody), width),
-		row("version", text(v.version.ID, styles.ToneFaint), width),
-		row("deployed by", text(orDash(cur.DeployedBy), styles.ToneBody), width),
-		row("serial", text(formatInt(int(cur.Serial)), styles.ToneBody), width),
-		row("resources", text(formatInt(len(cur.Resources)), styles.ToneBody), width),
-		row("writes", text(plural(v.writes, "write")+" of the state, the last shown", styles.ToneMuted), width),
-		"",
-	}
 	changes := stateChanges(v.before, cur)
 	outputs := outputChanges(v.before, cur)
 	title := "changed from the deploy before"
@@ -206,7 +196,17 @@ func (m model) versionLines() pickList {
 	if len(changes) > 0 {
 		title += " · " + plural(len(changes), "resource")
 	}
-	lines = append(lines, styles.SectionHeader(title, width))
+	lines := []string{
+		styles.SectionHeader("deploy of "+formatTime(v.version.LastModified), width),
+		row("saved", text(formatAgo(v.version.LastModified), styles.ToneBody), width),
+		row("version", text(v.version.ID, styles.ToneFaint), width),
+		row("deployed by", text(orDash(cur.DeployedBy), styles.ToneBody), width),
+		row("serial", text(formatInt(int(cur.Serial)), styles.ToneBody), width),
+		row("resources", text(formatInt(len(cur.Resources)), styles.ToneBody), width),
+		row("writes", text(plural(v.writes, "write")+" of the state, the last shown", styles.ToneMuted), width),
+		"",
+		styles.SectionHeader(title, width),
+	}
 	l := pickList{lines: lazyOf(lines)}
 	cols := []column{{width: width}}
 	cells := make([]cell, len(changes))
