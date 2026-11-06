@@ -103,7 +103,7 @@ func TestUpgrade(t *testing.T) {
 // schema it embeds, resolved for real and offline, a second time finding nothing to do, and the
 // project it leaves evaluating.
 func TestUpgradeCommand(t *testing.T) {
-	if _, err := exec.LookPath("pkl"); err != nil && os.Getenv(pkl.EnvBinary) == "" {
+	if _, err := exec.LookPath("pkl"); err != nil && os.Getenv(pkl.EnvBinary) == "" && os.Getenv("CI") == "" {
 		t.Skip("no pkl on the PATH")
 	}
 	t.Chdir(t.TempDir())

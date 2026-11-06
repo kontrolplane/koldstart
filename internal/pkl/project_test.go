@@ -269,7 +269,7 @@ func TestEvalErrorDependency(t *testing.T) {
 // real and offline, also through a link to its directory, and the two errors of a module without
 // one.
 func TestEvalLocalDependency(t *testing.T) {
-	if _, err := exec.LookPath("pkl"); err != nil && os.Getenv(EnvBinary) == "" {
+	if _, err := exec.LookPath("pkl"); err != nil && os.Getenv(EnvBinary) == "" && os.Getenv("CI") == "" {
 		t.Skip("no pkl on the PATH")
 	}
 	binary, err := Find(context.Background())

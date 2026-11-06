@@ -1,11 +1,20 @@
 package schema
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/kontrolplane/koldstart/internal/pkl"
 )
 
 // TestReleaseVersion checks a release's version names its schema package, and a dev build's,
@@ -215,6 +224,87 @@ func TestWriteProject(t *testing.T) {
 			}
 			if got, _ := os.ReadFile(filepath.Join(dir, Package)); string(got) != tt.want {
 				t.Errorf("PklProject =\n%s\nwant\n%s", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestReleasedPackage packages the schema as a release publishes it, serves it where github
+// would, and checks a project that depends on its package uri resolves and evaluates, and one
+// that names a version that is not released says so. pkl runs through a script that rewrites
+// github to the server and keeps a cache of its own, so nothing goes over the network.
+func TestReleasedPackage(t *testing.T) {
+	if os.Getenv("CI") == "" && os.Getenv(pkl.EnvBinary) == "" {
+		if _, err := exec.LookPath("pkl"); err != nil {
+			t.Skip("no pkl on the PATH")
+		}
+	}
+	real, err := pkl.Find(context.Background())
+	if err != nil {
+		t.Fatalf("finding pkl: %v", err)
+	}
+	out := t.TempDir()
+	cmd := exec.Command(real, "project", "package", "--output-path", out, ".")
+	cmd.Env = append(os.Environ(), "KOLDSTART_VERSION=0.1.0")
+	if data, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("packaging: %v\n%s", err, data)
+	}
+	const releasePath = "/kontrolplane/koldstart/releases/download/v0.1.0/"
+	var mu sync.Mutex
+	var requests []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requests = append(requests, r.URL.Path)
+		mu.Unlock()
+		http.StripPrefix(releasePath, http.FileServer(http.Dir(out))).ServeHTTP(w, r)
+	}))
+	defer server.Close()
+	binary := filepath.Join(t.TempDir(), "pkl")
+	script := fmt.Sprintf("#!/bin/sh\nsub=$1\nshift\nif [ \"$sub\" = project ]; then sub=\"project $1\"; shift; fi\nexec %q $sub --http-rewrite %q --allowed-resources %q --cache-dir %q \"$@\"\n",
+		real, "https://github.com/="+server.URL+"/", "env:,prop:,file:,modulepath:,package:,projectpackage:,https:,http:", t.TempDir())
+	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name         string
+		version      string
+		wantErr      string
+		wantRequests []string
+	}{
+		{name: "released", version: "0.1.0", wantRequests: []string{releasePath + "koldstart@0.1.0", releasePath + "koldstart@0.1.0.zip"}},
+		{
+			name: "not released", version: "9.9.9",
+			wantErr:      "/kontrolplane/koldstart/releases/download/v9.9.9/koldstart@9.9.9, which may not be released: set the version in its koldstart uri to a release of koldstart, or run kdst upgrade",
+			wantRequests: []string{"/kontrolplane/koldstart/releases/download/v9.9.9/koldstart@9.9.9"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			mu.Lock()
+			requests = nil
+			mu.Unlock()
+			if err := os.WriteFile(filepath.Join(dir, Package), []byte(Release(tt.version).PklProject()), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(dir, "koldstart.pkl")
+			if err := os.WriteFile(path, []byte("amends \"@koldstart/Project.pkl\"\n\napp = \"shop\"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			got, err := pkl.Evaluator{Binary: binary, Name: "kdst"}.EvalJSON(context.Background(), path, nil)
+			switch {
+			case tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr)):
+				t.Errorf("EvalJSON = %v, want an error with %q", err, tt.wantErr)
+			case tt.wantErr == "" && err != nil:
+				t.Fatal(err)
+			case tt.wantErr == "" && !strings.Contains(string(got), `"app": "shop"`):
+				t.Errorf("EvalJSON =\n%s", got)
+			}
+			mu.Lock()
+			asked := slices.Clone(requests)
+			mu.Unlock()
+			if missing := slices.DeleteFunc(slices.Clone(tt.wantRequests), func(r string) bool { return slices.Contains(asked, r) }); len(missing) > 0 {
+				t.Errorf("pkl asked for %v, and not for %v", asked, missing)
 			}
 		})
 	}
