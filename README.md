@@ -271,7 +271,7 @@ It prints what changed, `koldstart 0.1.0 → 0.2.0`, and resolves `PklProject.de
 
 A koldstart refuses a file whose schema is newer than it reads, and says to upgrade koldstart: the schema has a version of its own, which goes up only when an older koldstart could not read what it renders.
 
-A file from before `PklProject` that amends the full `package://` uri still works, but `kdst upgrade` writes the `PklProject` it needs to import `@koldstart/` instead.
+A file without a `PklProject` that amends the full `package://` uri of the schema still works. To move it to `@koldstart/`, run `kdst upgrade`, which writes the `PklProject`, and change its `amends` and `import` to `@koldstart/Project.pkl` and `@koldstart/kdst.pkl`.
 
 ## what ends up in your account
 
