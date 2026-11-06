@@ -89,8 +89,8 @@ func TestInvokeResult(t *testing.T) {
 		},
 		{
 			name:   "reported",
-			result: cli.Invocation{Payload: []byte(`{}`), Duration: 300e6, RequestID: "r-1", Logs: ikReport("r-1", "")},
-			want:   []string{"duration 12ms · billed 13ms · memory 70 of 128 mb · cold start 200ms · log 4 lines", "request r-1", "log ─", "INFO"},
+			result: cli.Invocation{Payload: []byte(`{}`), Duration: 300e6, RequestID: "r-2", Logs: ikReport("r-2", "")},
+			want:   []string{"duration 12ms · billed 13ms · memory 70 of 128 mb · cold start 200ms · log 4 lines", "request r-2", "log ─", "INFO"},
 		},
 		{
 			name:   "node",
@@ -405,7 +405,7 @@ func TestInvokeJSON(t *testing.T) {
 func TestInvokeLayout(t *testing.T) {
 	big := perfInvocation().Payload
 	results := map[string]cli.Invocation{
-		"ok":        {Payload: []byte(`{"statusCode":200,"body":"` + strings.Repeat("long words ", 40) + `"}`), RequestID: "r-1", Logs: ikReport("r-1", "")},
+		"ok":        {Payload: []byte(`{"statusCode":200,"body":"` + strings.Repeat("long words ", 40) + `"}`), RequestID: "r-2", Logs: ikReport("r-2", "")},
 		"node":      {Payload: []byte(ikNodeFailure), Error: "Unhandled", Logs: ikReport("r-1", "error")},
 		"python":    {Payload: []byte(ikPythonFailure), Error: "Unhandled"},
 		"go":        {Payload: []byte(ikGoFailure), Error: "Unhandled"},
