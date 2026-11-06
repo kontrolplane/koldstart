@@ -292,6 +292,7 @@ func TestResourceKeys(t *testing.T) {
 		{name: "esc then goes back", keys: []string{"/", "r", "o", "l", "e", "a", "enter", "esc", "esc"}, page: stagePage},
 		{name: "q goes back", keys: []string{"j", "q"}, page: stagePage},
 		{name: "tab switches with json", keys: []string{"tab"}, page: resourcePage, path: "."},
+		{name: "a tab keeps its cursor", keys: []string{"G", "k", "tab", "tab"}, page: resourcePage, path: ".properties", scroll: func(m model) bool { return m.state.resource.scroll > 0 }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

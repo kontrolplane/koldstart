@@ -138,6 +138,9 @@ func (m model) resourceUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 		return m.switchPage(stagePage), nil
 	case key.Matches(msg, m.keys.NextTab, m.keys.PrevTab, m.keys.Left, m.keys.Right):
 		r.tab, r.scroll = 1-r.tab, 0
+		if v := r.shown(); v != nil && v.at() > 0 {
+			m = m.followResourceCursor(tea.KeyPressMsg{}, -1)
+		}
 		return m, nil
 	case key.Matches(msg, m.keys.Copy):
 		return m.copy(cmpOr(r.res.res.PhysicalID, r.res.res.Attributes["Arn"]))
