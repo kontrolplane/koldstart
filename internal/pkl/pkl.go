@@ -237,7 +237,8 @@ type Evaluator struct {
 //
 //nolint:gosec // runs our pkl on the user's module
 func (e Evaluator) EvalJSON(ctx context.Context, path string, props map[string]string) ([]byte, error) {
-	project, err := FindProject(path)
+	module := realPath(path)
+	project, err := FindProject(module)
 	if err != nil {
 		return nil, err
 	}
@@ -254,7 +255,7 @@ func (e Evaluator) EvalJSON(ctx context.Context, path string, props map[string]s
 	for _, k := range slices.Sorted(maps.Keys(props)) {
 		args = append(args, "--property", k+"="+props[k])
 	}
-	args = append(args, path)
+	args = append(args, module)
 	cmd := exec.CommandContext(ctx, e.Binary, args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -331,7 +332,24 @@ func report(stderr, path string) string {
 		if dir != "." {
 			shown = dir + string(filepath.Separator)
 		}
-		out = strings.ReplaceAll(out, "file://"+filepath.Dir(abs)+string(filepath.Separator), shown)
+		for _, d := range []string{filepath.Dir(realPath(path)), filepath.Dir(abs)} {
+			out = strings.ReplaceAll(out, "file://"+d+string(filepath.Separator), shown)
+		}
 	}
 	return out
+}
+
+// realPath is path made absolute with the links in its directory followed, as pkl sees it: a
+// module and its project must agree, or pkl finds the module outside the project. It is path
+// made absolute when the links cannot be followed.
+func realPath(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return path
+	}
+	dir, err := filepath.EvalSymlinks(filepath.Dir(abs))
+	if err != nil {
+		return abs
+	}
+	return filepath.Join(dir, filepath.Base(abs))
 }

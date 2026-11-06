@@ -157,7 +157,10 @@ func TestEvalInProject(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			binary, log := fakePkl(t, "")
-			root := t.TempDir()
+			root, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
 			writeFiles(t, root, tt.files)
 			if deps := filepath.Join(root, "app", DepsFile); tt.files["app/"+DepsFile] != "" {
 				later := time.Now().Add(time.Minute)
@@ -263,7 +266,8 @@ func TestEvalErrorDependency(t *testing.T) {
 
 // TestEvalLocalDependency evaluates a module that imports @koldstart/ in a project whose
 // koldstart dependency is the schema in pkl/ of this tree, as a local dependency, resolved for
-// real and offline, and the two errors of a module without one.
+// real and offline, also through a link to its directory, and the two errors of a module without
+// one.
 func TestEvalLocalDependency(t *testing.T) {
 	if _, err := exec.LookPath("pkl"); err != nil && os.Getenv(EnvBinary) == "" {
 		t.Skip("no pkl on the PATH")
@@ -277,17 +281,16 @@ func TestEvalLocalDependency(t *testing.T) {
 		t.Fatal(err)
 	}
 	module := "amends \"@koldstart/Project.pkl\"\n\nimport \"@koldstart/kdst.pkl\"\n\napp = \"shop\"\noutputs { [\"stage\"] = kdst.stage }\n"
+	project := "amends \"pkl:Project\"\n\ndependencies {\n  [\"koldstart\"] = import(\"" + schema + "\")\n}\n"
 	tests := []struct {
 		name    string
 		files   map[string]string
+		linked  bool
 		wantOut string
 		wantErr string
 	}{
-		{
-			name:    "local",
-			files:   map[string]string{"PklProject": "amends \"pkl:Project\"\n\ndependencies {\n  [\"koldstart\"] = import(\"" + schema + "\")\n}\n", "koldstart.pkl": module},
-			wantOut: `"stage": "prod"`,
-		},
+		{name: "local", files: map[string]string{"PklProject": project, "koldstart.pkl": module}, wantOut: `"stage": "prod"`},
+		{name: "through a link", files: map[string]string{"PklProject": project, "koldstart.pkl": module}, linked: true, wantOut: `"stage": "prod"`},
 		{name: "no project", files: map[string]string{"koldstart.pkl": module}, wantErr: "needs a PklProject beside it or above it"},
 		{name: "no dependency", files: map[string]string{"PklProject": "amends \"pkl:Project\"\n", "koldstart.pkl": module}, wantErr: "has no koldstart dependency: run koldstart upgrade to add it"},
 	}
@@ -295,7 +298,15 @@ func TestEvalLocalDependency(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
 			writeFiles(t, dir, tt.files)
-			out, err := Evaluator{Binary: binary}.EvalJSON(context.Background(), filepath.Join(dir, "koldstart.pkl"), map[string]string{"stage": "prod"})
+			path := filepath.Join(dir, "koldstart.pkl")
+			if tt.linked {
+				link := filepath.Join(t.TempDir(), "link")
+				if err := os.Symlink(dir, link); err != nil {
+					t.Fatal(err)
+				}
+				path = filepath.Join(link, "koldstart.pkl")
+			}
+			out, err := Evaluator{Binary: binary}.EvalJSON(context.Background(), path, map[string]string{"stage": "prod"})
 			switch {
 			case tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr)):
 				t.Errorf("EvalJSON = %v, want an error with %q", err, tt.wantErr)
@@ -304,7 +315,7 @@ func TestEvalLocalDependency(t *testing.T) {
 			case tt.wantErr == "" && !strings.Contains(string(out), tt.wantOut):
 				t.Errorf("EvalJSON =\n%s\nwant it to hold %s", out, tt.wantOut)
 			}
-			if _, statErr := os.Stat(filepath.Join(dir, DepsFile)); tt.name == "local" && statErr != nil {
+			if _, statErr := os.Stat(filepath.Join(dir, DepsFile)); tt.wantErr == "" && statErr != nil {
 				t.Errorf("not resolved: %v", statErr)
 			}
 		})
