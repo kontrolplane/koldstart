@@ -52,13 +52,13 @@ func TestVersionChanges(t *testing.T) {
 		{
 			name:   "a resource added",
 			change: func(_, after *state.State) { after.Resources["resource/queue"] = &state.Resource{PhysicalID: "jobs"} },
-			want:   []string{"changed from the deploy before · 1 resource", "+ resource/queue  jobs"},
+			want:   []string{"changed from the deploy before  +1 added ─", "+ resource/queue  jobs"},
 		},
 		{
 			name:    "nothing",
 			change:  func(_, _ *state.State) {},
 			want:    []string{"no resource or output changed"},
-			notWant: "outputs ·",
+			notWant: "outputs  ",
 		},
 		{
 			name: "outputs alone",
@@ -67,14 +67,14 @@ func TestVersionChanges(t *testing.T) {
 				after.Outputs["httpApiUrl"] = "https://new.example.com"
 				after.Outputs["queueUrl"] = "https://sqs/jobs"
 			},
-			want: []string{"no resource changed", "outputs · 3 changes", "+ queueUrl    https://sqs/jobs", "- old         gone",
+			want: []string{"no resource changed", "outputs  +1 added  ~1 changed  -1 removed ─", "+ queueUrl    https://sqs/jobs", "- old         gone",
 				"~ httpApiUrl  https://api.example.com  →  https://new.example.com"},
 		},
 		{
 			name:   "the first deploy",
 			change: func(_, _ *state.State) {},
 			first:  true,
-			want:   []string{"the first deploy · 4 resources", "+ function/api", "+ httpApiUrl  https://api.example.com"},
+			want:   []string{"the first deploy  +4 added ─", "+ function/api", "+ httpApiUrl  https://api.example.com"},
 		},
 	}
 	for _, tt := range tests {
@@ -122,6 +122,46 @@ func TestVersionDiffSaysWhat(t *testing.T) {
 				t.Errorf("page %v, want %q in:\n%s", m.page, tt.want, v)
 			}
 		})
+	}
+}
+
+// TestVersionHead checks the version page starts with the deploy's time, then who deployed it,
+// when, its serial and its version, in that order.
+func TestVersionHead(t *testing.T) {
+	current := testState(ordersDev)
+	m := openNewestDeploy(t, testState(ordersDev), current)
+	v := screen(m)
+	at := -1
+	for _, want := range []string{"deploy of ", "by", "levi", "when", "ago", "serial", "7", "version", m.state.version.version.ID, "resources", "writes"} {
+		i := strings.Index(v[max(0, at):], want)
+		if i < 0 {
+			t.Fatalf("no %q after the %d bytes before it in:\n%s", want, at, v)
+		}
+		at = max(0, at) + i + len(want)
+	}
+}
+
+// TestVersionOpensEachDiff checks enter opens the diff of the resource chosen, with what it
+// changes, and q goes back to the version on the same resource.
+func TestVersionOpensEachDiff(t *testing.T) {
+	before, after := testState(ordersDev), testState(ordersDev)
+	after.Resources["function/api"].Inputs = []byte(`{"memory":256,"timeout":6}`)
+	before.Resources["function/api"].Inputs = []byte(`{"memory":128,"timeout":6}`)
+	after.Resources["resource/queue"] = &state.Resource{PhysicalID: "jobs", Inputs: []byte(`{"name":"jobs"}`)}
+	m := openNewestDeploy(t, before, after)
+	if v := screen(m); !strings.Contains(v, "+1 added  ~1 changed") {
+		t.Errorf("the changes do not say how many:\n%s", v)
+	}
+	m = pressKeys(t, m, "enter")
+	if v := screen(m); m.page != diffPage || m.state.diff.title != "function/api" || !strings.Contains(v, "~1 changed") || !strings.Contains(v, `+   "memory": 256`) {
+		t.Fatalf("page %v on %q:\n%s", m.page, m.state.diff.title, v)
+	}
+	m = pressKeys(t, m, "q", "j", "enter")
+	if v := screen(m); m.page != diffPage || m.state.diff.title != "resource/queue" || !strings.Contains(v, "+1 added") {
+		t.Fatalf("page %v on %q:\n%s", m.page, m.state.diff.title, v)
+	}
+	if m = pressKeys(t, m, "q"); m.page != versionPage || m.state.version.cursor != 1 {
+		t.Errorf("q goes back to the version on the second change, not page %v on %d", m.page, m.state.version.cursor)
 	}
 }
 

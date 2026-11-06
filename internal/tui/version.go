@@ -9,6 +9,7 @@ import (
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/kontrolplane/koldstart/internal/engine"
@@ -193,19 +194,27 @@ func (m model) versionLines() pickList {
 	if v.before == nil {
 		title = "the first deploy"
 	}
-	if len(changes) > 0 {
-		title += " · " + plural(len(changes), "resource")
+	var added, changed, removed int
+	for _, c := range changes {
+		switch c.verb {
+		case "added":
+			added++
+		case "removed":
+			removed++
+		default:
+			changed++
+		}
 	}
 	lines := []string{
 		styles.SectionHeader("deploy of "+formatTime(v.version.LastModified), width),
-		row("saved", text(formatAgo(v.version.LastModified), styles.ToneBody), width),
-		row("version", text(v.version.ID, styles.ToneFaint), width),
-		row("deployed by", text(orDash(cur.DeployedBy), styles.ToneBody), width),
+		row("by", text(orDash(cur.DeployedBy), styles.ToneBody), width),
+		row("when", text(formatAgo(v.version.LastModified), styles.ToneBody), width),
 		row("serial", text(formatInt(int(cur.Serial)), styles.ToneBody), width),
+		row("version", text(v.version.ID, styles.ToneFaint), width),
 		row("resources", text(formatInt(len(cur.Resources)), styles.ToneBody), width),
 		row("writes", text(plural(v.writes, "write")+" of the state, the last shown", styles.ToneMuted), width),
 		"",
-		styles.SectionHeader(title, width),
+		countedHeader(title, changeCounts(added, changed, removed), width),
 	}
 	l := pickList{lines: lazyOf(lines)}
 	cols := []column{{width: width}}
@@ -224,11 +233,35 @@ func (m model) versionLines() pickList {
 		l.lines.add(styles.Faint(empty))
 	}
 	if len(outputs) > 0 {
+		var added, changed, removed int
+		for _, c := range outputs {
+			switch c[0].Text {
+			case "+ ":
+				added++
+			case "- ":
+				removed++
+			default:
+				changed++
+			}
+		}
 		aligned := alignNames(outputs, width/2)
-		l.lines.add("", styles.SectionHeader("outputs · "+plural(len(outputs), "change"), width))
+		l.lines.add("", countedHeader("outputs", changeCounts(added, changed, removed), width))
 		l.lines.addDrawn(len(aligned), func(i int) string { return renderCell(aligned[i], column{width: width}, nil) })
 	}
 	return l
+}
+
+// countedHeader is a section's header with how many things in it were added, changed and
+// removed after its title, or the title alone where they do not fit.
+func countedHeader(title string, counts []styles.Span, width int) string {
+	title = styles.Clean(title)
+	counts = append([]styles.Span{styles.S("  ", styles.ToneFaint)}, counts...)
+	used := ansi.StringWidth(title) + ansi.StringWidth(plainText(counts)) + 2
+	if len(counts) == 1 || used > width {
+		return styles.SectionHeader(title, width)
+	}
+	return styles.Fg(styles.ToneText).Bold(true).Render(title) + styles.Render(counts...) + " " +
+		lipgloss.NewStyle().Foreground(styles.P.Rule).Render(strings.Repeat("─", width-used+1))
 }
 
 // alignNames pads the name of each change, its second span after the mark, to the longest of
