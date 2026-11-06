@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/kontrolplane/koldstart/internal/cli"
+	"github.com/kontrolplane/koldstart/internal/tui/keys"
 	"github.com/kontrolplane/koldstart/internal/tui/styles"
 )
 
@@ -250,6 +251,44 @@ func FuzzDiff(f *testing.F) {
 				if p.from < 0 && strings.TrimSpace(p.text) != "" {
 					t.Fatalf("wrapParts(%q, %d) does not find %q in the line", line, w, p.text)
 				}
+			}
+		}
+	})
+}
+
+// fuzzJSONKeys are the keys FuzzJSONView presses, one for each byte of what it is given.
+var fuzzJSONKeys = []string{"j", "k", "pgdown", "pgup", "g", "G", "enter", "space", "z", "c", "C", "/", "a", "enter", "n", "N", "esc"}
+
+// FuzzJSONView checks a json view draws any bytes, json or not, at any width from 4, after any
+// keys, as utf-8 with nothing the terminal would act on and no line wider than the width, and
+// that jsonLineCell keeps every line of the json it tints whole and clean.
+func FuzzJSONView(f *testing.F) {
+	f.Add([]byte(`{"memory":128,"name":"orders-dev-api","tags":[1,2,{"a":null}]}`), 40, []byte{0, 0, 6, 8})
+	f.Add([]byte(jvPolicy), 20, []byte{1, 5, 6, 6, 11, 12, 13, 14})
+	f.Add([]byte(`{"KEY":{"$koldstart":"secret","source":"ssm","name":"/orders/key"},"x":"\u001b[2J\u202e"}`), 4, []byte{0, 9, 10})
+	f.Add([]byte(`["`+strings.Repeat("日本", 100)+`", 1e400, true, {"a":[[]]}, "{\"b\":\"[1]\"}"]`), 7, []byte{5, 7, 7, 3})
+	f.Add([]byte("not json \x1b]0;t\x07 \xff\n  line"), 200, []byte{0, 1})
+	f.Add([]byte(`"`+strings.Repeat("a,b ", 300)+`"`), 23, []byte{8, 8})
+	f.Fuzz(func(t *testing.T, data []byte, width int, pressed []byte) {
+		width = 4 + fuzzWidth(width, 196)
+		v := newJSONViewBytes(data)
+		for _, b := range pressed {
+			v.update(jvPress(fuzzJSONKeys[int(b)%len(fuzzJSONKeys)]), keys.Keys, width, 10)
+		}
+		for _, blurred := range []bool{false, true} {
+			v.blurred = blurred
+			for _, line := range v.lines(width).window(0, 400) {
+				fuzzDrawn(t, "a line of the json view", line, width)
+			}
+		}
+		fuzzPlain(t, "its path", styles.Clean(v.path()))
+		for line := range strings.SplitSeq(prettyJSON(data), "\n") {
+			c := jsonLineCell(line)
+			for _, s := range c {
+				fuzzPlain(t, "a span of a line of json", s.Text)
+			}
+			if plainText(c) != styles.Clean(line) {
+				t.Fatalf("jsonLineCell(%q) reads %q", line, plainText(c))
 			}
 		}
 	})

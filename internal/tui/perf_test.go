@@ -18,6 +18,7 @@ import (
 	"github.com/kontrolplane/koldstart/internal/engine"
 	"github.com/kontrolplane/koldstart/internal/provider/awsp"
 	"github.com/kontrolplane/koldstart/internal/state"
+	"github.com/kontrolplane/koldstart/internal/tui/keys"
 	"github.com/kontrolplane/koldstart/internal/tui/styles"
 )
 
@@ -578,5 +579,83 @@ func BenchmarkKeys(b *testing.B) {
 				}
 			})
 		}
+	}
+}
+
+// perfJSONLines is a document of ten thousand lines: an object of as many keys, some of them
+// values long enough to wrap.
+func perfJSONLines() []byte {
+	doc := map[string]any{}
+	for i := range 10_000 {
+		v := any(i)
+		switch i % 4 {
+		case 1:
+			v = fmt.Sprintf("arn:aws:lambda:eu-west-1:123456789012:function:orders-dev-%d", i)
+		case 2:
+			v = strings.Repeat("a value that wraps ", 12)
+		}
+		doc[fmt.Sprintf("Key%05d", i)] = v
+	}
+	data, _ := json.Marshal(doc)
+	return data
+}
+
+// BenchmarkJSONView reads, draws and moves through a json view of 2 mb, an invocation's payload of
+// some 19,000 items, and of 10,000 lines, at 200 by 60: reading it, a frame, a frame after a key,
+// unfolding everything, and typing a search.
+func BenchmarkJSONView(b *testing.B) {
+	docs := map[string][]byte{"2 mb": perfInvocation().Payload, "10k lines": perfJSONLines()}
+	for name, data := range docs {
+		b.Run(name+"/read", func(b *testing.B) {
+			for b.Loop() {
+				v := newJSONViewBytes(data)
+				_ = v.view(200, 60)
+			}
+		})
+		v := newJSONViewBytes(data)
+		_ = v.view(200, 60)
+		b.Run(name+"/frame", func(b *testing.B) {
+			for b.Loop() {
+				_ = v.view(200, 60)
+			}
+		})
+		for _, k := range []string{"j", "pgdown", "G"} {
+			b.Run(name+"/"+k, func(b *testing.B) {
+				for b.Loop() {
+					next := v
+					next.update(perfPress(k), keys.Keys, 200, 60)
+					_ = next.view(200, 60)
+				}
+			})
+		}
+		b.Run(name+"/unfold all", func(b *testing.B) {
+			shut := v
+			shut.update(perfPress("z"), keys.Keys, 200, 60)
+			for b.Loop() {
+				open := shut
+				open.update(perfPress("z"), keys.Keys, 200, 60)
+				_ = open.view(200, 60)
+			}
+		})
+		open := v
+		open.update(perfPress("z"), keys.Keys, 200, 60)
+		open.update(perfPress("z"), keys.Keys, 200, 60)
+		_ = open.view(200, 60)
+		b.Run(name+"/unfolded frame", func(b *testing.B) {
+			for b.Loop() {
+				next := open
+				next.update(perfPress("G"), keys.Keys, 200, 60)
+				_ = next.view(200, 60)
+			}
+		})
+		typing := open
+		typing.update(perfPress("/"), keys.Keys, 200, 60)
+		b.Run(name+"/search", func(b *testing.B) {
+			for b.Loop() {
+				next := typing
+				next.update(perfPress("q"), keys.Keys, 200, 60)
+				_ = next.view(200, 60)
+			}
+		})
 	}
 }

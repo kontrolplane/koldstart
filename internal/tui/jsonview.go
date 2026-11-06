@@ -3,6 +3,7 @@ package tui
 import (
 	"bytes"
 	"encoding/json"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -124,9 +125,7 @@ func (f *jsonFolds) with(i int32, shut bool) *jsonFolds {
 	out := &jsonFolds{set: map[int32]bool{}}
 	if f != nil {
 		out.all = f.all
-		for k, v := range f.set {
-			out.set[k] = v
-		}
+		maps.Copy(out.set, f.set)
 	}
 	out.set[i] = shut
 	return out
@@ -155,6 +154,16 @@ type jsonCache struct {
 	query     string
 	matchesOK bool
 	matches   []int32
+	// memo is the cell of the row drawn last, so a row wrapped onto many lines is not tinted again
+	// for each.
+	memo *jsonMemo
+}
+
+// jsonMemo is the cell of row k, its matches of query marked.
+type jsonMemo struct {
+	k     int
+	query string
+	c     cell
 }
 
 // jsonDrawnKey is what drawn lines were drawn for.
@@ -168,8 +177,8 @@ type jsonDrawnKey struct {
 // of lines, and how the rows taller than a line wrap.
 type jsonGeometry struct {
 	width  int
-	starts []int32
-	wraps  map[int32][]jsonSpan
+	starts []int
+	wraps  map[int][]jsonSpan
 }
 
 // jsonResult is what a key did to a view that the page acts on: a command of its search, text to
@@ -255,6 +264,8 @@ func (p *jsonParser) space() {
 }
 
 // value reads a value into a new node and its descendants after it.
+//
+//nolint:gosec // a document has fewer than 2^31 nodes: its bytes would not fit in memory otherwise
 func (p *jsonParser) value(k string, parent, index, depth int32) {
 	at := int32(len(p.nodes))
 	p.nodes = append(p.nodes, jsonNode{key: k, parent: parent, index: index, depth: depth})
@@ -403,7 +414,7 @@ func (v jsonView) empty() bool { return len(v.nodes) == 0 }
 
 // folded reports whether node i is drawn folded: as its folds set it, or, by default, an object or
 // array of more than jsonFoldItems items or jsonFoldDepth levels down. The root is open.
-func (v jsonView) folded(i int32) bool {
+func (v *jsonView) folded(i int32) bool {
 	n := v.nodes[i]
 	if !n.composite() || n.count == 0 {
 		return false
@@ -423,25 +434,24 @@ func (v jsonView) folded(i int32) bool {
 }
 
 // rows are the lines of the document as it is folded, as the cache keeps them.
-func (v jsonView) rows() []jsonRow {
+func (v *jsonView) rows() []jsonRow {
 	c := v.cache
 	if c != nil && c.rowsOK && c.folds == v.folds {
 		return c.rows
 	}
 	rows := v.flatten()
 	if c != nil {
-		c.folds, c.rowsOK, c.rows, c.geom, c.drawn = v.folds, true, rows, nil, nil
+		c.folds, c.rowsOK, c.rows, c.geom, c.drawn, c.memo = v.folds, true, rows, nil, nil, nil
 	}
 	return rows
 }
 
 // flatten walks the nodes in order, a row each, skipping what is folded, with a row for each
 // closing bracket.
-func (v jsonView) flatten() []jsonRow {
+func (v *jsonView) flatten() []jsonRow {
 	rows := make([]jsonRow, 0, min(len(v.nodes), 4096))
 	var open []int32
-	n := int32(len(v.nodes))
-	for i := int32(0); i < n; {
+	for i := int32(0); int(i) < len(v.nodes); {
 		for len(open) > 0 && v.nodes[open[len(open)-1]].end <= i {
 			rows = append(rows, jsonRow{node: open[len(open)-1], close: true})
 			open = open[:len(open)-1]
@@ -461,14 +471,14 @@ func (v jsonView) flatten() []jsonRow {
 }
 
 // last reports whether node i is the last of its parent's, so no comma follows it.
-func (v jsonView) last(i int32) bool {
+func (v *jsonView) last(i int32) bool {
 	p := v.nodes[i].parent
 	return p < 0 || v.nodes[i].end == v.nodes[p].end
 }
 
 // markOf is what node i, or the marked node it is in, was applied with, whether i is that node,
 // and whether it is marked at all.
-func (v jsonView) markOf(i int32) (string, bool, bool) {
+func (v *jsonView) markOf(i int32) (string, bool, bool) {
 	if len(v.marks) == 0 {
 		return "", false, false
 	}
@@ -489,9 +499,7 @@ func (v *jsonView) markKey(name, was string) {
 	for c := int32(1); c < v.nodes[0].end; c = v.nodes[c].end {
 		if jsonUnquote(v.nodes[c].key) == name {
 			marks := make(map[int32]string, len(v.marks)+1)
-			for k, m := range v.marks {
-				marks[k] = m
-			}
+			maps.Copy(marks, v.marks)
 			marks[c] = was
 			v.marks, v.cache = marks, &jsonCache{}
 			return
@@ -500,7 +508,7 @@ func (v *jsonView) markKey(name, was string) {
 }
 
 // rowCell is a row's text by role, without its indent, appended to dst.
-func (v jsonView) rowCell(dst cell, r jsonRow) cell {
+func (v *jsonView) rowCell(dst cell, r jsonRow) cell {
 	n := v.nodes[r.node]
 	was, markRoot, marked := v.markOf(r.node)
 	tone := func(t styles.Tone) styles.Tone {
@@ -588,24 +596,27 @@ func jsonRoom(width int, depth int32) (lead, first, rest int) {
 }
 
 // geometry is where the rows start and how they wrap at width, as the cache keeps it.
-func (v jsonView) geometry(width int) *jsonGeometry {
+func (v *jsonView) geometry(width int) *jsonGeometry {
 	rows := v.rows()
 	c := v.cache
 	if c != nil && c.geom != nil && c.geom.width == width {
 		return c.geom
 	}
-	g := &jsonGeometry{width: width, starts: make([]int32, len(rows)+1), wraps: map[int32][]jsonSpan{}}
+	g := &jsonGeometry{width: width, starts: make([]int, len(rows)+1), wraps: map[int][]jsonSpan{}}
 	var buf cell
-	at := int32(0)
+	at := 0
 	for k, r := range rows {
 		g.starts[k] = at
-		buf = v.rowCell(buf[:0], r)
 		_, first, rest := jsonRoom(width, v.nodes[r.node].depth)
-		h := int32(1)
-		if jsonWidth(buf) > first {
+		h := 1
+		if v.fits(r, first) {
+			at++
+			continue
+		}
+		if buf = v.rowCell(buf[:0], r); jsonWidth(buf) > first {
 			spans := jsonBreaks(plainText(buf), first, rest)
-			g.wraps[int32(k)] = spans
-			h = int32(len(spans))
+			g.wraps[k] = spans
+			h = len(spans)
 		}
 		at += h
 	}
@@ -614,6 +625,19 @@ func (v jsonView) geometry(width int) *jsonGeometry {
 		c.geom, c.drawn = g, nil
 	}
 	return g
+}
+
+// fits reports, without drawing it, that row r is sure to fit in room: a closing bracket, or a
+// key and value of printable ascii, unmarked, short enough with all the punctuation they can take.
+func (v *jsonView) fits(r jsonRow, room int) bool {
+	n := v.nodes[r.node]
+	switch {
+	case r.close:
+		return room >= 2
+	case len(v.marks) > 0 || n.embedded || n.kind == jsonText || n.composite() && n.count > 0 && v.folded(r.node):
+		return false
+	}
+	return len(n.key)+len(n.text)+5 <= room && printableASCII(n.key) && printableASCII(n.text)
 }
 
 // jsonWidth is how wide a cell's text is, printable ascii measured a byte a column.
@@ -685,7 +709,7 @@ func (v jsonView) lines(width int) lazyLines {
 		return l
 	}
 	g := v.geometry(width)
-	l.addDrawn(int(g.starts[len(g.starts)-1]), func(i int) string { return v.drawLine(width, i) })
+	l.addDrawn(g.starts[len(g.starts)-1], func(i int) string { return v.drawLine(width, i) })
 	return l
 }
 
@@ -695,7 +719,7 @@ func (v jsonView) lineCount(width int) int {
 		return 0
 	}
 	g := v.geometry(width)
-	return int(g.starts[len(g.starts)-1])
+	return g.starts[len(g.starts)-1]
 }
 
 // cursorLines are the first and last line the cursor's row draws at width.
@@ -705,7 +729,7 @@ func (v jsonView) cursorLines(width int) (int, int) {
 	}
 	g := v.geometry(width)
 	k := v.at()
-	return int(g.starts[k]), int(g.starts[k+1]) - 1
+	return g.starts[k], g.starts[k+1] - 1
 }
 
 // view draws height lines of the document at width, scrolled so the cursor is in sight.
@@ -727,9 +751,9 @@ func (v jsonView) at() int {
 }
 
 // drawLine draws line i of the document at width.
-func (v jsonView) drawLine(width, i int) string {
+func (v *jsonView) drawLine(width, i int) string {
 	rows, g := v.rows(), v.geometry(width)
-	k, found := slices.BinarySearch(g.starts, int32(i))
+	k, found := slices.BinarySearch(g.starts, i)
 	if !found {
 		k--
 	}
@@ -745,20 +769,34 @@ func (v jsonView) drawLine(width, i int) string {
 			return s
 		}
 	}
-	line := v.draw(rows[k], int32(k), i-int(g.starts[k]), g, lit)
+	line := v.draw(rows[k], k, i-g.starts[k], g, lit)
 	if !lit && c != nil {
 		c.drawn[i] = line
 	}
 	return line
 }
 
-// draw draws part sub of row r, the k-th, lit when the cursor is on it.
-func (v jsonView) draw(r jsonRow, k int32, sub int, g *jsonGeometry, lit bool) string {
-	lead, first, rest := jsonRoom(g.width, v.nodes[r.node].depth)
+// markedCell is the cell of row r, the k-th, with the matches of the search marked, as the cache
+// keeps it for the row drawn last.
+func (v *jsonView) markedCell(r jsonRow, k int) cell {
+	m := v.cache
+	if m != nil && m.memo != nil && m.memo.k == k && m.memo.query == v.query {
+		return m.memo.c
+	}
 	c := v.rowCell(nil, r)
 	if v.query != "" {
 		c = highlight(c, v.query)
 	}
+	if m != nil {
+		m.memo = &jsonMemo{k: k, query: v.query, c: c}
+	}
+	return c
+}
+
+// draw draws part sub of row r, the k-th, lit when the cursor is on it.
+func (v *jsonView) draw(r jsonRow, k int, sub int, g *jsonGeometry, lit bool) string {
+	lead, first, rest := jsonRoom(g.width, v.nodes[r.node].depth)
+	c := v.markedCell(r, k)
 	part, room, inset := c, first, lead
 	if spans, ok := g.wraps[k]; ok && sub < len(spans) {
 		slicer := cellSlicer{c: c}

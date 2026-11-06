@@ -121,12 +121,12 @@ func TestJSONViewTones(t *testing.T) {
 	v := newJSONView(map[string]any{
 		"a": "x", "b": 2, "c": true, "d": nil, "e": engine.Ref("resource/t", "Arn"), "f": `{"g":1}`,
 	})
-	var drawn cell
+	drawn := make(cell, 0, 64)
 	for _, r := range v.rows() {
 		drawn = append(drawn, v.rowCell(nil, r)...)
 	}
 	lines := jsonLines(map[string]any{"a": "x", "b": 2, "c": true, "d": nil, "e": engine.Ref("resource/t", "Arn")})
-	var tinted cell
+	tinted := make(cell, 0, 64)
 	for _, l := range lines {
 		tinted = append(tinted, jsonLineCell(l)...)
 	}
