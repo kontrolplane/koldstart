@@ -454,7 +454,8 @@ func perfFresh(m model) model {
 	}
 	m.state.function.results = results
 	m.state.diff.wrapped = &diffRows{}
-	m.state.resource.written = &resourceJSON{}
+	m.state.resource.applied.cache = &jsonCache{}
+	m.state.resource.props.cache = &jsonCache{}
 	return m
 }
 

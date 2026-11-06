@@ -188,8 +188,15 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 // text input that has focus.
 func (m model) toInput(msg tea.Msg) (model, tea.Cmd) {
 	f := &m.state.function
+	v := m.state.json(m.page)
 	switch {
 	case m.tooSmall():
+	case v != nil && v.search.active:
+		res := v.typeSearch(msg, m.keys)
+		if m.page == resourcePage {
+			m = m.followResourceCursor(tea.KeyPressMsg{}, -1)
+		}
+		return m.jsonDone(res)
 	case m.page == overviewPage && m.state.overview.filter.active:
 		changed, cmd := m.state.overview.filter.update(msg, m.keys)
 		if changed {
@@ -620,8 +627,22 @@ func (m model) position() string {
 	return ""
 }
 
-// pageFilter is the filter of the page on screen, if it has one.
+// json is the json view page p shows, where it shows one with something in it, so the frame can
+// show its path and search, and its search can take what is typed. A page with a jsonView
+// returns it here.
+func (s *pages) json(p page) *jsonView {
+	switch p {
+	case resourcePage:
+		return s.resource.shown()
+	}
+	return nil
+}
+
+// pageFilter is the filter of the page on screen, if it has one: the search of its json too.
 func (m model) pageFilter() *filterBox {
+	if v := m.state.json(m.page); v != nil {
+		return &v.search
+	}
 	switch m.page {
 	case overviewPage:
 		return &m.state.overview.filter
@@ -641,12 +662,20 @@ func (m model) pageFilter() *filterBox {
 func (m model) frameMeta() (string, string) {
 	var meta string
 	if f := m.pageFilter(); f != nil && (f.active || f.text != "") {
-		meta = styles.Render(styles.S("filter", styles.ToneFaint))
+		meta = styles.Render(styles.S(f.name(), styles.ToneFaint))
 		if f.text != "" {
-			meta = styles.Render(styles.S("filter ", styles.ToneFaint), styles.S(f.text, styles.ToneText))
+			meta = styles.Render(styles.S(f.name()+" ", styles.ToneFaint), styles.S(f.text, styles.ToneText))
 		}
 	}
 	var foot []footPart
+	if v := m.state.json(m.page); v != nil {
+		if at := v.matchPosition(); at != "" {
+			meta += styles.Render(styles.S(" · "+at, styles.ToneFaint))
+		}
+		if p := styles.Clean(v.path()); p != "" {
+			foot = append(foot, footPart{full: styles.Faint(cutMiddle(p, frameWidth/2)), short: styles.Faint(cutMiddle(p, frameWidth/4))})
+		}
+	}
 	if f := m.state.function; m.page == functionPage && f.tab == logsTab {
 		switch {
 		case !f.logs.follow:
@@ -833,7 +862,13 @@ func (m model) shortHelp() [][2]string {
 		}
 		return append(h, hint(k.Copy), m.pauseHint(), hint(k.Help), hint(k.Quit))
 	case resourcePage:
-		return [][2]string{hint(k.NextTab, "applied / in aws"), scrollHint, hint(k.Refresh), hint(k.Copy), hint(k.Help), hint(k.Quit)}
+		h := [][2]string{hint(k.NextTab, "applied / in aws")}
+		if v := m.state.json(m.page); v != nil {
+			h = append(h, m.jsonHints(*v)...)
+		} else {
+			h = append(h, scrollHint, hint(k.Copy))
+		}
+		return append(h, hint(k.Refresh), hint(k.Help), hint(k.Quit))
 	case versionPage:
 		return [][2]string{hint(k.View, "diff"), chooseHint, hint(k.Copy), hint(k.Help), hint(k.Quit)}
 	case diffPage:
@@ -945,6 +980,11 @@ func helpSections(k keys.KeyMap) []helpSection {
 			{name(k.NextDiff) + " " + name(k.PrevDiff), "next / previous change"}, {name(k.View), "unfold the lines in sight"},
 			{name(k.Unfold), "unfold or fold all"},
 		}},
+		{"json", [][2]string{
+			{name(k.View) + " " + name(k.Fold), "fold / unfold"}, {name(k.Unfold), "unfold or fold all"},
+			{name(k.Filter), "search"}, {name(k.NextMatch) + " " + name(k.PrevMatch), "next / previous match"},
+			{name(k.Copy), "copy the value"}, {name(k.CopyPath), "copy its path"},
+		}},
 	}
 }
 
@@ -965,9 +1005,10 @@ type helpLayout struct {
 }
 
 // helpView draws the key reference in a card, in the roomiest layout the content area holds.
-// Where every section does not fit, it leaves out the function's on a diff and the diff's
-// elsewhere, and then shows the first, the keys that work everywhere, beside the one for the page
-// on screen. The notes are left out before any keys are.
+// Where every section does not fit, it shows three: the keys that work everywhere, the stage's,
+// and the function's, or the diff's on a diff and the json's on a resource, and then two: the
+// keys that work everywhere beside the ones for the page on screen. The notes are left out before
+// any keys are.
 func (m model) helpView() string {
 	all := helpSections(m.keys)
 	pair := []helpSection{all[0], all[1]}
@@ -976,10 +1017,15 @@ func (m model) helpView() string {
 		pair[1] = all[2]
 	case diffPage:
 		pair[1] = all[3]
+	case resourcePage:
+		pair[1] = all[4]
 	}
 	three := all[:3]
-	if m.page == diffPage {
+	switch m.page {
+	case diffPage:
 		three = []helpSection{all[0], all[1], all[3]}
+	case resourcePage:
+		three = []helpSection{all[0], all[1], all[4]}
 	}
 	layouts := []helpLayout{
 		{sections: all, gap: 4, padY: 1, padX: 3, notes: true, close: true},
@@ -1054,5 +1100,7 @@ func (m model) restyleInputs() model {
 	m.state.stage.filter.input.SetStyles(in)
 	m.state.function.logs.filter.input.SetStyles(in)
 	m.state.remove.confirm.input.SetStyles(in)
+	m.state.resource.applied.search.input.SetStyles(in)
+	m.state.resource.props.search.input.SetStyles(in)
 	return m
 }

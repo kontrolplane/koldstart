@@ -105,8 +105,8 @@ func TestScrollBy(t *testing.T) {
 }
 
 // TestScrollStopsAtTheEnd checks G on a page that scrolls goes to its last line and no further,
-// so k after it moves at once: a diff, a resource read from aws, an invocation, and a deploy that
-// changed no resource, which has no change to choose.
+// so k after it moves at once: a diff, an invocation, and a deploy that changed no resource, which
+// has no change to choose. The resource page moves a cursor through its json instead.
 func TestScrollStopsAtTheEnd(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -126,19 +126,6 @@ func TestScrollStopsAtTheEnd(t *testing.T) {
 			},
 			scroll: func(m model) int { return m.state.diff.scroll },
 			lines:  func(m model) int { return m.diffLines().len() },
-		},
-		{
-			name: "resource",
-			open: func(t *testing.T) model {
-				f := newFake(t)
-				f.live = map[string]any{}
-				for i := range 80 {
-					f.live[strings.Repeat("k", i+1)] = i
-				}
-				return pressKeys(t, openTable(t, f), "tab")
-			},
-			scroll: func(m model) int { return m.state.resource.scroll },
-			lines:  func(m model) int { return m.resourceLines().len() },
 		},
 		{
 			name: "invocation",

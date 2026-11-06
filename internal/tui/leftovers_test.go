@@ -349,7 +349,7 @@ func TestStaleMarkers(t *testing.T) {
 			name: "a resource in aws",
 			keys: []string{"tab", "j", "j", "j", "j", "j", "enter", "tab"},
 			fail: func(b *leftoversBackend) { b.liveErr = errAWS },
-			want: []string{`"BillingMode": "PROVISIONED"`, "could not read again: aws said no"},
+			want: []string{`"BillingMode": "PAY_PER_REQUEST" → "PROVISIONED"`, "could not read again: aws said no"},
 		},
 	}
 	for _, tt := range tests {

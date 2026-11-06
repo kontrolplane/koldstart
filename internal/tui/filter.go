@@ -17,6 +17,8 @@ type filterBox struct {
 	active bool
 	input  textinput.Model
 	text   string
+	// label names it in the frame: filter, or search for one that finds rather than hides.
+	label string
 }
 
 func newFilterBox(placeholder string) filterBox {
@@ -27,6 +29,16 @@ func newFilterBox(placeholder string) filterBox {
 	input.SetStyles(styles.TextInput())
 	return filterBox{input: input}
 }
+
+// newSearchBox is a filterBox that searches: it finds what it holds rather than hiding the rest.
+func newSearchBox(placeholder string) filterBox {
+	f := newFilterBox(placeholder)
+	f.label = "search"
+	return f
+}
+
+// name is what the frame calls it.
+func (f filterBox) name() string { return cmpOr(f.label, "filter") }
 
 func (f *filterBox) open() tea.Cmd {
 	f.active = true

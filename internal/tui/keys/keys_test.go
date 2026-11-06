@@ -17,6 +17,8 @@ var names = map[string]string{
 	"right":  "→",
 	"pgdown": "pgdn",
 	"I":      "shift+i",
+	"C":      "shift+c",
+	"N":      "shift+n",
 }
 
 // bindings is every binding of the key map, by its field name.
@@ -54,10 +56,10 @@ func TestHelp(t *testing.T) {
 	}
 }
 
-// shared are the keys two bindings share, each working on pages the other does nothing on: n
-// answers no on a dialog and steps to the next invocation on one, p pauses a page that refreshes
-// and steps to the previous invocation on one, which does not.
-var shared = map[string][2]string{"n": {"No", "Next"}, "p": {"Pause", "Previous"}}
+// shared are the keys bindings share, each working on pages the others do nothing on: n answers
+// no on a dialog, steps to the next invocation on one, and goes to the next match in json; p
+// pauses a page that refreshes and steps to the previous invocation on one, which does not.
+var shared = map[string][]string{"n": {"No", "Next", "NextMatch"}, "p": {"Pause", "Previous"}}
 
 // TestKeysAreUnique checks no key is bound twice, but the ones shared, so no binding shadows
 // another.
@@ -66,7 +68,7 @@ func TestKeysAreUnique(t *testing.T) {
 	for name, b := range bindings() {
 		for _, k := range b.Keys() {
 			if other, ok := seen[k]; ok {
-				if pair := shared[k]; !slices.Contains(pair[:], name) || !slices.Contains(pair[:], other) {
+				if set := shared[k]; !slices.Contains(set, name) || !slices.Contains(set, other) {
 					t.Errorf("%q is bound to %s and %s", k, other, name)
 				}
 			}

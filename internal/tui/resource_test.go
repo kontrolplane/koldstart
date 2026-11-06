@@ -75,44 +75,28 @@ func TestResourceLiveStates(t *testing.T) {
 	}
 }
 
-// TestResourceDrift checks a property changed outside koldstart is shown with what it was
-// applied with and what aws has now.
+// TestResourceDrift checks a property changed outside koldstart is named above the properties,
+// and marked ▲ on each of its lines in them, its first as what it was applied with → what aws has
+// now.
 func TestResourceDrift(t *testing.T) {
 	f := newFake(t)
-	f.states[ordersDev].Resources["resource/table"].Inputs = []byte(`{"properties":{"BillingMode":"PAY_PER_REQUEST","KeySchema":[{"AttributeName":"pk"}]}}`)
-	f.live = map[string]any{"BillingMode": "PROVISIONED", "KeySchema": []any{map[string]any{"AttributeName": "id"}}}
+	f.states[ordersDev].Resources["resource/table"].Inputs = []byte(`{"properties":{"BillingMode":"PAY_PER_REQUEST","KeySchema":[{"AttributeName":"pk"}],"Name":"t"}}`)
+	f.live = map[string]any{"BillingMode": "PROVISIONED", "KeySchema": []any{map[string]any{"AttributeName": "id"}}, "Name": "t"}
 	v := screen(pressKeys(t, openTable(t, f), "tab"))
 	for _, want := range []string{
 		"changed outside koldstart: BillingMode, KeySchema",
-		`BillingMode  "PAY_PER_REQUEST"  →  "PROVISIONED"`,
-		`KeySchema  [{"AttributeName":"pk"}]  →  [{"AttributeName":"id"}]`,
+		`▲   "BillingMode": "PAY_PER_REQUEST" → "PROVISIONED",`,
+		`▲   "KeySchema": [{"AttributeName":"pk"}] → [`,
+		`▲       "AttributeName": "id"`,
+		`  "Name": "t"`,
 		"the next deploy sets them back",
 	} {
 		if !strings.Contains(v, want) {
 			t.Errorf("no %q in:\n%s", want, v)
 		}
 	}
-}
-
-// TestDriftedLines checks every line of a drifted property is marked, its nested value included,
-// and none of the others.
-func TestDriftedLines(t *testing.T) {
-	lines := jsonLines(map[string]any{
-		"Arn":       "arn",
-		"KeySchema": []any{map[string]any{"AttributeName": "id"}},
-		"Tags":      map[string]any{"team": "orders"},
-		"Name":      "x",
-	})
-	got := driftedLines(lines, map[string]bool{"KeySchema": true, "Name": true})
-	var marked []string
-	for i, line := range lines {
-		if got[i] {
-			marked = append(marked, strings.TrimSpace(line))
-		}
-	}
-	want := []string{`"KeySchema": [`, "{", `"AttributeName": "id"`, "}", "],", `"Name": "x",`}
-	if strings.Join(marked, "\n") != strings.Join(want, "\n") {
-		t.Errorf("marked:\n%s\nwant:\n%s", strings.Join(marked, "\n"), strings.Join(want, "\n"))
+	if strings.Contains(v, `▲ "Name"`) {
+		t.Errorf("a property as applied is marked:\n%s", v)
 	}
 }
 
@@ -131,21 +115,31 @@ func TestResourceLongAttributes(t *testing.T) {
 	}
 }
 
-// TestResourceCopy checks c copies the id in aws, or the arn of a resource that has no id.
+// TestResourceCopy checks c copies the value under the cursor of the json and shift+c its path,
+// and, on a tab without json, the id in aws, or the arn of a resource that has no id.
 func TestResourceCopy(t *testing.T) {
 	tests := []struct {
-		name string
-		id   string
-		want string
+		name   string
+		id     string
+		inputs string
+		keys   []string
+		want   string
 	}{
-		{name: "id", id: "orders-dev", want: "copied orders-dev"},
-		{name: "arn", want: "copied arn:aws:dynamodb:table"},
+		{name: "all of it", id: "orders-dev", keys: []string{"c"}, want: "copied all of it"},
+		{name: "a value", id: "orders-dev", keys: []string{"j", "j", "c"}, want: "copied the value of .properties.BillingMode"},
+		{name: "a path", id: "orders-dev", keys: []string{"j", "j", "C"}, want: "copied the path .properties.BillingMode"},
+		{name: "the id without json", id: "orders-dev", inputs: "null", keys: []string{"c"}, want: "copied orders-dev"},
+		{name: "the arn without json or id", inputs: "null", keys: []string{"c"}, want: "copied arn:aws:dynamodb:table"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newFake(t)
-			f.states[ordersDev].Resources["resource/table"].PhysicalID = tt.id
-			if m := pressKeys(t, openTable(t, f), "c"); m.status != tt.want {
+			table := f.states[ordersDev].Resources["resource/table"]
+			table.PhysicalID = tt.id
+			if tt.inputs != "" {
+				table.Inputs = []byte(tt.inputs)
+			}
+			if m := pressKeys(t, openTable(t, f), tt.keys...); m.status != tt.want {
 				t.Errorf("status %q, want %q", m.status, tt.want)
 			}
 		})

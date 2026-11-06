@@ -182,7 +182,6 @@ func FuzzJSONLines(f *testing.F) {
 				}
 			}
 		}
-		_ = driftedLines(lines, map[string]bool{"a": true, "": true})
 		fuzzPlain(t, "compact json", styles.Clean(compactJSON(v)))
 	})
 }

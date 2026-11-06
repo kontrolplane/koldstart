@@ -35,6 +35,9 @@ type KeyMap struct {
 	// answer and nothing to pause, so they share n and p with No and Pause.
 	Next      key.Binding
 	Previous  key.Binding
+	CopyPath  key.Binding
+	NextMatch key.Binding
+	PrevMatch key.Binding
 	Refresh   key.Binding
 	Pause     key.Binding
 	Yes       key.Binding
@@ -75,6 +78,9 @@ var Keys = KeyMap{
 	Unfold:    key.NewBinding(key.WithKeys("z"), key.WithHelp("z", "unfold all")),
 	Next:      key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "next")),
 	Previous:  key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "previous")),
+	CopyPath:  key.NewBinding(key.WithKeys("C", "shift+c"), key.WithHelp("shift+c", "copy path")),
+	NextMatch: key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "next match")),
+	PrevMatch: key.NewBinding(key.WithKeys("N", "shift+n"), key.WithHelp("shift+n", "previous match")),
 	Refresh:   key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 	Pause:     key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "pause")),
 	Yes:       key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "yes")),

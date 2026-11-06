@@ -10,7 +10,6 @@ import (
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
 
 	"github.com/kontrolplane/koldstart/internal/cli"
 	"github.com/kontrolplane/koldstart/internal/tui/styles"
@@ -43,30 +42,19 @@ type resourceState struct {
 	liveAt  time.Time
 	liveErr error
 
-	// written is the json the page draws, written by the first frame that drew it.
-	written *resourceJSON
-}
-
-// resourceJSON is the json of the resource page, written once rather than every frame: what
-// koldstart applied, and what aws says, with what drifted, for the read of liveAt. It is written
-// again in a new palette, though it holds no colour, so nothing kept outlives one.
-type resourceJSON struct {
-	palette     int
-	applied     []string
-	appliedDone bool
-
-	liveAt   time.Time
-	liveDone bool
+	// applied is the json koldstart applied the resource with, and props what aws says of it now,
+	// its drifted keys marked.
+	applied jsonView
+	props   jsonView
+	// drift is what was changed outside koldstart, and compared whether there was anything
+	// applied to compare what aws says with.
 	drift    []string
-	props    []string
-	marked   []bool
-	// properties are what koldstart applied, as aws names them.
-	properties map[string]any
+	compared bool
 }
 
 // openResource shows a resource, and reads it as aws has it now.
 func (m model) openResource(r stageResource) (model, tea.Cmd) {
-	m.state.resource = resourceState{res: r, written: &resourceJSON{}}
+	m.state.resource = resourceState{res: r, applied: newJSONViewBytes(r.res.Inputs)}
 	m = m.switchPage(resourcePage)
 	if !readable(r) {
 		return m, nil
@@ -89,6 +77,7 @@ func (m model) applyLive(msg liveLoadedMsg) (model, tea.Cmd) {
 	switch {
 	case msg.err != nil && r.live != nil && !errors.Is(msg.err, cli.ErrNotLive):
 		r.liveErr = msg.err
+		return m, nil
 	case msg.err != nil:
 		r.live, r.liveErr = nil, msg.err
 	default:
@@ -96,14 +85,52 @@ func (m model) applyLive(msg liveLoadedMsg) (model, tea.Cmd) {
 		m.state.stage.markDrift(r.res.id, len(cli.Drift(appliedProperties(r.res), msg.props)) > 0)
 		m = m.updateStageTables()
 	}
+	r.props, r.drift, r.compared = r.liveView()
 	return m, nil
 }
 
-// resourceUpdate handles a key on the resource page. r reads it from aws again, the spinner
-// showing until it is in; c copies its id in aws, or its arn when it has no id; q goes back to
-// the function that opened it, or the stage.
+// liveView is the json of what aws says of the resource, each key changed outside koldstart
+// marked with what it was applied with, what was changed, and whether there was anything applied
+// to compare with. What it was folded, searched and scrolled to stays where it is found again.
+func (r resourceState) liveView() (jsonView, []string, bool) {
+	if len(r.live) == 0 {
+		return jsonView{}, nil, false
+	}
+	applied := appliedProperties(r.res)
+	drift := cli.Drift(applied, r.live)
+	v := newJSONView(r.live)
+	for _, k := range drift {
+		v.markKey(k, compactJSON(applied[k]))
+	}
+	return v.carry(r.props), drift, len(applied) > 0
+}
+
+// shown is the json of the tab on screen, or nil when the tab shows none.
+func (r *resourceState) shown() *jsonView {
+	v := &r.applied
+	if r.tab == liveTab {
+		v = &r.props
+	}
+	if v.empty() {
+		return nil
+	}
+	return v
+}
+
+// resourceUpdate handles a key on the resource page. The keys of its json come first: they move
+// the cursor through it, fold it, search it, and c copies the value under the cursor. r reads the
+// resource from aws again, the spinner showing until it is in; without json on the tab, c copies
+// its id in aws, or its arn when it has no id; q goes back to the function that opened it, or the
+// stage.
 func (m model) resourceUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 	r := &m.state.resource
+	if v := r.shown(); v != nil {
+		before := v.at()
+		if res, ok := v.update(msg, m.keys, resourceWidth(), contentHeight); ok {
+			m = m.followResourceCursor(msg, before)
+			return m.jsonDone(res)
+		}
+	}
 	switch {
 	case key.Matches(msg, m.keys.Back, m.keys.Quit) && r.fromFunction:
 		return m.switchPage(functionPage).syncFunction(), nil
@@ -127,6 +154,30 @@ func (m model) resourceUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 	r.scroll = scrollBy(msg, m.keys, r.scroll, contentHeight, maxOffset(m.resourceLines().len(), contentHeight))
 	return m, nil
 }
+
+// followResourceCursor scrolls the page after a key on its json so the cursor is in sight. Up on
+// the first line scrolls up to what is above the json, and g goes to the top of the page.
+func (m model) followResourceCursor(msg tea.KeyPressMsg, before int) model {
+	r := &m.state.resource
+	v := r.shown()
+	lines, at := m.resourceBody()
+	most := maxOffset(lines.len(), contentHeight)
+	switch {
+	case v == nil || at < 0:
+	case key.Matches(msg, m.keys.Top):
+		r.scroll = 0
+	case before == 0 && v.at() == 0 && key.Matches(msg, m.keys.Up, m.keys.PageUp):
+		r.scroll = scrollBy(msg, m.keys, r.scroll, contentHeight, most)
+	default:
+		top, bottom := v.cursorLines(resourceWidth())
+		r.scroll = keepInSight(r.scroll, at+top, at+bottom, contentHeight)
+	}
+	r.scroll = max(0, min(r.scroll, most))
+	return m
+}
+
+// resourceWidth is the width the resource page draws its lines in.
+func resourceWidth() int { return contentWidth - 4 }
 
 // appliedProperties are the inputs a resource was applied with, or its properties for one of
 // cloud control's.
@@ -181,86 +232,50 @@ func (m model) headLines(width int) []string {
 	return lines
 }
 
-// memo is the json kept for the page, emptied when the palette changed. Without one a frame
-// writes the json again.
-func (r resourceState) memo() *resourceJSON {
-	w := r.written
-	if w != nil && w.palette != styles.Gen() {
-		*w = resourceJSON{palette: styles.Gen()}
-	}
-	return w
-}
-
-// appliedJSON is the json of what koldstart applied the resource with, none for nothing, as the
-// first frame wrote it.
-func (r resourceState) appliedJSON() []string {
-	w := r.memo()
-	if w != nil && w.appliedDone {
-		return w.applied
-	}
-	var inputs any
-	var lines []string
-	if json.Unmarshal(r.res.res.Inputs, &inputs) == nil && inputs != nil {
-		lines = jsonLines(inputs)
-	}
-	if w != nil {
-		w.applied, w.appliedDone = lines, true
-	}
-	return lines
-}
-
-// liveJSON is what aws says of the resource as json, what drifted from what koldstart applied,
-// and which lines of the json are of what drifted, as the first frame after the read wrote them.
-func (r resourceState) liveJSON() resourceJSON {
-	w := r.memo()
-	if w != nil && w.liveDone && w.liveAt.Equal(r.liveAt) {
-		return *w
-	}
-	applied := appliedProperties(r.res)
-	drift := cli.Drift(applied, r.live)
-	drifted := map[string]bool{}
-	for _, k := range drift {
-		drifted[k] = true
-	}
-	props := jsonLines(r.live)
-	out := resourceJSON{liveAt: r.liveAt, liveDone: true, drift: drift, props: props, marked: driftedLines(props, drifted), properties: applied}
-	if w != nil {
-		w.liveAt, w.liveDone, w.drift, w.props, w.marked, w.properties = out.liveAt, true, out.drift, out.props, out.marked, out.properties
-	}
-	return out
-}
-
-// truncatedLines draws lines of json cut to width in a tone, only where they are in sight.
-func truncatedLines(lines []string, width int, tone func(i int) styles.Tone) func(int) string {
-	return func(i int) string { return styles.Fg(tone(i)).Render(ansi.Truncate(lines[i], width, "…")) }
-}
-
-func (m model) appliedLines(width int) lazyLines {
+// appliedLines are the applied tab: the resource's attributes, long values wrapped, and the json
+// it was applied with, which starts at the line returned, or -1 when there is none.
+func (m model) appliedLines(width int) (lazyLines, int) {
 	r := m.state.resource
 	res := r.res.res
 	lines := []string{"", styles.SectionHeader("attributes", width)}
-	keys := slices.Sorted(maps.Keys(res.Attributes))
-	labels := labelsFor(keys, width)
-	for _, k := range keys {
-		lines = append(lines, rowIn(labels, styles.Clean(k), text(orDash(res.Attributes[k]), styles.ToneBody), width))
+	names := slices.Sorted(maps.Keys(res.Attributes))
+	labels := labelsFor(names, width)
+	for _, k := range names {
+		lines = append(lines, wrappedRow(labels, styles.Clean(k), text(orDash(res.Attributes[k]), styles.ToneBody), width)...)
 	}
 	if len(res.Attributes) == 0 {
 		lines = append(lines, styles.Faint("none"))
 	}
 	lines = append(lines, "", styles.SectionHeader("applied with", width))
-	applied := r.appliedJSON()
-	if len(applied) == 0 {
-		return lazyOf(append(lines, styles.Faint("nothing")))
+	if r.applied.empty() {
+		return lazyOf(append(lines, styles.Faint("nothing"))), -1
 	}
 	out := lazyOf(lines)
-	out.addDrawn(len(applied), truncatedLines(applied, width, func(int) styles.Tone { return styles.ToneBody }))
+	at := out.len()
+	out.join(r.applied.lines(width))
+	return out, at
+}
+
+// wrappedRow is rowIn with its value wrapped onto the lines below the first rather than cut.
+func wrappedRow(labels int, label string, value cell, width int) []string {
+	room := max(1, width-labels)
+	parts := wrapCell(value, room)
+	out := make([]string, 0, len(parts))
+	for i, part := range parts {
+		if i == 0 {
+			out = append(out, rowIn(labels, label, part, width))
+			continue
+		}
+		out = append(out, strings.Repeat(" ", labels)+renderCell(part, column{width: room}, nil))
+	}
 	return out
 }
 
 // liveLinesOf are the in aws tab: the resource as cloud control reads it now, what differs from
-// what koldstart applied, or why it cannot be read. The properties are drawn only where they are
-// in sight.
-func (m model) liveLinesOf(width int) lazyLines {
+// what koldstart applied, or why it cannot be read. The properties are json, which starts at the
+// line returned, or -1 when there is none, each line of what drifted marked ▲, and the first of a
+// drifted key written as applied → now.
+func (m model) liveLinesOf(width int) (lazyLines, int) {
 	r := m.state.resource
 	lines := []string{""}
 	say := func(s string) {
@@ -270,77 +285,46 @@ func (m model) liveLinesOf(width int) lazyLines {
 	switch {
 	case r.res.retained:
 		say("a remove left it in place: koldstart does not read it until the next deploy takes it over")
-		return lazyOf(lines)
+		return lazyOf(lines), -1
 	case r.res.res.PhysicalID == "":
 		say("it has no id in aws yet: the next deploy creates it")
-		return lazyOf(lines)
+		return lazyOf(lines), -1
 	case !r.liveLoaded && r.live == nil:
-		return lazyOf(append(lines, reading))
+		return lazyOf(append(lines, reading)), -1
 	case errors.Is(r.liveErr, cli.ErrNotLive):
 		say("cloud control cannot read a " + shortType(r.res.res.Type) + ": what koldstart applied is on the applied tab")
-		return lazyOf(lines)
+		return lazyOf(lines), -1
 	case r.liveErr != nil && r.live == nil:
 		lines = append(lines, cellLines(m.couldNotRead("it from aws", r.liveErr.Error(), styles.ToneDanger), width)...)
 		lines = append(lines, "")
 		say("reading it takes cloud control, which an emulator may not have, and cloudformation:GetResource with the read permissions of its type. what koldstart applied is on the applied tab")
-		return lazyOf(lines)
+		return lazyOf(lines), -1
 	case !r.liveLoaded:
 		lines = append(lines, reading, "")
 	case r.liveErr != nil:
 		lines = append(lines, cellLines(staleNote("", r.liveAt, r.liveErr.Error()), width)...)
 		lines = append(lines, "")
 	}
-	if len(r.live) == 0 {
+	if r.props.empty() {
 		say("aws returned no properties for it")
-		return lazyOf(lines)
+		return lazyOf(lines), -1
 	}
-	live := r.liveJSON()
-	applied, drift := live.properties, live.drift
 	switch {
-	case len(drift) > 0:
-		lines = append(lines, renderCell(cell{styles.S("▲ ", styles.ToneWarning), styles.S("changed outside koldstart: "+strings.Join(drift, ", "), styles.ToneWarning)}, column{width: width}, nil))
-		labels := labelsFor(drift, width)
-		for _, k := range drift {
-			lines = append(lines, rowIn(labels, styles.Clean(k), cell{
-				styles.S(compactJSON(applied[k]), styles.ToneBody), styles.S("  →  ", styles.ToneFaint), styles.S(compactJSON(r.live[k]), styles.ToneWarning),
-			}, width))
-		}
+	case len(r.drift) > 0:
+		lines = append(lines, cellLines(cell{styles.S("▲ ", styles.ToneWarning), styles.S("changed outside koldstart: "+strings.Join(r.drift, ", "), styles.ToneWarning)}, width)...)
 		back := "the next deploy sets it back to what the configuration says"
-		if len(drift) > 1 {
+		if len(r.drift) > 1 {
 			back = "the next deploy sets them back to what the configuration says"
 		}
-		lines = append(lines, styles.Faint(back))
-	case len(applied) > 0:
+		say(back + ". ▲ marks what changed below, as applied → now")
+	case r.compared:
 		lines = append(lines, styles.Render(styles.S("✓ ", styles.ToneSuccess), styles.S("as koldstart applied it", styles.ToneBody)))
 	}
 	lines = append(lines, "", styles.SectionHeader("properties in aws", width))
 	out := lazyOf(lines)
-	out.addDrawn(len(live.props), truncatedLines(live.props, width, func(i int) styles.Tone {
-		if live.marked[i] {
-			return styles.ToneWarning
-		}
-		return styles.ToneBody
-	}))
-	return out
-}
-
-// driftedLines marks the lines of an object written by jsonLines that belong to a drifted key at
-// its top level: the key's own line, and every line of a value nested under it.
-func driftedLines(lines []string, drifted map[string]bool) []bool {
-	marked := make([]bool, len(lines))
-	in := false
-	for i, line := range lines {
-		switch {
-		case !strings.HasPrefix(line, "  "):
-			in = false
-		case strings.HasPrefix(line, `  "`):
-			tok, err := json.NewDecoder(strings.NewReader(line[2:])).Token()
-			k, ok := tok.(string)
-			in = err == nil && ok && drifted[k]
-		}
-		marked[i] = in
-	}
-	return marked
+	at := out.len()
+	out.join(r.props.lines(width))
+	return out, at
 }
 
 // compactJSON writes a value on one line, with secrets and refs shown by what they stand for.
@@ -355,15 +339,27 @@ func compactJSON(v any) string {
 // resourceLines are the lines of the resource page: the facts above the tabs, the tabs, and the
 // tab on screen.
 func (m model) resourceLines() lazyLines {
-	r := m.state.resource
-	width := contentWidth - 4
-	lines := lazyOf(append(m.headLines(width), "", tabBar(resourceTabs, nil, int(r.tab))))
-	if r.tab == liveTab {
-		lines.join(m.liveLinesOf(width))
-	} else {
-		lines.join(m.appliedLines(width))
-	}
+	lines, _ := m.resourceBody()
 	return lines
+}
+
+// resourceBody is resourceLines, and the line its json starts at, or -1 when the tab shows none.
+func (m model) resourceBody() (lazyLines, int) {
+	r := m.state.resource
+	width := resourceWidth()
+	lines := lazyOf(append(m.headLines(width), "", tabBar(resourceTabs, nil, int(r.tab))))
+	var tab lazyLines
+	var at int
+	if r.tab == liveTab {
+		tab, at = m.liveLinesOf(width)
+	} else {
+		tab, at = m.appliedLines(width)
+	}
+	if at >= 0 {
+		at += lines.len()
+	}
+	lines.join(tab)
+	return lines, at
 }
 
 func (m model) resourceView() string {
