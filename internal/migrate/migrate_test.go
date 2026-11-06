@@ -424,8 +424,8 @@ func TestShorthand(t *testing.T) {
 // attributes, "name: type" each, and the keys, "role: name" each, as items of yaml lists.
 func tableYAML(attributes, keys string) string {
 	definitions := regexp.MustCompile(`(\w+): ([SNB])`).ReplaceAllString(attributes, "{AttributeName: $1, AttributeType: $2}")
-	schema := regexp.MustCompile(`(HASH|RANGE): (\w+)`).ReplaceAllString(keys, "{AttributeName: $2, KeyType: $1}")
-	return "BillingMode: PAY_PER_REQUEST\nAttributeDefinitions:\n  - " + definitions + "\nKeySchema:\n  - " + schema +
+	keySchema := regexp.MustCompile(`(HASH|RANGE): (\w+)`).ReplaceAllString(keys, "{AttributeName: $2, KeyType: $1}")
+	return "BillingMode: PAY_PER_REQUEST\nAttributeDefinitions:\n  - " + definitions + "\nKeySchema:\n  - " + keySchema +
 		"\nPointInTimeRecoverySpecification:\n  PointInTimeRecoveryEnabled: true"
 }
 
