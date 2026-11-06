@@ -52,7 +52,7 @@ func writeFiles(t *testing.T, dir string, files map[string]string) {
 }
 
 // TestFindProject checks the nearest PklProject at or above a file's directory is found, and none
-// when there is none.
+// when there is none, or only a directory of its name.
 func TestFindProject(t *testing.T) {
 	root := t.TempDir()
 	writeFiles(t, root, map[string]string{
@@ -60,6 +60,8 @@ func TestFindProject(t *testing.T) {
 		"app/koldstart.pkl":                 "",
 		"app/services/orders/koldstart.pkl": "",
 		"other/koldstart.pkl":               "",
+		"named/PklProject/keep":             "",
+		"named/koldstart.pkl":               "",
 	})
 	tests := []struct {
 		name string
@@ -69,6 +71,7 @@ func TestFindProject(t *testing.T) {
 		{name: "beside", path: "app/koldstart.pkl", want: "app"},
 		{name: "above", path: "app/services/orders/koldstart.pkl", want: "app"},
 		{name: "none", path: "other/koldstart.pkl", want: ""},
+		{name: "a directory of the name", path: "named/koldstart.pkl", want: ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

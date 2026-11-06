@@ -27,16 +27,17 @@ const (
 const Dependency = "koldstart"
 
 // FindProject returns the directory of the nearest PklProject at or above the directory of path,
-// or "" when there is none.
+// or "" when there is none. A directory of that name, such as pklproject/ on a file system that
+// ignores case, is not one.
 func FindProject(path string) (string, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return "", fmt.Errorf("finding %s: %w", path, err)
 	}
 	for dir := filepath.Dir(abs); ; dir = filepath.Dir(dir) {
-		if _, err := os.Stat(filepath.Join(dir, ProjectFile)); err == nil {
+		if info, err := os.Stat(filepath.Join(dir, ProjectFile)); err == nil && info.Mode().IsRegular() {
 			return dir, nil
-		} else if !errors.Is(err, fs.ErrNotExist) {
+		} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return "", fmt.Errorf("looking for a %s above %s: %w", ProjectFile, path, err)
 		}
 		if parent := filepath.Dir(dir); parent == dir {
@@ -62,11 +63,13 @@ func Stale(dir string) (bool, error) {
 }
 
 // Resolve runs pkl project resolve on the project in dir, which writes its PklProject.deps.json,
-// downloading the metadata of the packages it depends on.
+// downloading the metadata of the packages it depends on. It runs pkl in dir, as pkl reads the
+// project of the directory it runs in too.
 //
 //nolint:gosec // runs our pkl on the user's project
 func (e Evaluator) Resolve(ctx context.Context, dir string) error {
 	cmd := exec.CommandContext(ctx, e.Binary, "project", "resolve", dir)
+	cmd.Dir = dir
 	var stderr bytes.Buffer
 	cmd.Stdout = io.Discard
 	cmd.Stderr = &stderr
