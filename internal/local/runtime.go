@@ -23,9 +23,9 @@ import (
 // FunctionError is an invocation the function failed: the error it posted, or why it never
 // answered.
 type FunctionError struct {
-	Type    string   `json:"errorType"`
-	Message string   `json:"errorMessage"`
-	Trace   []string `json:"stackTrace,omitempty"`
+	Type    string            `json:"errorType"`
+	Message string            `json:"errorMessage"`
+	Trace   []json.RawMessage `json:"stackTrace,omitempty"`
 }
 
 func (e *FunctionError) Error() string {

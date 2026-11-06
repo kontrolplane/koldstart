@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -104,7 +105,11 @@ func TestDescribeFailure(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := describeFailure(tt.typ, tt.message, tt.trace); got != tt.want {
+			frames := make([]json.RawMessage, len(tt.trace))
+			for i, line := range tt.trace {
+				frames[i], _ = json.Marshal(line)
+			}
+			if got := describeFailure(tt.typ, tt.message, frames); got != tt.want {
 				t.Errorf("describeFailure =\n%s\nwant\n%s", got, tt.want)
 			}
 		})

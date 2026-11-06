@@ -13,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -313,97 +312,6 @@ func printPayload(w io.Writer, payload []byte, terminal bool, colour palette) er
 	}
 	_, err := w.Write(payload)
 	return err
-}
-
-// failure is the error a function returned, as its runtime writes it: its type, its message and
-// its stack trace, as lines in node and python and as frames in go.
-type failure struct {
-	Type    string            `json:"errorType"`
-	Message string            `json:"errorMessage"`
-	Trace   []json.RawMessage `json:"stackTrace"`
-}
-
-// functionError says what a function that failed in aws returned: the type and message of its
-// error, as invoke --local says them, with its stack trace indented under them; or what lambda
-// calls the failure, such as Unhandled, with what the function returned when it was not empty.
-func functionError(payload []byte, kind string) string {
-	var f failure
-	if json.Unmarshal(payload, &f) != nil || f.Message == "" {
-		var b bytes.Buffer
-		if len(bytes.TrimSpace(payload)) == 0 || !prettyJSON(&b, payload, palette{}) {
-			return kind
-		}
-		return kind + ", returning\n" + indentLines(strings.TrimRight(b.String(), "\n"))
-	}
-	var trace []string
-	for _, frame := range f.Trace {
-		trace = append(trace, traceLine(frame))
-	}
-	return describeFailure(f.Type, f.Message, trace)
-}
-
-// traceLine is one frame of a stack trace: a line of node or python as it is, and a frame of go
-// as its function and where it is.
-func traceLine(frame json.RawMessage) string {
-	var line string
-	if json.Unmarshal(frame, &line) == nil {
-		return line
-	}
-	var g struct {
-		Path  string `json:"path"`
-		Line  int    `json:"line"`
-		Label string `json:"label"`
-	}
-	if json.Unmarshal(frame, &g) == nil && g.Path != "" {
-		return fmt.Sprintf("%s (%s:%d)", g.Label, g.Path, g.Line)
-	}
-	return string(frame)
-}
-
-// describeFailure says what a function failed with: the type and message of its error, the type
-// left out when there is none, and its stack trace under them, indented. The trace's first line
-// is left out when it only says the type and message again, as node's does.
-func describeFailure(typ, message string, trace []string) string {
-	head := message
-	if typ != "" {
-		head = typ + ": " + message
-	}
-	var lines []string
-	for _, frame := range trace {
-		for line := range strings.SplitSeq(strings.TrimRight(frame, "\n"), "\n") {
-			if strings.TrimSpace(line) != "" {
-				lines = append(lines, strings.TrimRight(line, " \t\r"))
-			}
-		}
-	}
-	if len(lines) > 0 && strings.TrimSpace(lines[0]) == head {
-		lines = lines[1:]
-	}
-	if len(lines) == 0 {
-		return head
-	}
-	return head + "\n" + indentLines(dedent(lines))
-}
-
-// dedent takes the indentation every line has off them all, so a trace keeps only its own.
-func dedent(lines []string) string {
-	common := -1
-	for _, line := range lines {
-		n := len(line) - len(strings.TrimLeft(line, " \t"))
-		if common < 0 || n < common {
-			common = n
-		}
-	}
-	out := make([]string, len(lines))
-	for i, line := range lines {
-		out[i] = line[common:]
-	}
-	return strings.Join(out, "\n")
-}
-
-// indentLines indents every line of s by four spaces, under the line of an error.
-func indentLines(s string) string {
-	return "    " + strings.ReplaceAll(s, "\n", "\n    ")
 }
 
 // invokeLocal runs the function once on this machine, its output on stderr and what it returned

@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -17,12 +18,14 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awsmiddleware "github.com/aws/aws-sdk-go-v2/aws/middleware"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	lambdatypes "github.com/aws/aws-sdk-go-v2/service/lambda/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	"github.com/kontrolplane/koldstart/internal/config"
 	"github.com/kontrolplane/koldstart/internal/engine"
+	"github.com/kontrolplane/koldstart/internal/local"
 	"github.com/kontrolplane/koldstart/internal/provider/cloudcontrol"
 	"github.com/kontrolplane/koldstart/internal/state"
 )
@@ -92,6 +95,8 @@ type Invocation struct {
 	// Error is the kind of error the function failed with, or "".
 	Error    string
 	Duration time.Duration
+	// RequestID is the id lambda gave the invocation, "" for one on this machine.
+	RequestID string
 }
 
 // MaxLogEvents bounds the log lines one read of LogsBetween returns, keeping the newest.
@@ -303,6 +308,7 @@ func (c *Console) Invoke(ctx context.Context, ref StageRef, function string, pay
 		return Invocation{}, fmt.Errorf("invoking %s: %w", function, err)
 	}
 	inv := Invocation{Payload: out.Payload, Error: aws.ToString(out.FunctionError), Duration: time.Since(started)}
+	inv.RequestID, _ = awsmiddleware.GetRequestIDMetadata(out.ResultMetadata)
 	if logs, err := base64.StdEncoding.DecodeString(aws.ToString(out.LogResult)); err == nil {
 		inv.Logs = string(logs)
 	}
@@ -334,6 +340,9 @@ func (c *Console) InvokeLocal(ctx context.Context, ref StageRef, function string
 	inv := Invocation{Payload: result, Duration: time.Since(started), Logs: output.String()}
 	if err != nil {
 		inv.Error = err.Error()
+	}
+	if failed, ok := errors.AsType[*local.FunctionError](err); ok && len(result) == 0 {
+		inv.Payload, _ = json.Marshal(failed)
 	}
 	return inv, nil
 }
