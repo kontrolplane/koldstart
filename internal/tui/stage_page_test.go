@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -31,34 +32,35 @@ func sdLine(m model, want string) (string, int) {
 	return "", -1
 }
 
-// TestStageHead checks the facts above the tabs: the stage, its resources and what a remove kept,
-// its account and region, when it was deployed and by whom, and its lock, in two columns that
-// line up, a value taking its short form where the whole one does not fit.
+// TestStageHead checks the head above the tabs, as the function's overview has its own: the
+// stage's name, and on one line below its resources and what a remove kept, its account and
+// region, when it was deployed and by whom, and its lock, the shorter forms where the whole line
+// does not fit, the date, the account and the region the header shows left out.
 func TestStageHead(t *testing.T) {
 	tests := []struct {
 		name  string
 		width int
 		prep  func(f *fakeBackend)
-		want  []string
+		facts []string
 		not   []string
 	}{
 		{
-			name: "deployed and locked", width: 120,
-			want: []string{"stage    orders/dev · 200 resources · 1 kept", "account  123456789012 · eu-west-1", "deployed 3h ago by levi · " + formatTime(time.Now().Add(-3 * time.Hour))[:9], "lock     ● ana on ana-mbp · deploy since ", ", 4m ago"},
+			name: "deployed and locked", width: 160,
+			facts: []string{"200 resources · 1 kept · 123456789012 · eu-west-1 · deployed 3h ago by levi · " + formatTime(time.Now().Add(-3 * time.Hour))[:9], " · ● ana on ana-mbp · deploy since ", ", 4m ago"},
 		},
 		{
 			name: "narrow", width: 80,
-			want: []string{"stage    orders/dev · 200 resources  ", "deployed 3h ago by levi ", "lock     ● ana on ana-mbp, 4m ago"},
-			not:  []string{"deploy since"},
+			facts: []string{"200 resources · 1 kept · 3h ago by levi · ● ana on ana-mbp, 4m ago"},
+			not:   []string{"deploy since", "123456789012", "eu-west-1"},
 		},
 		{
 			name: "free", width: 120, prep: func(f *fakeBackend) { delete(f.locks, ordersDev) },
-			want: []string{"lock     free"},
+			facts: []string{"deployed 3h ago by levi · ", " · lock free"},
 		},
 		{
 			name: "a lock that says little", width: 120, prep: func(f *fakeBackend) { f.locks[ordersDev] = &state.LockInfo{} },
-			want: []string{"lock     ● someone"},
-			not:  []string{"since", "-"},
+			facts: []string{" · ● someone"},
+			not:   []string{"since"},
 		},
 		{
 			name: "not deployed yet", width: 120,
@@ -66,8 +68,8 @@ func TestStageHead(t *testing.T) {
 				st := state.New("orders", "dev", "eu-west-1", "123456789012")
 				f.states[ordersDev] = st
 			},
-			want: []string{"stage    orders/dev · 0 resources", "deployed not deployed yet · d plans its first deploy"},
-			not:  []string{"kept"},
+			facts: []string{"0 resources · 123456789012 · eu-west-1 · not deployed yet · d plans its first deploy · ● ana on ana-mbp, 4m ago"},
+			not:   []string{"kept"},
 		},
 	}
 	for _, tt := range tests {
@@ -77,23 +79,25 @@ func TestStageHead(t *testing.T) {
 				tt.prep(f)
 			}
 			m := sdAt(t, f, tt.width, 30)
-			v := screen(m)
-			for _, want := range tt.want {
-				if !strings.Contains(v, want) {
-					t.Errorf("no %q:\n%s", want, v)
+			title, at := sdLine(m, "orders/dev  ")
+			if at != 2 || strings.TrimSpace(strings.Trim(title, "│")) != "orders/dev" {
+				t.Fatalf("the title is %q at %d, want orders/dev alone one column in", title, at)
+			}
+			lines := strings.Split(screen(m), "\n")
+			i := slices.Index(lines, title)
+			facts := lines[i+1]
+			for _, want := range tt.facts {
+				if !strings.Contains(facts, want) {
+					t.Errorf("the facts have no %q: %s", want, facts)
 				}
 			}
 			for _, not := range tt.not {
-				if line, at := sdLine(m, "lock "); at < 0 || strings.Contains(ansi.Cut(line, at, ansi.StringWidth(line)), not) {
-					t.Errorf("the lock says %q: %s", not, line)
+				if strings.Contains(facts, not) {
+					t.Errorf("the facts say %q: %s", not, facts)
 				}
 			}
-			_, stage := sdLine(m, "stage    ")
-			_, account := sdLine(m, "account  ")
-			_, deployed := sdLine(m, "deployed ")
-			_, lock := sdLine(m, "lock     ")
-			if stage != account || deployed != lock || stage < 0 || deployed <= stage {
-				t.Errorf("the labels are at %d, %d and %d, %d, want two columns that line up", stage, account, deployed, lock)
+			if strings.Contains(facts, "…") {
+				t.Errorf("the facts are cut: %s", facts)
 			}
 		})
 	}
@@ -325,7 +329,7 @@ func TestStageLayout(t *testing.T) {
 				switch {
 				case m.page == outputPage && !strings.Contains(v, "holds  "):
 					t.Errorf("%d functions, %dx%d %s: no head:\n%s", functions, w, h, name, v)
-				case m.page == stagePage && (!strings.Contains(v, "stage    orders/dev") || !strings.Contains(v, "lock     ● ana")):
+				case m.page == stagePage && (!strings.Contains(v, "│ orders/dev ") || !strings.Contains(v, "● ana")):
 					t.Errorf("%d functions, %dx%d %s: no head:\n%s", functions, w, h, name, v)
 				case m.page == stagePage && !strings.Contains(v, "▌"):
 					t.Errorf("%d functions, %dx%d %s: the cursor is out of sight:\n%s", functions, w, h, name, v)

@@ -36,11 +36,10 @@ var stageTabs = []string{"functions", resourcesWord, "outputs", "history"}
 
 // resourcesWord names the resources tab and the column of the overview that counts them,
 // functionWord the column of the functions tab and a function where the filter hides them all, and
-// stageWord and deployedWord the facts of the stage's head, deployedWord the column of its history.
+// deployedWord the fact of the stage's head and the column of its history.
 const (
 	resourcesWord = "resources"
 	functionWord  = "function"
-	stageWord     = "stage"
 	deployedWord  = "deployed"
 )
 
@@ -1007,17 +1006,17 @@ func (m model) stageGoBack() (model, tea.Cmd) {
 	return m.loadStages()
 }
 
-// headFact is a label and its value in the head of a page, with a shorter value for when the
-// whole one does not fit, or none.
+// headFact is a fact in the head of a page, with a shorter form for when the whole line does not
+// fit, or none, which leaves it out.
 type headFact struct {
-	label string
 	value cell
 	short cell
 }
 
-// stageFacts are the lines above the tabs, in two columns of a label and its value each, as the
-// header lays out its own: the stage and how many resources it has, its account and region, when
-// it was last deployed and by whom, and its lock.
+// stageFacts are the lines above the tabs, as the function's overview has its own: the stage's
+// name, and the facts of it on a line below, how many resources it has and a remove kept, its
+// account and region, when it was last deployed and by whom, and its lock. Where they do not fit,
+// the date of the deploy goes, and the account and a region the header shows already.
 func (m model) stageFacts() string {
 	s := m.state.stage
 	if s.st == nil {
@@ -1027,40 +1026,80 @@ func (m model) stageFacts() string {
 	if n == 1 {
 		noun = " resource"
 	}
-	where := headFact{label: stageWord, value: cell{styles.S(s.ref.String(), styles.ToneText), sep(), styles.S(formatInt(n), styles.ToneBody), styles.S(noun, styles.ToneFaint)}}
+	resources := cell{styles.S(formatInt(n), styles.ToneBody), styles.S(noun, styles.ToneFaint)}
+	facts := []headFact{{value: resources, short: resources}}
 	if kept := len(s.st.Retained); kept > 0 {
-		where.short = where.value
-		where.value = append(slices.Clone(where.value), sep(), styles.S(formatInt(kept), styles.ToneBody), styles.S(" kept", styles.ToneFaint))
+		k := cell{styles.S(formatInt(kept), styles.ToneBody), styles.S(" kept", styles.ToneFaint)}
+		facts = append(facts, headFact{value: k, short: k})
 	}
-	account := cell{styles.S(orDash(s.st.Account), styles.ToneBody), sep(), styles.S(s.ref.Region, styles.ToneMuted)}
-	deployed := headFact{label: deployedWord, value: text("not deployed yet", styles.ToneMuted)}
-	if s.st.DeployedAt.IsZero() && m.b.Local(s.ref) {
-		deployed.value = append(deployed.value, styles.S(" · "+m.keys.Deploy.Help().Key+" plans its first deploy", styles.ToneFaint))
-		deployed.short = text("not deployed yet", styles.ToneMuted)
+	account := headFact{value: text(orDash(s.st.Account), styles.ToneBody)}
+	region := headFact{value: text(s.ref.Region, styles.ToneMuted)}
+	if s.ref.Region != m.ident.Region {
+		region.short = region.value
 	}
-	if !s.st.DeployedAt.IsZero() {
-		deployed.short = cell{styles.S(formatAgo(s.st.DeployedAt), styles.ToneBody), styles.S(" by ", styles.ToneFaint), styles.S(orDash(s.st.DeployedBy), styles.ToneMuted)}
-		deployed.value = append(slices.Clone(deployed.short), sep(), styles.S(formatTime(s.st.DeployedAt), styles.ToneMuted))
+	facts = append(facts, account, region)
+	switch {
+	case s.st.DeployedAt.IsZero():
+		never := text("not deployed yet", styles.ToneMuted)
+		deployed := headFact{value: never, short: never}
+		if m.b.Local(s.ref) {
+			deployed.value = append(slices.Clone(never), styles.S(" · "+m.keys.Deploy.Help().Key+" plans its first deploy", styles.ToneFaint))
+		}
+		facts = append(facts, deployed)
+	default:
+		ago := cell{styles.S(formatAgo(s.st.DeployedAt), styles.ToneBody), styles.S(" by ", styles.ToneFaint), styles.S(orDash(s.st.DeployedBy), styles.ToneMuted)}
+		deployed := headFact{value: append(cell{styles.S(deployedWord+" ", styles.ToneFaint)}, ago...), short: ago}
+		facts = append(facts, deployed, headFact{value: text(formatTime(s.st.DeployedAt), styles.ToneMuted)})
 	}
-	lock := headFact{label: "lock", value: text("free", styles.ToneFaint)}
+	lock := cell{styles.S("lock ", styles.ToneFaint), styles.S("free", styles.ToneFaint)}
+	facts = append(facts, headFact{value: lock, short: lock})
 	if l := s.lock; l != nil {
 		who := cmpOr(l.Who, "someone")
 		if l.Where != "" {
 			who += " on " + l.Where
 		}
-		lock.value = cell{styles.S("● ", styles.ToneWarning), styles.S(who, styles.ToneWarning)}
-		lock.short = lock.value
+		held := headFact{value: cell{styles.S("● ", styles.ToneWarning), styles.S(who, styles.ToneWarning)}}
+		held.short = held.value
 		if !l.Since.IsZero() {
-			lock.short = cell{styles.S("● ", styles.ToneWarning), styles.S(who+", "+formatAgo(l.Since), styles.ToneWarning)}
+			held.short = cell{styles.S("● ", styles.ToneWarning), styles.S(who+", "+formatAgo(l.Since), styles.ToneWarning)}
 		}
 		if l.Operation != "" || !l.Since.IsZero() {
-			lock.value = append(lock.value, styles.S(" · "+strings.TrimSpace(l.Operation+" "+lockSince(l.Since)), styles.ToneWarning))
+			held.value = append(held.value, styles.S(" · "+strings.TrimSpace(l.Operation+" "+lockSince(l.Since)), styles.ToneWarning))
 		}
+		facts[len(facts)-1] = held
 	}
-	return factGrid([][2]headFact{
-		{where, {label: "account", value: account}},
-		{deployed, lock},
-	}, contentWidth-2)
+	width := contentWidth - 2
+	title := renderCell(cell{{Text: styles.Clean(s.ref.String()), Tone: styles.ToneText, Bold: true}}, column{width: width}, nil)
+	return indent(title + "\n" + factLine(facts, width))
+}
+
+// factLine is the facts of a head on one line of width, between faint dots, as the function's
+// overview writes its own: each whole where they all fit, and otherwise giving way from the last,
+// each to its shorter form or left out where it has none, cut at the end where even that does
+// not fit.
+func factLine(facts []headFact, width int) string {
+	join := func(short int) cell {
+		var line cell
+		for i, f := range facts {
+			v := f.value
+			if i >= len(facts)-short {
+				v = f.short
+			}
+			if v == nil {
+				continue
+			}
+			if len(line) > 0 {
+				line = append(line, sep())
+			}
+			line = append(line, v...)
+		}
+		return line
+	}
+	line := join(0)
+	for short := 1; short <= len(facts) && cellWidth(line) > width; short++ {
+		line = join(short)
+	}
+	return renderCell(line, column{width: width}, nil)
 }
 
 // lockSince says when a lock was taken: since 14:02:11, 4m ago, with the date when it was not
@@ -1075,58 +1114,6 @@ func lockSince(since time.Time) string {
 		when = formatTime(since)
 	}
 	return "since " + when + ", " + formatAgo(since)
-}
-
-// factGrid lays out columns of facts side by side in width, a label and its value on each line,
-// the labels faint and as wide as headerLabelWidth, sharing the width as the header does. Where
-// the whole values do not fit side by side, the columns are shared as their shorter forms want,
-// and a value that does not fit its column takes its shorter form.
-func factGrid(columns [][2]headFact, width int) string {
-	room := width - 2*(len(columns)-1)
-	wants := func(short bool) []int {
-		want := make([]int, len(columns))
-		for i, c := range columns {
-			for _, f := range c {
-				v := f.value
-				if short && f.short != nil {
-					v = f.short
-				}
-				want[i] = max(want[i], headerLabelWidth+1+cellWidth(v))
-			}
-		}
-		return want
-	}
-	want := wants(false)
-	if sumInts(want) > room {
-		want = wants(true)
-	}
-	widths := shareWidths(want, room)
-	rendered := make([]string, 0, 2*len(columns))
-	for i, c := range columns {
-		if i > 0 {
-			rendered = append(rendered, "  ")
-		}
-		fits := max(1, widths[i]-headerLabelWidth-1)
-		var lines []string
-		for _, f := range c {
-			value := f.value
-			if cellWidth(value) > fits && f.short != nil {
-				value = f.short
-			}
-			label := renderCell(text(f.label, styles.ToneFaint), column{width: headerLabelWidth + 1}, nil)
-			lines = append(lines, label+renderCell(value, column{width: fits}, nil))
-		}
-		rendered = append(rendered, strings.Join(lines, "\n"))
-	}
-	return indent(lipgloss.JoinHorizontal(lipgloss.Top, rendered...))
-}
-
-func sumInts(n []int) int {
-	total := 0
-	for _, v := range n {
-		total += v
-	}
-	return total
 }
 
 // tabBar names the tabs with how many rows each holds, the open one in the accent. Each page
