@@ -200,6 +200,8 @@ func (m model) toInput(msg tea.Msg) (model, tea.Cmd) {
 			m = m.followOutputCursor(tea.KeyPressMsg{}, -1)
 		case functionPage:
 			m = m.followPane(tea.KeyPressMsg{}, -1)
+		case logLinePage:
+			m = m.followLogLineCursor(tea.KeyPressMsg{}, -1)
 		}
 		return m.jsonDone(res)
 	case m.page == overviewPage && m.state.overview.filter.active:
@@ -664,6 +666,8 @@ func (s *pages) json(p page) *jsonView {
 		}
 	case inputsPage:
 		return s.inputs.shown()
+	case logLinePage:
+		return s.logLine.shown()
 	}
 	return nil
 }
@@ -909,7 +913,7 @@ func (m model) shortHelp() [][2]string {
 	case invocationPage:
 		return [][2]string{scrollHint, {k.Next.Help().Key + "/" + k.Previous.Help().Key, "next/previous"}, hint(k.Copy, "copy id"), hint(k.Help), hint(k.Quit)}
 	case logLinePage:
-		return [][2]string{scrollHint, {k.Next.Help().Key + "/" + k.Previous.Help().Key, "next/previous"}, hint(k.Request), hint(k.Copy, "copy the line"), hint(k.Help), hint(k.Quit)}
+		return m.logLineHints()
 	case outputPage:
 		if v := m.state.json(m.page); v != nil {
 			return append(m.jsonHints(*v), hint(k.Refresh), hint(k.Help), hint(k.Quit))
@@ -1067,6 +1071,8 @@ func (m model) helpView() string {
 		three = []helpSection{all[0], all[1], all[3]}
 	case resourcePage, outputPage, inputsPage:
 		three = []helpSection{all[0], all[1], all[4]}
+	case logLinePage:
+		three = []helpSection{all[0], all[2], all[4]}
 	}
 	layouts := []helpLayout{
 		{sections: all, gap: 4, padY: 1, padX: 3, notes: true, close: true},
@@ -1146,5 +1152,6 @@ func (m model) restyleInputs() model {
 	m.state.output.json.search.input.SetStyles(in)
 	m.state.function.pane.view.search.input.SetStyles(in)
 	m.state.inputs.json.search.input.SetStyles(in)
+	m.state.logLine.json.search.input.SetStyles(in)
 	return m
 }

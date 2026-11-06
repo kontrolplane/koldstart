@@ -20,6 +20,8 @@ type logLineState struct {
 	scroll int
 	// drawn is the body of the page as the last frame drew it, so the next does not again.
 	drawn *logLineDrawn
+	// json is the json the line is or holds, read with a cursor; it is empty for a line of none.
+	json jsonView
 }
 
 // logLineDrawn is the body of the page of a line, drawn at a width in a palette.
@@ -32,15 +34,43 @@ type logLineDrawn struct {
 
 // openLogLine shows a line of the logs on a page of its own.
 func (m model) openLogLine(e cli.LogEvent) model {
-	m.state.logLine = logLineState{e: e, drawn: &logLineDrawn{}}
+	m.state.logLine = newLogLine(e, &logLineDrawn{})
 	return m.switchPage(logLinePage)
 }
 
-// logLineUpdate handles a key on the page of a line: c copies the line as it was logged, o, or
-// enter, opens its invocation, n and p go to the next and the previous line the logs tab shows,
-// and the rest scroll.
+// newLogLine is the page of line e, its json in a json view, the top of which copies the line as
+// it was logged. drawn is where it keeps what it drew.
+func newLogLine(e cli.LogEvent, drawn *logLineDrawn) logLineState {
+	s := logLineState{e: e, drawn: drawn}
+	if doc := splitLogLine(e.Message).json; doc != "" {
+		s.json = newJSONViewBytes([]byte(doc))
+		s.json.source = e.Message
+	}
+	return s
+}
+
+// shown is the json of the line, or nil when it holds none.
+func (s *logLineState) shown() *jsonView {
+	if s.json.empty() {
+		return nil
+	}
+	return &s.json
+}
+
+// logLineUpdate handles a key on the page of a line. The keys of its json come first, as on an
+// output: they move the cursor through it, fold it, search it and copy from it, the line as it
+// was logged on its top line. Then c copies the line, o, or enter on a line without json, opens
+// its invocation, n, while no search holds text, and p go to the next and the previous line the
+// logs tab shows, and the rest scroll.
 func (m model) logLineUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 	v := &m.state.logLine
+	if j := v.shown(); j != nil {
+		before := j.at()
+		if res, ok := j.update(msg, m.keys, logLineWidth(), contentHeight); ok {
+			m = m.followLogLineCursor(msg, before)
+			return m.jsonDone(res)
+		}
+	}
 	switch {
 	case key.Matches(msg, m.keys.Back, m.keys.Quit):
 		return m.switchPage(functionPage), nil
@@ -84,8 +114,16 @@ func (m model) stepLogLine(by int) (model, tea.Cmd) {
 		return m.setStatus("this is the oldest line the logs tab shows: ↑ on its first line reads further back", styles.ToneMuted)
 	}
 	m = m.putCursor(list, j).scrollTo(list, j)
-	m.state.logLine = logLineState{e: m.state.function.logs.lines[list.items[j].line], drawn: m.state.logLine.drawn}
+	m.state.logLine = newLogLine(m.state.function.logs.lines[list.items[j].line], m.state.logLine.drawn)
 	return m, nil
+}
+
+// followLogLineCursor scrolls the page after a key on its json so the cursor is in sight.
+func (m model) followLogLineCursor(msg tea.KeyPressMsg, before int) model {
+	v := &m.state.logLine
+	lines, at := m.logLineBody()
+	v.scroll = m.followJSON(v.shown(), msg, before, v.scroll, at, lines.len(), logLineWidth())
+	return m
 }
 
 // lineRequest is the invocation in the logs read that a line belongs to.
@@ -106,12 +144,25 @@ func logLineWidth() int { return contentWidth - 4 }
 // logLineLines are the lines of the page of a line: its head, and what it says, drawn only where
 // they are in sight.
 func (m model) logLineLines() lazyLines {
+	lines, _ := m.logLineBody()
+	return lines
+}
+
+// logLineBody is logLineLines, and the line its json starts at, or -1 when it holds none.
+func (m model) logLineBody() (lazyLines, int) {
 	v := m.state.logLine
 	width := logLineWidth()
 	out := lazyOf(m.logLineHead(v.e, width))
 	body := v.body(width)
 	out.addDrawn(len(body), func(i int) string { return body[i] })
-	return out
+	j := v.shown()
+	if j == nil {
+		return out, -1
+	}
+	out.add("", styles.SectionHeader("json", width))
+	at := out.len()
+	out.join(j.lines(width))
+	return out, at
 }
 
 // logLineHead says when a line was logged, to the millisecond and how long ago, in which stream,
@@ -148,17 +199,17 @@ func (v logLineState) body(width int) []string {
 	if d != nil && d.lines != nil && d.e == v.e && d.width == width && d.palette == styles.Gen() {
 		return d.lines
 	}
-	lines := logLineBody(v.e, width)
+	lines := logLineText(v.e, width)
 	if d != nil {
 		*d = logLineDrawn{e: v.e, width: width, palette: styles.Gen(), lines: lines}
 	}
 	return lines
 }
 
-// logLineBody draws what a line says in width: its message whole, tinted as the logs tint it and
-// wrapped, and then its fields, json pretty-printed and wrapped under its indent, or the pairs of
-// logfmt each under its key.
-func logLineBody(e cli.LogEvent, width int) []string {
+// logLineText draws what a line says in width but its json, which a json view reads: its
+// message whole, tinted as the logs tint it and wrapped, and the pairs of logfmt each under its
+// key.
+func logLineText(e cli.LogEvent, width int) []string {
 	parts := splitLogLine(e.Message)
 	var out []string
 	if strings.TrimSpace(parts.message) != "" {
@@ -167,20 +218,7 @@ func logLineBody(e cli.LogEvent, width int) []string {
 			out = append(out, renderCell(c, column{width: width}, nil))
 		}
 	}
-	switch {
-	case parts.json != "":
-		out = append(out, "", styles.SectionHeader("json", width))
-		var v any
-		dec := json.NewDecoder(strings.NewReader(parts.json))
-		dec.UseNumber()
-		if dec.Decode(&v) == nil {
-			for _, line := range jsonLines(v) {
-				for _, part := range wrapIndented(line, width) {
-					out = append(out, renderCell(jsonLineCell(part), column{width: width}, nil))
-				}
-			}
-		}
-	case len(parts.pairs) > 0:
+	if len(parts.pairs) > 0 {
 		out = append(out, "", styles.SectionHeader("fields", width))
 		keys := make([]string, len(parts.pairs))
 		for i, p := range parts.pairs {
@@ -204,7 +242,7 @@ func logLineBody(e cli.LogEvent, width int) []string {
 			}
 		}
 	}
-	if len(out) == 0 {
+	if len(out) == 0 && parts.json == "" {
 		out = append(out, "", styles.Faint("an empty line"))
 	}
 	return out
@@ -308,6 +346,31 @@ func logfmtPairs(line string) ([][2]string, bool) {
 		out = append(out, [2]string{k, value})
 	}
 	return out, true
+}
+
+// logLineHints are the keys of the page of a line for the footer: n and p, then o where the line
+// is of an invocation, before the keys of its json, or c, which copies the line, where it has
+// none. While a search of its json holds text n goes to its next match.
+func (m model) logLineHints() [][2]string {
+	k := m.keys
+	v := &m.state.logLine
+	h := [][2]string{scrollHint, {k.Next.Help().Key + "/" + k.Previous.Help().Key, "next/previous"}}
+	j := v.shown()
+	if j != nil {
+		keys := m.jsonHints(*j)
+		h[0] = keys[0]
+		if j.query != "" {
+			h[1] = hint(k.Previous)
+		}
+		if _, ok := m.lineRequest(v.e); ok {
+			h = append(h, hint(k.Request))
+		}
+		return append(append(h, keys[1:]...), hint(k.Help), hint(k.Quit))
+	}
+	if _, ok := m.lineRequest(v.e); ok {
+		h = append(h, hint(k.Request))
+	}
+	return append(h, hint(k.Copy, "copy the line"), hint(k.Help), hint(k.Quit))
 }
 
 func (m model) logLineView() string {
