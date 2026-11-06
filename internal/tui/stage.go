@@ -181,7 +181,7 @@ var (
 		{title: deployedWord, width: 8},
 		{title: "", width: 15, drop: 3},
 		{title: "by", width: 8, grow: 1, drop: 2},
-		{title: "changes", width: 14},
+		{title: "changes", width: 10},
 		{title: "", width: 18, drop: 1},
 		{title: "took", width: 6, right: true, drop: 4},
 		{title: "writes", width: 6, right: true, drop: 5},
