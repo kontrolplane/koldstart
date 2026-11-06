@@ -306,7 +306,7 @@ func TestNavPosition(t *testing.T) {
 			m = pressKeys(t, m, tt.bottom...)
 			end := tt.end
 			if end == "" {
-				p := m.position()
+				p, _, _ := strings.Cut(m.position(), " · ")
 				_, total, _ := strings.Cut(p, " of ")
 				_, last, _ := strings.Cut(strings.TrimPrefix(p, "lines "), "–")
 				last, _, _ = strings.Cut(last, " ")

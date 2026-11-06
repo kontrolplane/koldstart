@@ -603,7 +603,7 @@ func (m model) position() string {
 		_, body := m.planLines()
 		return body.position(m.state.plan.cursor)
 	case diffPage:
-		return scrollCue(m.state.diff.scroll, contentHeight, m.diffLines().len())
+		return m.diffPosition()
 	case invocationPage:
 		return scrollCue(m.state.invocation.scroll, contentHeight, m.invocationLines().len())
 	}
@@ -827,7 +827,7 @@ func (m model) shortHelp() [][2]string {
 	case versionPage:
 		return [][2]string{hint(k.View, "diff"), chooseHint, hint(k.Copy), hint(k.Help), hint(k.Quit)}
 	case diffPage:
-		return [][2]string{scrollHint, hint(k.Help), hint(k.Quit)}
+		return m.diffHints()
 	case invocationPage:
 		return [][2]string{scrollHint, hint(k.Copy, "copy id"), hint(k.Help), hint(k.Quit)}
 	case planPage:
@@ -923,6 +923,10 @@ func helpSections(k keys.KeyMap) []helpSection {
 			{name(k.Deploy), "plan its code"}, {name(k.Follow), "follow the logs"}, {name(k.Filter), "filter the logs"},
 			{"↑ at top", "older logs"}, {name(k.View), "open the row"},
 		}},
+		{"diff", [][2]string{
+			{name(k.NextDiff) + " " + name(k.PrevDiff), "next / previous change"}, {name(k.View), "unfold the lines in sight"},
+			{name(k.Unfold), "unfold or fold all"},
+		}},
 	}
 }
 
@@ -951,6 +955,8 @@ func (m model) helpView() string {
 	switch m.page {
 	case functionPage, runLocalPage, invocationPage:
 		pair[1] = all[2]
+	case diffPage:
+		pair[1] = all[3]
 	}
 	layouts := []helpLayout{
 		{sections: all, gap: 4, padY: 1, padX: 3, notes: true, close: true},

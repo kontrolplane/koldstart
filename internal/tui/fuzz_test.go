@@ -202,27 +202,53 @@ func FuzzDiff(f *testing.F) {
 		if json.Unmarshal(b, &after) != nil {
 			after = string(b)
 		}
-		was, is := jsonLines(before), jsonLines(after)
-		lines := lineDiff(was, is)
+		was, is := docLines(before), docLines(after)
+		lines := diffDocs(before, after)
 		var gotWas, gotIs []string
+		wantWas := make([]string, 0, len(was))
 		for _, l := range lines {
 			if l.op != '+' {
-				gotWas = append(gotWas, l.text)
+				gotWas = append(gotWas, diffKey(l.text))
 			}
 			if l.op != '-' {
 				gotIs = append(gotIs, l.text)
 			}
+			for _, mk := range l.marks {
+				if mk[0] < 0 || mk[0] >= mk[1] || mk[1] > len(l.text) || !utf8.ValidString(l.text[mk[0]:mk[1]]) {
+					t.Fatalf("a mark %v of %q is not a part of it", mk, l.text)
+				}
+			}
 		}
-		if strings.Join(gotWas, "\n") != strings.Join(was, "\n") || strings.Join(gotIs, "\n") != strings.Join(is, "\n") {
+		for _, l := range was {
+			wantWas = append(wantWas, diffKey(l))
+		}
+		if strings.Join(gotWas, "\n") != strings.Join(wantWas, "\n") || strings.Join(gotIs, "\n") != strings.Join(is, "\n") {
 			t.Fatalf("the diff of %q and %q loses lines: %v", a, b, lines)
 		}
 		w := fuzzWidth(width, 300)
 		fuzzLayout(t, w, 40)
 		m := model{}
-		m.state.diff = diffState{title: title, detail: title, lines: lines, wrapped: &diffRows{}}
-		for _, scroll := range []int{0, 1 << 30} {
-			m.state.diff.scroll = scroll
-			fuzzDrawn(t, "the diff page", m.diffView(), contentWidth)
+		m.state.diff = diffState{title: title, detail: title, lines: lines, change: -1, wrapped: &diffRows{}}
+		for _, unfolded := range []bool{false, true} {
+			m.state.diff.unfolded = unfolded
+			m.state.diff.folds++
+			for _, scroll := range []int{0, 1 << 30} {
+				m.state.diff.scroll = scroll
+				fuzzDrawn(t, "the diff page", m.diffView(), contentWidth)
+				fuzzDrawn(t, "the diff's position", m.diffPosition(), contentWidth)
+			}
+			m.state.diff.jump(1)
+			fuzzDrawn(t, "the diff on a change", m.diffView(), contentWidth)
+		}
+		for _, line := range is {
+			for _, p := range wrapParts(line, w) {
+				if p.from >= 0 && line[p.from:p.from+len(p.text)] != p.text {
+					t.Fatalf("wrapParts(%q, %d) puts %q at %d", line, w, p.text, p.from)
+				}
+				if p.from < 0 && strings.TrimSpace(p.text) != "" {
+					t.Fatalf("wrapParts(%q, %d) does not find %q in the line", line, w, p.text)
+				}
+			}
 		}
 	})
 }

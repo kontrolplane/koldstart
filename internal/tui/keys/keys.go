@@ -27,6 +27,9 @@ type KeyMap struct {
 	EditEvent key.Binding
 	Follow    key.Binding
 	Copy      key.Binding
+	NextDiff  key.Binding
+	PrevDiff  key.Binding
+	Unfold    key.Binding
 	Refresh   key.Binding
 	Pause     key.Binding
 	Yes       key.Binding
@@ -61,6 +64,9 @@ var Keys = KeyMap{
 	EditEvent: key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit event")),
 	Follow:    key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "follow")),
 	Copy:      key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "copy")),
+	NextDiff:  key.NewBinding(key.WithKeys("]"), key.WithHelp("]", "next change")),
+	PrevDiff:  key.NewBinding(key.WithKeys("["), key.WithHelp("[", "previous change")),
+	Unfold:    key.NewBinding(key.WithKeys("z"), key.WithHelp("z", "unfold all")),
 	Refresh:   key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 	Pause:     key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "pause")),
 	Yes:       key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "yes")),
