@@ -709,7 +709,8 @@ func (m model) paneScrolls() bool {
 	return body.len() > l.paneBodyHeight()
 }
 
-// paneTabs are the tabs over the pane: the payload with its size, and the result.
+// paneTabs are the tabs over the pane: the payload with its size, and the result, after the
+// event's name where the events are not in sight.
 func (m model) paneTabs() string {
 	f := m.state.function
 	size := cli.Size(int64(len(defaultEvent)))
@@ -720,7 +721,12 @@ func (m model) paneTabs() string {
 	if f.pane.result {
 		open = 1
 	}
-	return tabBar([]string{"payload", "result"}, []string{size, ""}, open)
+	tabs := tabBar([]string{"payload", "result"}, []string{size, ""}, open)
+	if m.invokeLayout().showEvents {
+		return tabs
+	}
+	name := cmpOr(strings.TrimSuffix(m.selectedEvent(), ".json"), defaultEvent)
+	return styles.Render(styles.S(name, styles.ToneText), sep()) + tabs
 }
 
 // paneView draws the pane at width and height: its tabs, a rule, and its body scrolled.

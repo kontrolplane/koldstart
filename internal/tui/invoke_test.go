@@ -423,7 +423,7 @@ func TestInvokeLayout(t *testing.T) {
 			m, _ = update(t, m, tea.WindowSizeMsg{Width: w, Height: h})
 			m = pressKeys(t, m, "j", "j")
 			for _, step := range []string{"payload", "i", "enter", "z", "esc", "v", "k", "k", "enter"} {
-				if step != "payload" {
+				if step != "payload" && (step != "esc" || m.state.function.pane.focused) {
 					m = pressKeys(t, m, step)
 				}
 				v := m.render()
@@ -441,8 +441,12 @@ func TestInvokeLayout(t *testing.T) {
 					t.Errorf("%dx%d %s after %s: an escape reached the view", w, h, name, step)
 				}
 			}
-			if wide := m.invokeLayout().wide; wide != (w >= invokeWideWidth+chromeWidth) {
-				t.Errorf("%dx%d: wide %v", w, h, wide)
+			l := m.invokeLayout()
+			if l.wide != (w >= invokeWideWidth+chromeWidth) || l.showEvents != l.wide {
+				t.Errorf("%dx%d: wide %v, the events shown %v with the keys in the json", w, h, l.wide, l.showEvents)
+			}
+			if v := screen(m); !l.showEvents && !strings.Contains(v, "big · payload") {
+				t.Errorf("%dx%d: the pane does not name its event while the events are out of sight:\n%s", w, h, v)
 			}
 		}
 	}
