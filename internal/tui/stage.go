@@ -1009,9 +1009,10 @@ func (m model) stageFacts() string {
 	if n == 1 {
 		noun = " resource"
 	}
-	where := cell{styles.S(s.ref.String(), styles.ToneText), sep(), styles.S(formatInt(n), styles.ToneBody), styles.S(noun, styles.ToneFaint)}
+	where := headFact{label: "stage", value: cell{styles.S(s.ref.String(), styles.ToneText), sep(), styles.S(formatInt(n), styles.ToneBody), styles.S(noun, styles.ToneFaint)}}
 	if kept := len(s.st.Retained); kept > 0 {
-		where = append(where, sep(), styles.S(formatInt(kept), styles.ToneBody), styles.S(" kept", styles.ToneFaint))
+		where.short = where.value
+		where.value = append(slices.Clone(where.value), sep(), styles.S(formatInt(kept), styles.ToneBody), styles.S(" kept", styles.ToneFaint))
 	}
 	account := cell{styles.S(orDash(s.st.Account), styles.ToneBody), sep(), styles.S(s.ref.Region, styles.ToneMuted)}
 	deployed := headFact{label: "deployed", value: text("not deployed yet", styles.ToneMuted)}
@@ -1039,7 +1040,7 @@ func (m model) stageFacts() string {
 		}
 	}
 	return factGrid([][2]headFact{
-		{{label: "stage", value: where}, {label: "account", value: account}},
+		{where, {label: "account", value: account}},
 		{deployed, lock},
 	}, contentWidth-2)
 }
@@ -1059,34 +1060,55 @@ func lockSince(since time.Time) string {
 }
 
 // factGrid lays out columns of facts side by side in width, a label and its value on each line,
-// the labels faint and as wide as headerLabelWidth, sharing the width as the header does. A value
-// that does not fit its column takes its shorter form.
+// the labels faint and as wide as headerLabelWidth, sharing the width as the header does. Where
+// the whole values do not fit side by side, the columns are shared as their shorter forms want,
+// and a value that does not fit its column takes its shorter form.
 func factGrid(columns [][2]headFact, width int) string {
-	want := make([]int, len(columns))
-	for i, c := range columns {
-		for _, f := range c {
-			want[i] = max(want[i], headerLabelWidth+1+cellWidth(f.value))
+	room := width - 2*(len(columns)-1)
+	wants := func(short bool) []int {
+		want := make([]int, len(columns))
+		for i, c := range columns {
+			for _, f := range c {
+				v := f.value
+				if short && f.short != nil {
+					v = f.short
+				}
+				want[i] = max(want[i], headerLabelWidth+1+cellWidth(v))
+			}
 		}
+		return want
 	}
-	widths := shareWidths(want, width-2*(len(columns)-1))
+	want := wants(false)
+	if sumInts(want) > room {
+		want = wants(true)
+	}
+	widths := shareWidths(want, room)
 	rendered := make([]string, 0, 2*len(columns))
 	for i, c := range columns {
 		if i > 0 {
 			rendered = append(rendered, "  ")
 		}
-		room := max(1, widths[i]-headerLabelWidth-1)
+		fits := max(1, widths[i]-headerLabelWidth-1)
 		var lines []string
 		for _, f := range c {
 			value := f.value
-			if cellWidth(value) > room && f.short != nil {
+			if cellWidth(value) > fits && f.short != nil {
 				value = f.short
 			}
 			label := renderCell(text(f.label, styles.ToneFaint), column{width: headerLabelWidth + 1}, nil)
-			lines = append(lines, label+renderCell(value, column{width: room}, nil))
+			lines = append(lines, label+renderCell(value, column{width: fits}, nil))
 		}
 		rendered = append(rendered, strings.Join(lines, "\n"))
 	}
 	return indent(lipgloss.JoinHorizontal(lipgloss.Top, rendered...))
+}
+
+func sumInts(n []int) int {
+	total := 0
+	for _, v := range n {
+		total += v
+	}
+	return total
 }
 
 // tabBar names the tabs with how many rows each holds, the open one in the accent. Each page
