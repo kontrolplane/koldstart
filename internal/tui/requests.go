@@ -244,7 +244,7 @@ func nodeID(line string) string {
 	}
 	id := line[i+1 : i+37]
 	for k := range len(id) {
-		if c := id[k]; !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c == '-') {
+		if c := id[k]; (c < '0' || c > '9') && (c < 'a' || c > 'f') && c != '-' {
 			return ""
 		}
 	}

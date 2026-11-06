@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"maps"
 	"strings"
 	"testing"
 	"time"
@@ -90,10 +91,7 @@ func TestReportItems(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := map[string]float64{}
-			for label, v := range reportItems(tt.line) {
-				got[label] = v
-			}
+			got := maps.Collect(reportItems(tt.line))
 			if fmt.Sprint(got) != fmt.Sprint(tt.want) {
 				t.Errorf("reportItems = %v, want %v", got, tt.want)
 			}

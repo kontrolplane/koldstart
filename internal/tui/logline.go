@@ -359,7 +359,7 @@ func logfmtPairs(line string) ([][2]string, bool) {
 func (m model) logLineHints() [][2]string {
 	k := m.keys
 	v := &m.state.logLine
-	h := [][2]string{scrollHint, {k.Next.Help().Key + "/" + k.Previous.Help().Key, "next / previous"}}
+	h := [][2]string{scrollHint, {k.Next.Help().Key + "/" + k.Previous.Help().Key, nextPrevious}}
 	j := v.shown()
 	if j != nil {
 		keys := m.jsonHints(*j)

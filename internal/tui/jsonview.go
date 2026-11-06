@@ -1226,7 +1226,7 @@ func (m model) jsonHints(v jsonView) [][2]string {
 	k := m.keys
 	h := [][2]string{{upDown, "move"}, {k.View.Help().Key + "/" + k.Fold.Help().Key, "fold"}}
 	if v.query != "" {
-		h = append(h, [2]string{k.NextMatch.Help().Key + "/" + k.PrevMatch.Help().Key, "next / previous"})
+		h = append(h, [2]string{k.NextMatch.Help().Key + "/" + k.PrevMatch.Help().Key, nextPrevious})
 	} else {
 		h = append(h, hint(k.Filter, "search"))
 	}

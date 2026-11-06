@@ -861,6 +861,9 @@ var (
 // upDown names the arrow keys that move up and down.
 const upDown = "↑/↓"
 
+// nextPrevious is what a pair of keys that step forwards and back does, as n and p do.
+const nextPrevious = "next / previous"
+
 func (m model) confirmHints() [][2]string {
 	k := m.keys
 	return [][2]string{{"y/n", "yes / no"}, {"←/→", chooseHint[1]}, hint(k.View, "confirm"), hint(k.Back, "cancel")}
@@ -915,7 +918,7 @@ func (m model) shortHelp() [][2]string {
 	case inputsPage:
 		return m.inputsHints()
 	case invocationPage:
-		return [][2]string{scrollHint, {k.Next.Help().Key + "/" + k.Previous.Help().Key, "next / previous"}, hint(k.Copy, "copy id"), hint(k.Help), hint(k.Quit)}
+		return [][2]string{scrollHint, {k.Next.Help().Key + "/" + k.Previous.Help().Key, nextPrevious}, hint(k.Copy, "copy id"), hint(k.Help), hint(k.Quit)}
 	case logLinePage:
 		return m.logLineHints()
 	case outputPage:
