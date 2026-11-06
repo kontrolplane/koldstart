@@ -647,7 +647,7 @@ func (m model) position() string {
 		return scrollCue(m.state.output.scroll, contentHeight, m.outputLines().len())
 	case inputsPage:
 		if v := m.state.inputs.shown(); v != nil {
-			return ofCount(v.at(), len(v.rows()))
+			return scrollCue(v.scroll, inputsHeight(), v.lineCount(inputsWidth()))
 		}
 	case logLinePage:
 		return scrollCue(m.state.logLine.scroll, contentHeight, m.logLineLines().len())
@@ -863,7 +863,7 @@ const upDown = "↑/↓"
 
 func (m model) confirmHints() [][2]string {
 	k := m.keys
-	return [][2]string{{"y/n", "yes/no"}, {"←/→", chooseHint[1]}, hint(k.View, "confirm"), hint(k.Back, "cancel")}
+	return [][2]string{{"y/n", "yes / no"}, {"←/→", chooseHint[1]}, hint(k.View, "confirm"), hint(k.Back, "cancel")}
 }
 
 // shortHelp is the hints the footer shows for the page.
@@ -915,7 +915,7 @@ func (m model) shortHelp() [][2]string {
 	case inputsPage:
 		return m.inputsHints()
 	case invocationPage:
-		return [][2]string{scrollHint, {k.Next.Help().Key + "/" + k.Previous.Help().Key, "next/previous"}, hint(k.Copy, "copy id"), hint(k.Help), hint(k.Quit)}
+		return [][2]string{scrollHint, {k.Next.Help().Key + "/" + k.Previous.Help().Key, "next / previous"}, hint(k.Copy, "copy id"), hint(k.Help), hint(k.Quit)}
 	case logLinePage:
 		return m.logLineHints()
 	case outputPage:

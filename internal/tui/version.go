@@ -183,7 +183,7 @@ func outputChanges(before, after *state.State) []cell {
 // versionLines are the lines of the version, each change one that can be chosen.
 func (m model) versionLines() pickList {
 	v := m.state.version
-	width := contentWidth - 5
+	width := contentWidth - 4
 	if !v.loaded || v.current == nil {
 		return pickList{}
 	}
@@ -216,7 +216,7 @@ func (m model) versionLines() pickList {
 		"",
 		countedHeader(title, changeCounts(added, changed, removed), width),
 	}
-	l := pickList{lines: lazyOf(lines)}
+	l := pickList{lines: lazyOf(lines), head: len(lines)}
 	cols := []column{{width: width}}
 	cells := make([]cell, len(changes))
 	for i, c := range changes {

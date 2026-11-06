@@ -576,20 +576,20 @@ func (m model) diffLines() lazyLines {
 		}
 		counts = []styles.Span{styles.S(note, styles.ToneFaint)}
 	}
-	counts = append([]styles.Span{styles.S("  ", styles.ToneFaint)}, counts...)
+	counts = append([]styles.Span{sep()}, counts...)
 	countsWidth := ansi.StringWidth(plainText(counts))
-	if countsWidth > width-1 {
+	if countsWidth > width {
 		counts, countsWidth = nil, 0
 	}
-	detail := truncate(styles.Clean(d.detail), width-1-countsWidth)
+	detail := truncate(strings.TrimSpace(styles.Clean(d.detail)), width-countsWidth)
 	var lines lazyLines
 	lines.add(
 		styles.SectionHeader(d.title, width),
-		" "+styles.Render(append([]styles.Span{{Text: detail, Tone: styles.ToneMuted}}, counts...)...),
+		styles.Render(append([]styles.Span{{Text: detail, Tone: styles.ToneMuted}}, counts...)...),
 		"",
 	)
 	if len(d.lines) == 0 {
-		lines.add(" " + styles.Faint("no inputs on either side"))
+		lines.add(styles.Faint("no inputs on either side"))
 		return lines
 	}
 	l := d.layout(diffTextWidth())

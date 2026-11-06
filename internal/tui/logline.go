@@ -168,7 +168,7 @@ func (m model) logLineBody() (lazyLines, int) {
 // logLineHead says when a line was logged, to the millisecond and how long ago, in which stream,
 // of which invocation and how it ended, at what level, and how long the line is.
 func (m model) logLineHead(e cli.LogEvent, width int) []string {
-	field := func(label string, value cell) string { return rowIn(headLabels, label, value, width) }
+	field := func(label string, value cell) string { return row(label, value, width) }
 	request := text("none in the logs read", styles.ToneFaint)
 	if r, ok := m.lineRequest(e); ok {
 		request = append(cell{styles.S(r.id, styles.ToneBody), sep()}, requestStatus(r, time.Duration(m.state.function.inputs.Timeout)*time.Second)...)
@@ -359,13 +359,13 @@ func logfmtPairs(line string) ([][2]string, bool) {
 func (m model) logLineHints() [][2]string {
 	k := m.keys
 	v := &m.state.logLine
-	h := [][2]string{scrollHint, {k.Next.Help().Key + "/" + k.Previous.Help().Key, "next/previous"}}
+	h := [][2]string{scrollHint, {k.Next.Help().Key + "/" + k.Previous.Help().Key, "next / previous"}}
 	j := v.shown()
 	if j != nil {
 		keys := m.jsonHints(*j)
 		h[0] = keys[0]
 		if j.query != "" {
-			h[1] = hint(k.Previous)
+			h[1] = hint(k.Previous, "previous line")
 		}
 		if _, ok := m.lineRequest(v.e); ok {
 			h = append(h, hint(k.Request))

@@ -434,7 +434,7 @@ func (m model) planHead(width int) []string {
 		title = styles.SectionHeader(p.planTitle(), width-len(made)-1) + " " + styles.Faint(made)
 	}
 	head := make([]string, 0, 5)
-	head = append(head, title, " "+renderCell(summary, column{width: width - 1}, nil))
+	head = append(head, title, renderCell(summary, column{width: width}, nil))
 	head = append(head, m.applyLines(width)...)
 	return append(head, "")
 }
@@ -446,9 +446,9 @@ func (p planState) noChanges(width int) []string {
 	if p.function != "" {
 		say = cli.UpToDate(p.function, p.ref.App, p.ref.Stage)
 	}
-	lines := []string{" " + renderCell(text(say, styles.ToneMuted), column{width: width - 1}, nil)}
+	lines := []string{renderCell(text(say, styles.ToneMuted), column{width: width}, nil)}
 	if !p.remove && p.function == "" && !p.plan.Refreshed {
-		lines = append(lines, " "+renderCell(text("r reads every resource as it is in aws, to find what was changed outside koldstart", styles.ToneFaint), column{width: width - 1}, nil))
+		lines = append(lines, renderCell(text("r reads every resource as it is in aws, to find what was changed outside koldstart", styles.ToneFaint), column{width: width}, nil))
 	}
 	return lines
 }
@@ -500,7 +500,7 @@ func (m model) applyLines(width int) []string {
 	case p.failed:
 		summary := cli.ApplySummary(finished, failed, stopped, max(len(m.planChanges())-len(p.progress), 0))
 		line = cell{styles.S("✗ ", styles.ToneDanger), styles.S("failed after "+cli.Duration(p.finishedAt.Sub(p.startedAt))+" · "+summary, styles.ToneDanger)}
-		return []string{" " + renderCell(line, column{width: width - 1}, nil), " " + renderCell(text(m.planAgain(), styles.ToneFaint), column{width: width - 1}, nil)}
+		return []string{renderCell(line, column{width: width}, nil), renderCell(text(m.planAgain(), styles.ToneFaint), column{width: width}, nil)}
 	default:
 		what := "deployed"
 		if p.remove {
@@ -509,7 +509,7 @@ func (m model) applyLines(width int) []string {
 		line = cell{styles.S("✓ ", styles.ToneSuccess), styles.S(what+" in "+cli.Duration(p.finishedAt.Sub(p.startedAt)), styles.ToneSuccess),
 			styles.S(" · "+cli.ApplySummary(finished, failed, stopped, 0), styles.ToneFaint)}
 	}
-	return []string{" " + renderCell(line, column{width: width - 1}, nil)}
+	return []string{renderCell(line, column{width: width}, nil)}
 }
 
 // applyingWord names an apply in flight.
@@ -557,7 +557,7 @@ func (m model) planView() string {
 	if len(head) == 0 {
 		return view
 	}
-	return "  " + strings.Join(head, "\n  ") + "\n" + view
+	return " " + strings.Join(head, "\n ") + "\n" + view
 }
 
 // planPosition is the change under the cursor among the changes, as 12 of 240, or on a heading

@@ -70,7 +70,7 @@ func (m model) inputsView() string {
 	width := inputsWidth()
 	lines := []string{
 		styles.SectionHeader(s.id, width),
-		renderCell(cell{styles.S(s.detail, styles.ToneSuccess), styles.S(" · its inputs, with nothing deployed to diff against", styles.ToneFaint)}, column{width: width}, nil),
+		renderCell(cell{styles.S(strings.TrimSpace(s.detail), styles.ToneSuccess), styles.S(" · its inputs, with nothing deployed to diff against", styles.ToneFaint)}, column{width: width}, nil),
 		"",
 	}
 	if v := s.shown(); v != nil {

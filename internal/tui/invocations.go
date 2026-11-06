@@ -267,8 +267,8 @@ func (m model) shownRequest() request {
 	return r
 }
 
-// invocationWidth is the width of the invocation page, out to the edge of a table.
-func invocationWidth() int { return contentWidth - 2 }
+// invocationWidth is the width of the invocation page, as of every page of detail.
+func invocationWidth() int { return contentWidth - 4 }
 
 // invocationLines are the lines of the invocation page: the head, what lambda reports of it, and
 // the lines of its log, each drawn only where it is in sight.
@@ -309,22 +309,19 @@ func (m model) invocationView() string {
 	return indent(scrolledLines(m.invocationLines(), m.state.invocation.scroll, contentHeight))
 }
 
-// headLabels is the width of the labels of the head of the invocation page.
-const headLabels = 12
-
 // invocationHead sums up an invocation: its request id, how it ended and what it failed with,
 // when it started, how long it ran and was billed for, the memory it used of what it has, and the
 // init of a cold start.
 func (m model) invocationHead(r request, width int) []string {
 	timeout := time.Duration(m.state.function.inputs.Timeout) * time.Second
-	field := func(label string, value cell) string { return rowIn(headLabels, label, value, width) }
+	field := func(label string, value cell) string { return row(label, value, width) }
 	lines := []string{
 		styles.SectionHeader("invocation", width),
 		field("request", text(r.id, styles.ToneBody)),
 		field("status", requestStatus(r, timeout)),
 	}
 	if c := causeCell(r.cause, styles.ToneBody); c != nil {
-		parts := wrapCell(c, max(1, width-headLabels))
+		parts := wrapCell(c, max(1, width-labelWidth))
 		if len(parts) > 3 {
 			parts = append(parts[:2], append(parts[2], styles.S("…", styles.ToneFaint)))
 		}

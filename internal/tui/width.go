@@ -131,11 +131,13 @@ func moveCursor(msg tea.KeyPressMsg, k keys.KeyMap, cursor, n, page int) (int, b
 // pickList is a page of lines some of which can be chosen, as the changes of a plan: rows holds
 // the index of the line of each, and lit the line of each drawn chosen, on the selection's ground.
 // The lines are drawn only where they are in sight, so a plan of thousands of changes draws a frame
-// as quickly as one of a screenful.
+// as quickly as one of a screenful. The first head lines are the page's head, drawn one column in
+// as the heads of the other pages are, rather than beside the cursor's gutter.
 type pickList struct {
 	lines lazyLines
 	rows  []int
 	lit   []func() string
+	head  int
 }
 
 // addDrawn appends a line that can be chosen, drawn by line, and by lit when it is chosen, only
@@ -171,6 +173,8 @@ func selectable(l pickList, cursor, scroll, height int) (string, int) {
 			out = append(out, cursorMark(styles.P.Selection)+l.lit[cursor]())
 		case scroll+i == selected:
 			out = append(out, styles.Accent("▌")+" "+line)
+		case scroll+i < l.head:
+			out = append(out, " "+line)
 		default:
 			out = append(out, "  "+line)
 		}

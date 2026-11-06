@@ -238,8 +238,8 @@ func TestDiffSummary(t *testing.T) {
 		before, after any
 		want          string
 	}{
-		{name: "changes", before: map[string]any{"a": 1, "b": 2}, after: map[string]any{"a": 2, "c": 3}, want: "update function  +1 added  ~1 changed  -1 removed"},
-		{name: "none", before: map[string]any{"a": 1}, after: map[string]any{"a": 1}, want: "update function  no change"},
+		{name: "changes", before: map[string]any{"a": 1, "b": 2}, after: map[string]any{"a": 2, "c": 3}, want: "update function · +1 added  ~1 changed  -1 removed"},
+		{name: "none", before: map[string]any{"a": 1}, after: map[string]any{"a": 1}, want: "update function · no change"},
 		{name: "spaced", before: map[string]any{"p": `{"a":1}`}, after: map[string]any{"p": `{ "a": 1 }`}, want: "no change but the spacing of json in a string"},
 		{name: "nothing", want: "no inputs on either side"},
 	}
