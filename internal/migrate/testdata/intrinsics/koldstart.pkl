@@ -59,8 +59,7 @@ resources {
     }
   }
   when (conditionIsBig) {
-    ["Alarms"] {
-      type = "AWS::SNS::Topic"
+    ["Alarms"] = (kdst.topic()) {
       properties {
         TopicName = "shop-\(if (conditionIsProd) "alarms" else "test-alarms")"
         DisplayName = ("shop alarms").base64

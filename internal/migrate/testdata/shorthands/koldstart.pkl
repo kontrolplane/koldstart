@@ -1,0 +1,134 @@
+// Converted from serverless.yml by kdst migrate.
+// A TODO comment marks each thing it could not convert, or converted differently.
+
+amends "package://github.com/kontrolplane/koldstart/releases/download/v0.1.0/koldstart@0.1.0#/Project.pkl"
+
+import "package://github.com/kontrolplane/koldstart/releases/download/v0.1.0/koldstart@0.1.0#/kdst.pkl"
+
+app = "ledger"
+region = "eu-west-1"
+
+functions {
+  ["api"] {
+    runtime = "nodejs22.x"
+    handler = "src/api.handler"
+    events {
+      kdst.del("/entries/{id}")
+      kdst.patch("/entries/{id}")
+      kdst.options("/entries")
+    }
+  }
+  ["worker"] {
+    runtime = "nodejs22.x"
+    handler = "src/worker.handler"
+    events {
+      (kdst.fromQueue("Inbox")) {
+        reportBatchItemFailures = false
+      }
+      (kdst.fromQueue("arn:aws:sqs:eu-west-1:123456789012:shared")) {
+        reportBatchItemFailures = false
+      }
+      new kdst.Queue {
+        queue = kdst.join(List("arn:aws:sqs:\(module.region):", kdst.accountId, ":other"))
+        reportBatchItemFailures = false
+      }
+      (kdst.fromTableStream("Entries")) {
+        reportBatchItemFailures = false
+      }
+      (kdst.fromStream("Clicks")) {
+        reportBatchItemFailures = false
+      }
+      new kdst.Topic {
+        topic = kdst.ref("Audit", "Identifier")
+      }
+      kdst.schedule("rate(10 minutes)")
+    }
+  }
+}
+
+resources {
+  ["Entries"] = (kdst.table("id")) {
+    deletionPolicy = "delete"
+    properties {
+      TableName = "ledger-entries"
+      StreamSpecification {
+        StreamViewType = "NEW_IMAGE"
+      }
+    }
+  }
+  ["Balances"] = (kdst.table("account")) {
+    partitionKeyType = "N"
+    sortKey = "at"
+    sortKeyType = "N"
+  }
+  ["Accounts"] {
+    type = "AWS::DynamoDB::Table"
+    properties {
+      BillingMode = "PAY_PER_REQUEST"
+      AttributeDefinitions {
+        new {
+          AttributeName = "id"
+          AttributeType = "S"
+        }
+        new {
+          AttributeName = "email"
+          AttributeType = "S"
+        }
+      }
+      KeySchema {
+        new {
+          AttributeName = "id"
+          KeyType = "HASH"
+        }
+      }
+      GlobalSecondaryIndexes {
+        new {
+          IndexName = "byEmail"
+          KeySchema {
+            new {
+              AttributeName = "email"
+              KeyType = "HASH"
+            }
+          }
+          Projection {
+            ProjectionType = "ALL"
+          }
+        }
+      }
+      PointInTimeRecoverySpecification {
+        PointInTimeRecoveryEnabled = true
+      }
+    }
+  }
+  ["Inbox"] = (kdst.queue()) {
+    properties {
+      VisibilityTimeout = 60
+    }
+  }
+  ["Outbox"] {
+    type = "AWS::SQS::Queue"
+    properties {
+      MessageRetentionPeriod = 345600
+    }
+  }
+  ["Statements"] = (kdst.bucket()) {
+    properties {
+      VersioningConfiguration {
+        Status = "Enabled"
+      }
+    }
+  }
+  ["Exports"] {
+    type = "AWS::S3::Bucket"
+    properties {
+      BucketName = "ledger-exports"
+    }
+  }
+  ["Audit"] = kdst.topic()
+  ["Clicks"] {
+    type = "AWS::Kinesis::Stream"
+    properties {
+      ShardCount = 1
+    }
+  }
+}

@@ -2,10 +2,12 @@ package migrate
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -294,6 +296,149 @@ func TestIntrinsicsByStage(t *testing.T) {
 		})
 	}
 }
+
+// TestShorthandsExact loads the converted shorthands, and checks each resource, whether written
+// as a shorthand of kdst.pkl or in full, has the type, deletion policy and properties of
+// serverless.yml, no more and no less.
+func TestShorthandsExact(t *testing.T) {
+	ev := evaluator(t)
+	src, err := os.ReadFile(filepath.Join("testdata", "shorthands", "koldstart.pkl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, cleanup, err := schema.Local(src, "0.1.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	p, err := config.Load(context.Background(), ev, path, "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join("testdata", "shorthands", "serverless.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Resources struct {
+			Resources map[string]struct {
+				Type           string         `yaml:"Type"`
+				DeletionPolicy string         `yaml:"DeletionPolicy"`
+				Properties     map[string]any `yaml:"Properties"`
+			} `yaml:"Resources"`
+		} `yaml:"resources"`
+	}
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Resources) != len(doc.Resources.Resources) {
+		t.Errorf("%d resources, want %d", len(p.Resources), len(doc.Resources.Resources))
+	}
+	for name, want := range doc.Resources.Resources {
+		got := p.Resources[name]
+		if want.Properties == nil {
+			want.Properties = map[string]any{}
+		}
+		if got.Type != want.Type || got.DeletionPolicy != strings.ToLower(want.DeletionPolicy) || asJSON(t, got.Properties) != asJSON(t, want.Properties) {
+			t.Errorf("%s = %s %q %s, want %s %q %s", name, got.Type, got.DeletionPolicy, asJSON(t, got.Properties),
+				want.Type, strings.ToLower(want.DeletionPolicy), asJSON(t, want.Properties))
+		}
+	}
+}
+
+// asJSON is v as json, its keys sorted, for comparing what yaml and pkl give.
+func asJSON(t *testing.T, v any) string {
+	t.Helper()
+	data, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// TestShorthand checks which properties of a resource make it a shorthand of kdst.pkl, with
+// what amends it, and which keep it in full.
+func TestShorthand(t *testing.T) {
+	tests := []struct {
+		name   string
+		typ    string
+		props  string
+		helper string
+		amends []string
+		rest   int
+	}{
+		{name: "a topic without properties", typ: typeTopic, helper: "kdst.topic()"},
+		{name: "a topic with a name", typ: typeTopic, props: "TopicName: alerts", helper: "kdst.topic()", rest: 1},
+		{name: "a queue kept 14 days", typ: typeQueue, props: "MessageRetentionPeriod: 1209600\nVisibilityTimeout: 60", helper: "kdst.queue()", rest: 1},
+		{name: "a queue kept 4 days", typ: typeQueue, props: "MessageRetentionPeriod: 345600"},
+		{name: "a queue without properties", typ: typeQueue},
+		{name: "a queue kept for a variable", typ: typeQueue, props: "MessageRetentionPeriod: ${self:custom.retention}"},
+		{
+			name:   "a table of a string key",
+			typ:    typeTable,
+			props:  tableYAML("id: S", "HASH: id") + "\nTableName: orders",
+			helper: `kdst.table("id")`,
+			rest:   1,
+		},
+		{
+			name:   "a table of number keys",
+			typ:    typeTable,
+			props:  tableYAML("account: N\n  - at: B", "HASH: account\n  - RANGE: at"),
+			helper: `kdst.table("account")`,
+			amends: []string{`partitionKeyType = "N"`, `sortKey = "at"`, `sortKeyType = "B"`},
+		},
+		{name: "a table without point-in-time recovery", typ: typeTable, props: "BillingMode: PAY_PER_REQUEST\nAttributeDefinitions: [{AttributeName: id, AttributeType: S}]\nKeySchema: [{AttributeName: id, KeyType: HASH}]"},
+		{name: "a table of an index's attribute", typ: typeTable, props: tableYAML("id: S\n  - email: S", "HASH: id")},
+		{name: "a table of provisioned throughput", typ: typeTable, props: strings.Replace(tableYAML("id: S", "HASH: id"), "PAY_PER_REQUEST", "PROVISIONED", 1)},
+		{name: "a table of its keys in another order", typ: typeTable, props: tableYAML("at: S\n  - account: S", "HASH: account\n  - RANGE: at")},
+		{name: "a bucket of the defaults", typ: typeBucket, props: bucketYAML, helper: "kdst.bucket()"},
+		{name: "a bucket of a kms key", typ: typeBucket, props: strings.Replace(bucketYAML, "AES256", "aws:kms", 1)},
+		{name: "a bucket with a name", typ: typeBucket, props: "BucketName: exports"},
+		{name: "another type", typ: "AWS::Kinesis::Stream", props: "ShardCount: 1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var props *yaml.Node
+			if tt.props != "" {
+				var doc yaml.Node
+				if err := yaml.Unmarshal([]byte(tt.props), &doc); err != nil {
+					t.Fatal(err)
+				}
+				props = doc.Content[0]
+			}
+			s, rest := shorthand(tt.typ, props)
+			if s.helper != tt.helper || strings.Join(s.amends, "; ") != strings.Join(tt.amends, "; ") {
+				t.Errorf("shorthand = %q %q, want %q %q", s.helper, s.amends, tt.helper, tt.amends)
+			}
+			if tt.helper == "" && rest != props {
+				t.Error("the full form lost properties")
+			}
+			if tt.helper != "" && rest != nil && len(rest.Content)/2 != tt.rest {
+				t.Errorf("%d properties left to amend, want %d", len(rest.Content)/2, tt.rest)
+			}
+		})
+	}
+}
+
+// tableYAML is the properties of an on-demand table with point-in-time recovery, of the
+// attributes, "name: type" each, and the keys, "role: name" each, as items of yaml lists.
+func tableYAML(attributes, keys string) string {
+	definitions := regexp.MustCompile(`(\w+): ([SNB])`).ReplaceAllString(attributes, "{AttributeName: $1, AttributeType: $2}")
+	schema := regexp.MustCompile(`(HASH|RANGE): (\w+)`).ReplaceAllString(keys, "{AttributeName: $2, KeyType: $1}")
+	return "BillingMode: PAY_PER_REQUEST\nAttributeDefinitions:\n  - " + definitions + "\nKeySchema:\n  - " + schema +
+		"\nPointInTimeRecoverySpecification:\n  PointInTimeRecoveryEnabled: true"
+}
+
+// bucketYAML is the properties kdst.bucket() sets.
+const bucketYAML = `PublicAccessBlockConfiguration:
+  BlockPublicAcls: true
+  BlockPublicPolicy: true
+  IgnorePublicAcls: true
+  RestrictPublicBuckets: true
+BucketEncryption:
+  ServerSideEncryptionConfiguration:
+    - ServerSideEncryptionByDefault:
+        SSEAlgorithm: AES256`
 
 // TestSub checks a Fn::Sub becomes a pkl string when every part is one, and a kdst.join() when a
 // ref or the account is among them.

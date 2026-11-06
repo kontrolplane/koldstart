@@ -30,6 +30,20 @@ func (w *writer) close() {
 	w.line("}")
 }
 
+// amend writes expr, a call of a kdst.pkl helper, after lead, such as ["orders"] = , and amended
+// with what body writes: (kdst.get("/x")) { ... }, or expr alone when body writes nothing.
+func (w *writer) amend(lead, expr string, body func(w *writer)) {
+	inner := writer{depth: w.depth + 1}
+	body(&inner)
+	if inner.b.Len() == 0 {
+		w.line("%s%s", lead, expr)
+		return
+	}
+	w.line("%s(%s) {", lead, expr)
+	w.b.WriteString(inner.String())
+	w.line("}")
+}
+
 func (w *writer) blank() {
 	w.b.WriteString("\n")
 }

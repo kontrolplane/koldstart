@@ -75,11 +75,27 @@ func (c *converter) httpAPIEvent(w *writer, where string, n *yaml.Node) {
 			path = "$default"
 		}
 	}
-	w.open("new kdst.HttpRoute")
-	w.line("method = %s", quote(method))
-	w.line("path = %s", quote(path))
-	c.routeAuthorizer(w, where, get(n, "authorizer"))
-	w.close()
+	httpRoute(w, method, path, func(w *writer) { c.routeAuthorizer(w, where, get(n, "authorizer")) })
+}
+
+// routeHelpers are the helpers of kdst.pkl for the routes of each method.
+var routeHelpers = map[string]string{
+	"GET": "get", "POST": "post", "PUT": "put", "PATCH": "patch", "DELETE": "del", "HEAD": "head", "OPTIONS": "options", methodAny: "any",
+}
+
+// httpRoute writes a route as its method's helper, kdst.get("/x"), amended with what rest
+// writes, or as an HttpRoute for a method with no helper.
+func httpRoute(w *writer, method, path string, rest func(w *writer)) {
+	helper, ok := routeHelpers[method]
+	if !ok {
+		w.open("new kdst.HttpRoute")
+		w.line("method = %s", quote(method))
+		w.line("path = %s", quote(path))
+		rest(w)
+		w.close()
+		return
+	}
+	w.amend("", fmt.Sprintf("kdst.%s(%s)", helper, quote(path)), rest)
 }
 
 func (c *converter) routeAuthorizer(w *writer, where string, n *yaml.Node) {
@@ -114,45 +130,91 @@ func (c *converter) restEvent(w *writer, where string, n *yaml.Node) {
 		path = "/" + path
 	}
 	c.leave(w, Review, where, "a route of the rest api is one of the http api now: check it does without request validation, api keys and usage plans", nil)
-	w.open("new kdst.HttpRoute")
-	w.line("method = %s", quote(method))
-	w.line("path = %s", quote(path))
-	w.close()
+	httpRoute(w, method, path, func(*writer) {})
 }
 
+// scheduleEvent writes a schedule for each rate: kdst.schedule("rate(1 hour)"), amended with
+// enabled, timezone and input.
 func (c *converter) scheduleEvent(w *writer, where string, n *yaml.Node) {
 	rates := []*yaml.Node{n}
 	if n.Kind == yaml.MappingNode {
 		rates = listOf(orEmpty(get(n, "rate"))).Content
 	}
 	for _, rate := range rates {
-		w.open("new kdst.Schedule")
-		c.assign(w, where+".rate", "expression", c.scalar(rate), rate)
-		if isFalse(get(n, "enabled")) {
-			w.line("enabled = false")
-		}
-		if tz := str(get(n, "timezone")); tz != "" {
-			w.line("timezone = %s", quote(tz))
-		}
-		if input := get(n, "input"); input != nil {
-			if input.Kind == yaml.ScalarNode {
-				w.line("input = %s", quote(input.Value))
-			} else if js, err := jsonString(input); err == nil {
-				w.line("input = %s", js)
+		rest := func(w *writer) {
+			if isFalse(get(n, "enabled")) {
+				w.line("enabled = false")
+			}
+			if tz := str(get(n, "timezone")); tz != "" {
+				w.line("timezone = %s", quote(tz))
+			}
+			if input := get(n, "input"); input != nil {
+				if input.Kind == yaml.ScalarNode {
+					w.line("input = %s", quote(input.Value))
+				} else if js, err := jsonString(input); err == nil {
+					w.line("input = %s", js)
+				}
 			}
 		}
-		w.close()
+		expression := c.scalar(rate)
+		if !expression.ok || !expression.interpolable {
+			w.open("new kdst.Schedule")
+			c.assign(w, where+".rate", "expression", expression, rate)
+			rest(w)
+			w.close()
+			continue
+		}
+		w.amend("", "kdst.schedule("+expression.expr+")", rest)
 	}
+}
+
+// arnOf is the node of the arn an event reads from: the event itself, or its arn.
+func arnOf(n *yaml.Node) *yaml.Node {
+	if n.Kind == yaml.MappingNode {
+		if name, _ := intrinsicOf(n); name == "" {
+			return orEmpty(get(n, "arn"))
+		}
+	}
+	return n
+}
+
+// helperSource is what a helper of kdst.pkl such as kdst.fromQueue() takes for the source of
+// an event: the name of a resource of the project, for a Fn::GetAtt of its attribute, or an arn
+// given as is. It is false for anything else, which the event's class takes instead.
+func (c *converter) helperSource(n *yaml.Node, attribute string) (string, bool) {
+	arn := arnOf(n)
+	name, arg := intrinsicOf(arn)
+	switch {
+	case name == "Fn::GetAtt":
+		target, attr, _ := strings.Cut(arg.Value, ".")
+		if arg.Kind == yaml.SequenceNode && len(arg.Content) == 2 {
+			target, attr = arg.Content[0].Value, arg.Content[1].Value
+		}
+		if resource, ok := c.resourceNames[target]; ok && attr == attribute {
+			return quote(resource), true
+		}
+	case name == "" && arn.Kind == yaml.ScalarNode && strings.HasPrefix(arn.Value, "arn:") && !strings.Contains(arn.Value, "${"):
+		return quote(arn.Value), true
+	}
+	return "", false
+}
+
+// sourceEvent writes an event as the helper of kdst.pkl that takes its source, kdst.fromQueue(),
+// amended with what rest writes, or as the event's class when helperSource has no source for it.
+func (c *converter) sourceEvent(w *writer, where string, n *yaml.Node, helper, class, key, attribute string, rest func(w *writer)) {
+	if source, ok := c.helperSource(n, attribute); ok {
+		w.amend("", fmt.Sprintf("kdst.%s(%s)", helper, source), rest)
+		return
+	}
+	w.open("new kdst." + class)
+	c.source(w, where, key, n)
+	rest(w)
+	w.close()
 }
 
 // source is the arn an event reads from: given as is, or as an intrinsic.
 func (c *converter) source(w *writer, where, key string, n *yaml.Node) {
-	arn := n
-	if n.Kind == yaml.MappingNode {
-		if name, _ := intrinsicOf(n); name == "" {
-			arn = orEmpty(get(n, "arn"))
-		}
-	}
+	arn := arnOf(n)
 	if v, ok := c.intrinsic(arn); ok {
 		c.assign(w, where+".arn", key, v, arn)
 		return
@@ -187,44 +249,55 @@ func (c *converter) batching(w *writer, where string, n *yaml.Node, window strin
 }
 
 func (c *converter) queueEvent(w *writer, where string, n *yaml.Node) {
-	w.open("new kdst.Queue")
-	c.source(w, where, "queue", n)
-	c.batching(w, where, n, "maximumBatchingWindow")
-	w.close()
+	c.sourceEvent(w, where, n, "fromQueue", "Queue", "queue", attrArn, func(w *writer) {
+		c.batching(w, where, n, "maximumBatchingWindow")
+	})
 }
 
+// attrArn is the attribute of most resources' arn.
+const attrArn = "Arn"
+
+// streamEvent is a kinesis stream, kdst.fromStream(), or a dynamodb table's stream,
+// kdst.fromTableStream(), by its arn or its attribute.
 func (c *converter) streamEvent(w *writer, where string, n *yaml.Node) {
-	w.open("new kdst.Stream")
-	c.source(w, where, "stream", n)
-	switch position := str(get(n, "startingPosition")); position {
-	case "", "LATEST":
-	case "TRIM_HORIZON":
-		w.line(`startingPosition = "TRIM_HORIZON"`)
-	default:
-		c.leave(w, Review, where+".startingPosition", "the stream starts at LATEST, as koldstart has no "+position, nil)
+	tableStream := strings.Contains(arnOf(n).Value, ":dynamodb:")
+	if name, _ := intrinsicOf(arnOf(n)); name != "" {
+		_, tableStream = c.helperSource(n, "StreamArn")
 	}
-	c.batching(w, where, n, "batchWindow")
-	w.close()
+	helper, attribute := "fromStream", attrArn
+	if tableStream {
+		helper, attribute = "fromTableStream", "StreamArn"
+	}
+	c.sourceEvent(w, where, n, helper, "Stream", "stream", attribute, func(w *writer) {
+		switch position := str(get(n, "startingPosition")); position {
+		case "", "LATEST":
+		case "TRIM_HORIZON":
+			w.line(`startingPosition = "TRIM_HORIZON"`)
+		default:
+			c.leave(w, Review, where+".startingPosition", "the stream starts at LATEST, as koldstart has no "+position, nil)
+		}
+		c.batching(w, where, n, "batchWindow")
+	})
 }
 
 // topicEvent subscribes to a topic by its arn, or to one the serverless framework made by its
 // name, which becomes a resource.
 func (c *converter) topicEvent(w *writer, where string, n *yaml.Node) {
-	w.open("new kdst.Topic")
-	switch {
-	case n.Kind == yaml.ScalarNode && !strings.HasPrefix(n.Value, "arn:") && !strings.Contains(n.Value, "${"):
-		w.line(`topic = kdst.ref(%s, "TopicArn")`, quote(c.add(where, n.Value, "AWS::SNS::Topic", "TopicName")))
-	case n.Kind == yaml.MappingNode && get(n, "arn") == nil && get(n, "topicName") != nil:
-		w.line(`topic = kdst.ref(%s, "TopicArn")`, quote(c.add(where, str(get(n, "topicName")), "AWS::SNS::Topic", "TopicName")))
-	default:
-		c.source(w, where, "topic", n)
-	}
-	if policy := get(n, "filterPolicy"); policy != nil {
-		if js, err := jsonString(policy); err == nil {
-			w.line("filterPolicy = %s", js)
+	rest := func(w *writer) {
+		if policy := get(n, "filterPolicy"); policy != nil {
+			if js, err := jsonString(policy); err == nil {
+				w.line("filterPolicy = %s", js)
+			}
 		}
 	}
-	w.close()
+	switch {
+	case n.Kind == yaml.ScalarNode && !strings.HasPrefix(n.Value, "arn:") && !strings.Contains(n.Value, "${"):
+		w.amend("", fmt.Sprintf("kdst.fromTopic(%s)", quote(c.add(where, n.Value, typeTopic, "TopicName"))), rest)
+	case n.Kind == yaml.MappingNode && get(n, "arn") == nil && get(n, "topicName") != nil:
+		w.amend("", fmt.Sprintf("kdst.fromTopic(%s)", quote(c.add(where, str(get(n, "topicName")), typeTopic, "TopicName"))), rest)
+	default:
+		c.sourceEvent(w, where, n, "fromTopic", "Topic", "topic", "TopicArn", rest)
+	}
 }
 
 // bucketEvent is a notification of a bucket the serverless framework made, which becomes a
@@ -236,24 +309,26 @@ func (c *converter) bucketEvent(w *writer, where string, n *yaml.Node) {
 		bucket = str(get(n, "bucket"))
 		existing = isTrue(get(n, "existing"))
 	}
+	rest := func(w *writer) {
+		if event := str(get(n, "event")); event != "" {
+			w.line("events { %s }", quote(event))
+		}
+		for _, rule := range orList(get(n, "rules")).Content {
+			if prefix := str(get(rule, "prefix")); prefix != "" {
+				w.line("prefix = %s", quote(prefix))
+			}
+			if suffix := str(get(rule, "suffix")); suffix != "" {
+				w.line("suffix = %s", quote(suffix))
+			}
+		}
+	}
+	if !existing && !strings.Contains(bucket, "${") {
+		w.amend("", fmt.Sprintf("kdst.fromBucket(%s)", quote(c.add(where, bucket, typeBucket, "BucketName"))), rest)
+		return
+	}
 	w.open("new kdst.Bucket")
-	switch {
-	case existing || strings.Contains(bucket, "${"):
-		c.assign(w, where+".bucket", "bucket", c.text(bucket), n)
-	default:
-		w.line(`bucket = kdst.ref(%s, "BucketName")`, quote(c.add(where, bucket, "AWS::S3::Bucket", "BucketName")))
-	}
-	if event := str(get(n, "event")); event != "" {
-		w.line("events { %s }", quote(event))
-	}
-	for _, rule := range orList(get(n, "rules")).Content {
-		if prefix := str(get(rule, "prefix")); prefix != "" {
-			w.line("prefix = %s", quote(prefix))
-		}
-		if suffix := str(get(rule, "suffix")); suffix != "" {
-			w.line("suffix = %s", quote(suffix))
-		}
-	}
+	c.assign(w, where+".bucket", "bucket", c.text(bucket), n)
+	rest(w)
 	w.close()
 }
 
@@ -288,7 +363,7 @@ func (c *converter) add(where, physical, typ, property string) string {
 func (c *converter) ruleEvent(w *writer, where string, spec *yaml.Node) {
 	pattern := get(spec, "pattern")
 	if pattern == nil {
-		c.leaveOut(w, where, "an EventRule needs a pattern: write a schedule as new kdst.Schedule { expression = ... }", spec)
+		c.leaveOut(w, where, "an EventRule needs a pattern: write a schedule as kdst.schedule(\"rate(...)\")", spec)
 		return
 	}
 	w.open("new kdst.EventRule")
@@ -330,7 +405,7 @@ func (c *converter) webSocketEvent(w *writer, where string, spec *yaml.Node) {
 		c.leaveOut(w, where, "give the websocket event its route", spec)
 		return
 	}
-	w.line("new kdst.WebSocketRoute { route = %s }", quote(route))
+	w.line("kdst.fromWebSocket(%s)", quote(route))
 }
 
 // albEvent converts an alb event: its listener, priority and conditions.

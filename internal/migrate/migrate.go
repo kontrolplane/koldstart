@@ -717,9 +717,14 @@ func (c *converter) resources(w *writer) {
 	for _, r := range c.added {
 		noun := strings.ToLower(r.typ[strings.LastIndex(r.typ, ":")+1:])
 		w.comment(fmt.Sprintf("serverless.yml made this %s for %s.", noun, r.where))
+		properties := fmt.Sprintf("properties { %s = %s }", r.property, quote(r.value))
+		if r.typ == typeTopic {
+			w.amend(fmt.Sprintf("[%s] = ", quote(r.name)), "kdst.topic()", func(w *writer) { w.line("%s", properties) })
+			continue
+		}
 		w.open(fmt.Sprintf("[%s]", quote(r.name)))
 		w.line("type = %s", quote(r.typ))
-		w.line("properties { %s = %s }", r.property, quote(r.value))
+		w.line("%s", properties)
 		w.close()
 	}
 	w.close()
@@ -744,31 +749,44 @@ func (c *converter) resource(w *writer, id string, n *yaml.Node) {
 		w.open(fmt.Sprintf("when (%s)", condition))
 		defer w.close()
 	}
-	w.open(fmt.Sprintf("[%s]", quote(id)))
-	w.line("type = %s", quote(typ))
-	switch strings.ToLower(str(get(n, "DeletionPolicy"))) {
-	case "retain", "retainexceptonupdate":
-		w.line(`deletionPolicy = "retain"`)
-	case "delete":
-		w.line(`deletionPolicy = "delete"`)
-	case "snapshot":
-		c.leave(w, Review, where+".DeletionPolicy", "retained, as koldstart has no Snapshot: take a snapshot before you remove it", nil)
-		w.line(`deletionPolicy = "retain"`)
-	}
-	if props := get(n, "Properties"); props != nil {
-		c.property(w, where+".Properties", "properties", props)
-	}
-	if v := get(n, "DependsOn"); v != nil {
-		c.leave(w, Review, where+".DependsOn", "koldstart orders resources by their refs: refer with kdst.ref() to what it must wait for", v)
-	}
-	if v := get(n, "Metadata"); v != nil {
-		c.leave(w, Drop, where+".Metadata", "koldstart has no Metadata", v)
-	}
-	for _, key := range []string{"CreationPolicy", "UpdatePolicy"} {
-		if v := get(n, key); v != nil {
-			c.leave(w, Add, where+"."+key, "koldstart has no "+key, v)
+	short, props := shorthand(typ, get(n, "Properties"))
+	body := func(w *writer) {
+		if short.helper == "" {
+			w.line("type = %s", quote(typ))
+		}
+		for _, line := range short.amends {
+			w.line("%s", line)
+		}
+		switch strings.ToLower(str(get(n, "DeletionPolicy"))) {
+		case "retain", "retainexceptonupdate":
+			w.line(`deletionPolicy = "retain"`)
+		case "delete":
+			w.line(`deletionPolicy = "delete"`)
+		case "snapshot":
+			c.leave(w, Review, where+".DeletionPolicy", "retained, as koldstart has no Snapshot: take a snapshot before you remove it", nil)
+			w.line(`deletionPolicy = "retain"`)
+		}
+		if props != nil && (short.helper == "" || len(props.Content) > 0) {
+			c.property(w, where+".Properties", "properties", props)
+		}
+		if v := get(n, "DependsOn"); v != nil {
+			c.leave(w, Review, where+".DependsOn", "koldstart orders resources by their refs: refer with kdst.ref() to what it must wait for", v)
+		}
+		if v := get(n, "Metadata"); v != nil {
+			c.leave(w, Drop, where+".Metadata", "koldstart has no Metadata", v)
+		}
+		for _, key := range []string{"CreationPolicy", "UpdatePolicy"} {
+			if v := get(n, key); v != nil {
+				c.leave(w, Add, where+"."+key, "koldstart has no "+key, v)
+			}
 		}
 	}
+	if short.helper != "" {
+		w.amend(fmt.Sprintf("[%s] = ", quote(id)), short.helper, body)
+		return
+	}
+	w.open(fmt.Sprintf("[%s]", quote(id)))
+	body(w)
 	w.close()
 }
 

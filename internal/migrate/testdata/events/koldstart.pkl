@@ -27,9 +27,9 @@ functions {
     runtime = "nodejs22.x"
     handler = "src/realtime.handler"
     events {
-      new kdst.WebSocketRoute { route = "$default" }
-      new kdst.WebSocketRoute { route = "$disconnect" }
-      new kdst.WebSocketRoute { route = "chat" }
+      kdst.fromWebSocket("$default")
+      kdst.fromWebSocket("$disconnect")
+      kdst.fromWebSocket("chat")
     }
   }
   ["onOrder"] {
@@ -48,7 +48,7 @@ functions {
         bus = "orders"
         input = "{\"kind\":\"order\"}"
       }
-      // TODO: an EventRule needs a pattern: write a schedule as new kdst.Schedule { expression = ... }
+      // TODO: an EventRule needs a pattern: write a schedule as kdst.schedule("rate(...)")
       // was: {schedule: rate(1 hour)}
     }
   }
@@ -85,34 +85,23 @@ functions {
       }
     }
     events {
-      new kdst.HttpRoute {
-        method = "GET"
-        path = "/me"
+      (kdst.get("/me")) {
         authorizer = "users"
         scopes {
           "profile"
         }
       }
-      new kdst.HttpRoute {
-        method = "ANY"
-        path = "$default"
-      }
+      kdst.any("$default")
       // TODO: a route of the rest api is one of the http api now: check it does without request validation, api keys and usage plans
-      new kdst.HttpRoute {
-        method = "GET"
-        path = "/legacy/{id}"
-      }
+      kdst.get("/legacy/{id}")
     }
   }
   ["cron"] {
     runtime = "nodejs22.x"
     handler = "src/cron.handler"
     events {
-      new kdst.Schedule {
-        expression = "rate(5 minutes)"
-      }
-      new kdst.Schedule {
-        expression = "cron(0 9 ? * MON-FRI *)"
+      kdst.schedule("rate(5 minutes)")
+      (kdst.schedule("cron(0 9 ? * MON-FRI *)")) {
         enabled = false
         input = "{\"kind\":\"report\"}"
       }
@@ -122,15 +111,11 @@ functions {
     runtime = "nodejs22.x"
     handler = "src/listener.handler"
     events {
-      new kdst.Topic {
-        topic = kdst.ref("alerts", "TopicArn")
-      }
-      new kdst.Topic {
-        topic = "arn:aws:sns:us-east-1:123456789012:billing"
+      kdst.fromTopic("alerts")
+      (kdst.fromTopic("arn:aws:sns:us-east-1:123456789012:billing")) {
         filterPolicy = "{\"kind\":[\"invoice\"]}"
       }
-      new kdst.Bucket {
-        bucket = kdst.ref("notifier-uploads", "BucketName")
+      (kdst.fromBucket("notifier-uploads")) {
         events { "s3:ObjectCreated:*" }
         prefix = "incoming/"
         suffix = ".png"
@@ -138,13 +123,12 @@ functions {
       new kdst.Bucket {
         bucket = "existing-archive"
       }
-      new kdst.Stream {
-        stream = "arn:aws:dynamodb:us-east-1:123456789012:table/events/stream/2026-01-01T00:00:00.000"
+      (kdst.fromTableStream("arn:aws:dynamodb:us-east-1:123456789012:table/events/stream/2026-01-01T00:00:00.000")) {
         startingPosition = "TRIM_HORIZON"
         maximumBatchingWindow = 5.s
         reportBatchItemFailures = false
       }
-      new kdst.WebSocketRoute { route = "$connect" }
+      kdst.fromWebSocket("$connect")
       new kdst.EventRule {
         pattern = new Dynamic {
           source {
@@ -158,8 +142,7 @@ functions {
 
 resources {
   // serverless.yml made this topic for functions.listener.events[0].
-  ["alerts"] {
-    type = "AWS::SNS::Topic"
+  ["alerts"] = (kdst.topic()) {
     properties { TopicName = "alerts" }
   }
   // serverless.yml made this bucket for functions.listener.events[2].
