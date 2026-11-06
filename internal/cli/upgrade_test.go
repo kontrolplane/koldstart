@@ -9,15 +9,17 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kontrolplane/koldstart/internal/pkl"
 	schema "github.com/kontrolplane/koldstart/pkl"
 )
 
 // TestUpgrade checks upgrade sets the koldstart dependency to the one wanted and resolves it,
-// says what changed, leaves one that is wanted already, refuses to go back to an older release
-// without --force, writes a PklProject where there is none, and with --check changes nothing and
-// fails only when an upgrade is wanted.
+// says what changed, leaves one that is wanted already but resolves its lock when that is missing
+// or older, refuses to go back to an older release without --force, writes a PklProject where
+// there is none, and with --check changes nothing and fails only when an upgrade or a resolve is
+// wanted.
 func TestUpgrade(t *testing.T) {
 	v := func(version string) string { return schema.Release(version).PklProject() }
 	local := schema.Dependency{Dir: "/cache/koldstart/schema/0123456789abcdef"}
@@ -25,6 +27,7 @@ func TestUpgrade(t *testing.T) {
 	tests := []struct {
 		name       string
 		existing   string
+		locked     bool
 		above      bool
 		want       schema.Dependency
 		check      bool
@@ -36,7 +39,8 @@ func TestUpgrade(t *testing.T) {
 		wantRuns   int
 	}{
 		{name: "up", existing: v("0.1.0"), want: schema.Release("0.2.0"), wantFile: v("0.2.0"), wantOut: "koldstart 0.1.0 → 0.2.0\nresolved PklProject into PklProject.deps.json\n", wantRuns: 1},
-		{name: "same", existing: v("0.2.0"), want: schema.Release("0.2.0"), wantFile: v("0.2.0"), wantOut: "PklProject has koldstart 0.2.0, this koldstart's: nothing to upgrade\n"},
+		{name: "same", existing: v("0.2.0"), locked: true, want: schema.Release("0.2.0"), wantFile: v("0.2.0"), wantOut: "PklProject has koldstart 0.2.0, this koldstart's: nothing to upgrade\n"},
+		{name: "same, not resolved", existing: v("0.2.0"), want: schema.Release("0.2.0"), wantFile: v("0.2.0"), wantOut: "resolved PklProject into PklProject.deps.json\n", wantRuns: 1},
 		{name: "down", existing: v("0.3.0"), want: schema.Release("0.2.0"), wantFile: v("0.3.0"), wantErr: "PklProject has koldstart 0.3.0, newer than this koldstart's 0.2.0: upgrade kdst to 0.3.0, or pass --force to go back to 0.2.0"},
 		{name: "down with force", existing: v("0.3.0"), want: schema.Release("0.2.0"), force: true, wantFile: v("0.2.0"), wantOut: "koldstart 0.3.0 → 0.2.0\n", wantRuns: 1},
 		{name: "none", want: schema.Release("0.2.0"), wantFile: v("0.2.0"), wantOut: "koldstart none → 0.2.0\n", wantRuns: 1},
@@ -44,7 +48,8 @@ func TestUpgrade(t *testing.T) {
 		{name: "to a dev build", existing: v("0.1.0"), want: local, wantFile: local.PklProject(), wantOut: "koldstart 0.1.0 → dev (/cache/koldstart/schema/0123456789abcdef)\n", wantRuns: 1},
 		{name: "not resolved", existing: v("0.1.0"), want: schema.Release("0.2.0"), resolveErr: resolveFailed, wantFile: v("0.2.0"), wantErr: "PklProject is set to koldstart 0.2.0, but not resolved: resolving PklProject: the packages it depends on did not download", wantRuns: 1},
 		{name: "check wanted", existing: v("0.1.0"), want: schema.Release("0.2.0"), check: true, wantFile: v("0.1.0"), wantErr: "PklProject wants an upgrade, koldstart 0.1.0 → 0.2.0: run kdst upgrade"},
-		{name: "check same", existing: v("0.2.0"), want: schema.Release("0.2.0"), check: true, wantFile: v("0.2.0"), wantOut: "nothing to upgrade"},
+		{name: "check same", existing: v("0.2.0"), locked: true, want: schema.Release("0.2.0"), check: true, wantFile: v("0.2.0"), wantOut: "nothing to upgrade"},
+		{name: "check same, not resolved", existing: v("0.2.0"), want: schema.Release("0.2.0"), check: true, wantFile: v("0.2.0"), wantErr: "PklProject has koldstart 0.2.0, this koldstart's, but PklProject.deps.json is missing or older: run kdst upgrade"},
 		{name: "check newer", existing: v("0.3.0"), want: schema.Release("0.2.0"), check: true, wantFile: v("0.3.0"), wantOut: "PklProject has koldstart 0.3.0, newer than this koldstart's 0.2.0: upgrade kdst to 0.3.0\n"},
 		{name: "check none", want: schema.Release("0.2.0"), check: true, wantErr: "there is no PklProject for koldstart.pkl: run kdst upgrade to write one, with koldstart 0.2.0"},
 	}
@@ -61,6 +66,15 @@ func TestUpgrade(t *testing.T) {
 			}
 			if tt.existing != "" {
 				if err := os.WriteFile(pkl.ProjectFile, []byte(tt.existing), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tt.locked {
+				if err := os.WriteFile(pkl.DepsFile, []byte("{}"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				later := time.Now().Add(time.Minute)
+				if err := os.Chtimes(pkl.DepsFile, later, later); err != nil {
 					t.Fatal(err)
 				}
 			}

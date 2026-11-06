@@ -96,7 +96,21 @@ func upgrade(ctx context.Context, w io.Writer, resolve resolver, o upgradeOption
 	change := fmt.Sprintf("koldstart %s → %s", from, o.want)
 	switch {
 	case have != nil && sameDependency(*have, o.want, dir):
-		_, _ = fmt.Fprintf(w, "%s has koldstart %s, this koldstart's: nothing to upgrade\n", shownPath, o.want)
+		stale, err := pkl.Stale(dir)
+		if err != nil {
+			return err
+		}
+		switch {
+		case !stale:
+			_, _ = fmt.Fprintf(w, "%s has koldstart %s, this koldstart's: nothing to upgrade\n", shownPath, o.want)
+			return nil
+		case o.check:
+			return fmt.Errorf("%s has koldstart %s, this koldstart's, but %s is missing or older: run %s upgrade", shownPath, o.want, pkl.DepsFile, o.name)
+		}
+		if err := resolve(ctx, dir); err != nil {
+			return fmt.Errorf("%s is set to koldstart %s, but not resolved: %w", shownPath, o.want, err)
+		}
+		_, _ = fmt.Fprintf(w, "resolved %s into %s\n", shownPath, pkl.DepsFile)
 		return nil
 	case have != nil && !have.Local() && !o.want.Local() && schema.Compare(have.Version, o.want.Version) > 0:
 		if o.check {
