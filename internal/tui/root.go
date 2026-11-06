@@ -217,7 +217,7 @@ func (m model) toInput(msg tea.Msg) (model, tea.Cmd) {
 	case m.page == functionPage && f.tab == logsTab && f.logs.filter.active:
 		changed, cmd := f.logs.filter.update(msg, m.keys)
 		if changed {
-			f.logs.scroll = 0
+			m = m.logsRelaid()
 		}
 		return m, cmd
 	case m.page == removePage:
@@ -283,6 +283,8 @@ func (m model) keyPress(msg tea.KeyPressMsg) (model, tea.Cmd) {
 		return m.outputUpdate(msg)
 	case inputsPage:
 		return m.inputsUpdate(msg)
+	case logLinePage:
+		return m.logLineUpdate(msg)
 	}
 	return m, nil
 }
@@ -383,6 +385,8 @@ func (m model) view(p page) string {
 		return m.outputView()
 	case inputsPage:
 		return m.inputsView()
+	case logLinePage:
+		return m.logLineView()
 	}
 	return ""
 }
@@ -538,6 +542,8 @@ func (m model) trail(p page) []string {
 		return []string{crumbStages, ref, stageTabs[outputsTab], m.state.output.name}
 	case inputsPage:
 		return append(m.trail(planPage), m.state.inputs.id)
+	case logLinePage:
+		return append(m.trail(functionPage), "line "+m.state.logLine.e.Time.Local().Format("15:04:05.000"))
 	}
 	return []string{crumbStages}
 }
@@ -637,6 +643,8 @@ func (m model) position() string {
 		if v := m.state.inputs.shown(); v != nil {
 			return ofCount(v.at(), len(v.rows()))
 		}
+	case logLinePage:
+		return scrollCue(m.state.logLine.scroll, contentHeight, m.logLineLines().len())
 	}
 	return ""
 }
@@ -688,6 +696,12 @@ func (m model) frameMeta() (string, string) {
 		if f.text != "" {
 			meta = styles.Render(styles.S(f.name()+" ", styles.ToneFaint), styles.S(f.text, styles.ToneText))
 		}
+	}
+	if level := m.logsMeta(); level != "" && m.page == functionPage && m.state.function.tab == logsTab {
+		if meta != "" {
+			meta += styles.Faint(" · ")
+		}
+		meta += level
 	}
 	var foot []footPart
 	if v := m.state.json(m.page); v != nil {
@@ -867,7 +881,7 @@ func (m model) shortHelp() [][2]string {
 		case overviewTab:
 			h = append(h, m.functionOverviewHints()...)
 		case logsTab:
-			h = append(h, hint(k.Follow), hint(k.Filter), [2]string{"↑ at top", "older"})
+			h = append(h, hint(k.View, "open line"), hint(k.Follow), hint(k.Filter), hint(k.Level), hint(k.Group), hint(k.Stamps), [2]string{"↑ at top", "older"})
 		case invocationsTab:
 			h = append(h, hint(k.View, "open"))
 		case invokeTab:
@@ -894,6 +908,8 @@ func (m model) shortHelp() [][2]string {
 		return m.inputsHints()
 	case invocationPage:
 		return [][2]string{scrollHint, {k.Next.Help().Key + "/" + k.Previous.Help().Key, "next/previous"}, hint(k.Copy, "copy id"), hint(k.Help), hint(k.Quit)}
+	case logLinePage:
+		return [][2]string{scrollHint, {k.Next.Help().Key + "/" + k.Previous.Help().Key, "next/previous"}, hint(k.Request), hint(k.Copy, "copy the line"), hint(k.Help), hint(k.Quit)}
 	case outputPage:
 		if v := m.state.json(m.page); v != nil {
 			return append(m.jsonHints(*v), hint(k.Refresh), hint(k.Help), hint(k.Quit))
@@ -996,8 +1012,9 @@ func helpSections(k keys.KeyMap) []helpSection {
 		}},
 		{"function", [][2]string{
 			{name(k.Invoke), "invoke in aws"}, {name(k.RunLocal), "run on this machine"}, {name(k.EditEvent), "edit the event"},
-			{name(k.Deploy), "plan its code"}, {name(k.Follow), "follow the logs"}, {name(k.Filter), "filter the logs"},
-			{"↑ at top", "older logs"}, {name(k.View), "open the row"}, {name(k.Next) + " " + name(k.Previous), "step invocations"},
+			{name(k.Deploy), "plan its code"}, {name(k.Follow) + " " + name(k.Filter), "follow, filter logs"},
+			{"↑ at top", "older logs"}, {name(k.Level) + " " + name(k.Group) + " " + name(k.Stamps), "level, group, time"},
+			{name(k.View), "open the row"}, {name(k.Next) + " " + name(k.Previous) + " " + name(k.Request), "step, its invocation"},
 			{name(k.Pane), "payload / result"},
 		}},
 		{"diff", [][2]string{
@@ -1037,7 +1054,7 @@ func (m model) helpView() string {
 	all := helpSections(m.keys)
 	pair := []helpSection{all[0], all[1]}
 	switch m.page {
-	case functionPage, runLocalPage, invocationPage:
+	case functionPage, runLocalPage, invocationPage, logLinePage:
 		pair[1] = all[2]
 	case diffPage:
 		pair[1] = all[3]

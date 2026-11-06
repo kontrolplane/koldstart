@@ -26,6 +26,14 @@ type KeyMap struct {
 	RunLocal  key.Binding
 	EditEvent key.Binding
 	Follow    key.Binding
+	// Level, Group and Stamps change how the logs are shown: the least level a line is shown
+	// at, its lines grouped by request, and the column of times.
+	Level  key.Binding
+	Group  key.Binding
+	Stamps key.Binding
+	// Request opens the invocation a line of the logs belongs to, a page with no plan to group, so
+	// it shares o with GroupBy.
+	Request   key.Binding
 	Fold      key.Binding
 	Copy      key.Binding
 	NextDiff  key.Binding
@@ -34,8 +42,9 @@ type KeyMap struct {
 	GroupBy   key.Binding
 	// Pane switches the invoke tab between an event's payload and what it returned.
 	Pane key.Binding
-	// Next and Previous step through the invocations from one of them, a page with no dialog to
-	// answer and nothing to pause, so they share n and p with No and Pause.
+	// Next and Previous step through the invocations from one of them, or the lines of the logs
+	// from one, pages with no dialog to answer and nothing to pause, so they share n and p with No
+	// and Pause.
 	Next      key.Binding
 	Previous  key.Binding
 	CopyPath  key.Binding
@@ -74,6 +83,10 @@ var Keys = KeyMap{
 	RunLocal:  key.NewBinding(key.WithKeys("I", "shift+i"), key.WithHelp("shift+i", "run here")),
 	EditEvent: key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit event")),
 	Follow:    key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "follow")),
+	Level:     key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "level")),
+	Group:     key.NewBinding(key.WithKeys("b"), key.WithHelp("b", "by request")),
+	Stamps:    key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "time")),
+	Request:   key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "its invocation")),
 	Fold:      key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "fold")),
 	Copy:      key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "copy")),
 	NextDiff:  key.NewBinding(key.WithKeys("]"), key.WithHelp("]", "next change")),

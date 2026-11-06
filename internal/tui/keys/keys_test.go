@@ -58,8 +58,9 @@ func TestHelp(t *testing.T) {
 
 // shared are the keys bindings share, each working on pages the others do nothing on: n answers
 // no on a dialog, steps to the next invocation on one, and goes to the next match in json; p
-// pauses a page that refreshes and steps to the previous invocation on one, which does not.
-var shared = map[string][]string{"n": {"No", "Next", "NextMatch"}, "p": {"Pause", "Previous"}}
+// pauses a page that refreshes and steps to the previous invocation on one, which does not; o
+// groups a plan's changes and opens the invocation of a line of the logs.
+var shared = map[string][]string{"n": {"No", "Next", "NextMatch"}, "p": {"Pause", "Previous"}, "o": {"GroupBy", "Request"}}
 
 // TestKeysAreUnique checks no key is bound twice, but the ones shared, so no binding shadows
 // another.

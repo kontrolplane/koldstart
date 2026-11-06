@@ -261,7 +261,11 @@ func TestLogsNarrow(t *testing.T) {
 		t.Fatalf("the line did not wrap:\n%s", strings.Join(lines, "\n"))
 	}
 	for _, line := range lines[2:] {
-		if rest, ok := strings.CutPrefix(line, strings.Repeat(" ", stampWidth+1)); !ok || strings.HasPrefix(rest, " ") {
+		if rest, ok := strings.CutPrefix(line, "▌"); ok {
+			line = " " + rest
+		}
+		line = line[1:]
+		if rest, ok := strings.CutPrefix(line, strings.Repeat(" ", stampWidth)); !ok || strings.HasPrefix(rest, " ") {
 			t.Errorf("a wrapped line does not sit under the message: %q", line)
 		}
 	}

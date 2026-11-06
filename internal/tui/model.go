@@ -60,6 +60,7 @@ const (
 	invocationPage
 	outputPage
 	inputsPage
+	logLinePage
 )
 
 type model struct {
@@ -109,6 +110,7 @@ type pages struct {
 	invocation invocationState
 	output     outputState
 	inputs     inputsState
+	logLine    logLineState
 }
 
 func newModel(ctx context.Context, b backend) model {

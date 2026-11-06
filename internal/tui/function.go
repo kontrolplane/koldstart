@@ -202,7 +202,7 @@ func (m model) functionUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 	if f.tab == logsTab && f.logs.filter.active {
 		changed, cmd := f.logs.filter.update(msg, m.keys)
 		if changed {
-			f.logs.scroll = 0
+			m = m.logsRelaid()
 		}
 		return m, cmd
 	}
@@ -273,14 +273,19 @@ func scrollBy(msg tea.KeyPressMsg, k keys.KeyMap, offset, page, most int) int {
 func maxOffset(n, height int) int { return max(0, n-height) }
 
 // functionCopyValue is what c copies: the whole value of the row under the cursor on the
-// overview, the request id of an invocation on the invocations tab, the payload of the last
-// invocation on the invoke tab, the arn elsewhere.
+// overview, the line under the cursor on the logs tab, as it was logged, the request id of an
+// invocation on the invocations tab, the payload of the last invocation on the invoke tab, the
+// arn elsewhere.
 func (m model) functionCopyValue() string {
 	f := m.state.function
 	switch f.tab {
 	case overviewTab:
 		if r, ok := m.functionOverview().selected(f.cursor); ok {
 			return r.copy
+		}
+	case logsTab:
+		if e, ok := m.logsCursorLine(); ok {
+			return e.Message
 		}
 	case invocationsTab:
 		if i := f.invocations.cursor; i < len(f.requests) {

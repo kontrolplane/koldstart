@@ -155,8 +155,8 @@ func TestLogsTail(t *testing.T) {
 	}
 }
 
-// TestLogsFilterAndOlder checks / keeps the lines that match, and ↑ at the top reads the hour
-// before.
+// TestLogsFilterAndOlder checks / keeps the lines that match, and ↑ on the first line reads the
+// hour before.
 func TestLogsFilterAndOlder(t *testing.T) {
 	f := newFake(t)
 	f.logs = requestLogs(time.Now().Add(-time.Minute))
@@ -167,7 +167,7 @@ func TestLogsFilterAndOlder(t *testing.T) {
 	if v := screen(m); strings.Contains(v, "START") || !strings.Contains(v, "order placed") || !strings.Contains(v, "no order 9") || !strings.Contains(v, "stored an order") {
 		t.Fatalf("the lines that have order:\n%s", v)
 	}
-	m = pressKeys(t, m, "esc", "k")
+	m = pressKeys(t, m, "esc", "g", "k")
 	if f.olderReads != 1 || !strings.Contains(screen(m), "from the hour before") || m.state.function.logs.follow {
 		t.Errorf("%d reads of older lines, follow %v:\n%s", f.olderReads, m.state.function.logs.follow, screen(m))
 	}
