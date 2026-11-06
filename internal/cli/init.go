@@ -11,7 +11,9 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/spf13/cobra"
 
+	"github.com/kontrolplane/koldstart/internal/pkl"
 	"github.com/kontrolplane/koldstart/internal/scaffold"
+	schema "github.com/kontrolplane/koldstart/pkl"
 )
 
 // defaultRegion is the region a new project deploys to when neither --region nor the aws profile
@@ -23,14 +25,18 @@ func initCommand(name string, opts *Options) *cobra.Command {
 	var force bool
 	cmd := &cobra.Command{
 		Use:   "init [directory]",
-		Short: "start a project: a koldstart.pkl, a handler and the .gitignore entries",
+		Short: "start a project: a koldstart.pkl, its PklProject, a handler and the .gitignore entries",
 		Long: fmt.Sprintf(`init writes a koldstart.pkl with one function behind GET /hello, and its handler in typescript,
 go or python, into the directory, this one without it, and adds .koldstart/build/ and
 .koldstart/local/ to .gitignore. It keeps any other file that is there already, and writes over a
 koldstart.pkl only with --force.
 
+Beside it goes a PklProject that names the schema of this release of %[1]s, or, for a dev build,
+the schema it embeds, which init resolves into PklProject.deps.json; commit both. When it cannot
+resolve it, the next command that reads the koldstart.pkl does.
+
 The app is named after the directory, or --app, and deploys to --region, the region of the aws
-profile, or %s.`, defaultRegion),
+profile, or %[2]s.`, name, defaultRegion),
 		Example: fmt.Sprintf(`  %[1]s init
   %[1]s init orders --template go --region eu-west-1
   %[1]s init --app orders --template python`, name),
@@ -53,8 +59,12 @@ profile, or %s.`, defaultRegion),
 				}
 			}
 			region := initRegion(cmd.Context(), opts)
+			dep, err := schema.Current()
+			if err != nil {
+				return err
+			}
 			res, err := scaffold.Write(scaffold.Options{
-				Dir: abs, App: app, Region: region, Template: template, Version: schemaVersion(), Force: force,
+				Dir: abs, App: app, Region: region, Template: template, Dependency: dep, Force: force,
 			})
 			if err != nil && dir != "." {
 				return fmt.Errorf("starting a project in %s: %w", dir, err)
@@ -62,7 +72,11 @@ profile, or %s.`, defaultRegion),
 			if err != nil {
 				return err
 			}
-			printInit(cmd.OutOrStdout(), name, dir, app, region, template, res)
+			resolved, note := resolveWritten(cmd.Context(), pklResolver(name), name, abs)
+			if resolved {
+				res.Written = append(res.Written, pkl.DepsFile)
+			}
+			printInit(cmd.OutOrStdout(), name, dir, app, region, template, dep, res, note)
 			return nil
 		},
 	}
@@ -90,9 +104,10 @@ func initRegion(ctx context.Context, opts *Options) string {
 	return cmp.Or(cfg.Region, defaultRegion)
 }
 
-// printInit says what init wrote and kept, the app and its region, and what to run next.
-func printInit(w io.Writer, name, dir, app, region, template string, res scaffold.Result) {
-	_, _ = fmt.Fprintf(w, "started %s, which deploys to %s\n\n", app, region)
+// printInit says what init wrote and kept, the app and its region, the schema it amends, why
+// its PklProject is not resolved when it is not, and what to run next.
+func printInit(w io.Writer, name, dir, app, region, template string, dep schema.Dependency, res scaffold.Result, note string) {
+	_, _ = fmt.Fprintf(w, "started %s, which deploys to %s, with the schema of koldstart %s\n\n", app, region, dep)
 	for _, f := range res.Written {
 		_, _ = fmt.Fprintf(w, "  wrote %s\n", f)
 	}
@@ -101,6 +116,9 @@ func printInit(w io.Writer, name, dir, app, region, template string, res scaffol
 	}
 	if len(res.Gitignore) > 0 {
 		_, _ = fmt.Fprintf(w, "  added %s to .gitignore\n", andList(res.Gitignore))
+	}
+	if note != "" {
+		_, _ = fmt.Fprintf(w, "\n%s\n", note)
 	}
 	_, _ = fmt.Fprintln(w, "\nnext:")
 	for _, step := range nextSteps(name, dir, template, res) {

@@ -53,7 +53,7 @@ func loadProject(ctx context.Context, opts *Options) (*project, error) {
 	if err != nil {
 		return nil, fmt.Errorf("finding pkl: %w", err)
 	}
-	p, err := config.Load(ctx, pkl.Evaluator{Binary: binary}, relative(path), opts.Stage)
+	p, err := config.Load(ctx, pkl.Evaluator{Binary: binary, Notes: os.Stderr, Name: opts.binary()}, relative(path), opts.Stage)
 	if err != nil {
 		return nil, err
 	}

@@ -31,26 +31,31 @@ func evaluator(t *testing.T) pkl.Evaluator {
 	return pkl.Evaluator{Binary: binary}
 }
 
-// TestTemplatesEvaluate checks what each template writes evaluates against the schema, with the
+// TestTemplatesEvaluate checks what each template writes evaluates in its own project, with the
+// PklProject it writes depending on the schema of this tree as a dev build's does, with the
 // runtime and handler inferred from the handler it writes, passes the checks of a deploy, and
 // plans a function with its route, and that its commented secret evaluates once uncommented,
 // under the app and stage.
 func TestTemplatesEvaluate(t *testing.T) {
 	ev := evaluator(t)
+	dep, err := schema.Extract(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	tests := []struct {
 		template string
 		files    []string
 		runtime  string
 		handler  string
 	}{
-		{template: Node, files: []string{"koldstart.pkl", "src/api.ts"}, runtime: config.RuntimeNode22, handler: "src/api.handler"},
-		{template: Go, files: []string{"cmd/api/main.go", "go.mod", "koldstart.pkl"}, runtime: config.RuntimeGo, handler: "./cmd/api"},
-		{template: Python, files: []string{"koldstart.pkl", "requirements.txt", "src/api.py"}, runtime: config.RuntimePy313, handler: "src/api.handler"},
+		{template: Node, files: []string{"PklProject", "koldstart.pkl", "src/api.ts"}, runtime: config.RuntimeNode22, handler: "src/api.handler"},
+		{template: Go, files: []string{"PklProject", "cmd/api/main.go", "go.mod", "koldstart.pkl"}, runtime: config.RuntimeGo, handler: "./cmd/api"},
+		{template: Python, files: []string{"PklProject", "koldstart.pkl", "requirements.txt", "src/api.py"}, runtime: config.RuntimePy313, handler: "src/api.handler"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.template, func(t *testing.T) {
 			dir := t.TempDir()
-			res, err := Write(Options{Dir: dir, App: "orders", Region: "eu-west-1", Template: tt.template, Version: "0.1.0"})
+			res, err := Write(Options{Dir: dir, App: "orders", Region: "eu-west-1", Template: tt.template, Dependency: dep})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -62,12 +67,8 @@ func TestTemplatesEvaluate(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			path, cleanup, err := schema.Local(source, "0.1.0")
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer cleanup()
-			p, err := config.LoadIn(context.Background(), ev, path, dir, "dev")
+			path := filepath.Join(dir, Config)
+			p, err := config.Load(context.Background(), ev, path, "dev")
 			if err != nil {
 				t.Fatalf("the %s template does not evaluate: %v", tt.template, err)
 			}
@@ -87,12 +88,10 @@ func TestTemplatesEvaluate(t *testing.T) {
 			if uncommented == string(source) {
 				t.Fatal("no commented environment with a secret")
 			}
-			path, cleanup, err = schema.Local([]byte(uncommented), "0.1.0")
-			if err != nil {
+			if err := os.WriteFile(path, []byte(uncommented), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			defer cleanup()
-			p, err = config.LoadIn(context.Background(), ev, path, dir, "dev")
+			p, err = config.Load(context.Background(), ev, path, "dev")
 			if err != nil {
 				t.Fatalf("the %s template's secret does not evaluate: %v", tt.template, err)
 			}
@@ -103,8 +102,8 @@ func TestTemplatesEvaluate(t *testing.T) {
 	}
 }
 
-// TestWriteKeeps checks files that are there are kept, koldstart.pkl is refused without force,
-// and .gitignore gets the lines it lacks once.
+// TestWriteKeeps checks files that are there are kept, a PklProject that names the schema among
+// them, koldstart.pkl is refused without force, and .gitignore gets the lines it lacks once.
 func TestWriteKeeps(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "src"), 0o750); err != nil {
@@ -116,7 +115,7 @@ func TestWriteKeeps(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("node_modules\n.koldstart/local\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	o := Options{Dir: dir, App: "orders", Region: "eu-west-1", Template: Node, Version: "0.1.0"}
+	o := Options{Dir: dir, App: "orders", Region: "eu-west-1", Template: Node, Dependency: schema.Release("0.1.0")}
 	res, err := Write(o)
 	if err != nil {
 		t.Fatal(err)
@@ -134,6 +133,12 @@ func TestWriteKeeps(t *testing.T) {
 	res, err = Write(o)
 	if err != nil || len(res.Gitignore) != 0 {
 		t.Fatalf("Write with force: %v, added %v to .gitignore again", err, res.Gitignore)
+	}
+	if !slices.Contains(res.Kept, schema.Package) {
+		t.Errorf("Write with force kept %v, want the PklProject that names the schema already", res.Kept)
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, schema.Package)); string(data) != schema.Release("0.1.0").PklProject() {
+		t.Errorf("PklProject:\n%s", data)
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, ".gitignore"))
 	if want := "node_modules\n.koldstart/local\n\n# koldstart\n.koldstart/build/\n"; string(data) != want {

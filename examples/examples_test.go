@@ -41,7 +41,7 @@ func TestExamplesEvaluate(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				path, cleanup, err := schema.Local(source, version)
+				path, cleanup, err := schema.Local(source)
 				if err != nil {
 					t.Fatal(err)
 				}

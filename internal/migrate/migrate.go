@@ -99,9 +99,8 @@ type Result struct {
 
 // converter converts one serverless.yml.
 type converter struct {
-	doc     *yaml.Node
-	version string
-	region  string
+	doc    *yaml.Node
+	region string
 	// name is the name the binary was run as, which the file and the todos give its commands by.
 	name string
 	// functionNames are the names functions get in koldstart.pkl, by their name in serverless.yml,
@@ -139,10 +138,10 @@ func WithName(name string) Option {
 	return func(c *converter) { c.name = name }
 }
 
-// Convert converts a serverless.yml into a koldstart.pkl that amends the schema of version. A
-// ${file()} is read relative to dir, the directory of serverless.yml. The todos come in the order
+// Convert converts a serverless.yml into a koldstart.pkl that amends @koldstart/Project.pkl, the
+// schema the PklProject beside it names. A ${file()} is read relative to dir, the directory of serverless.yml. The todos come in the order
 // of their kinds.
-func Convert(src []byte, version, dir string, opts ...Option) (*Result, error) {
+func Convert(src []byte, dir string, opts ...Option) (*Result, error) {
 	var file yaml.Node
 	if err := yaml.Unmarshal(src, &file); err != nil {
 		return nil, fmt.Errorf("reading serverless.yml: %w", err)
@@ -150,7 +149,7 @@ func Convert(src []byte, version, dir string, opts ...Option) (*Result, error) {
 	if len(file.Content) == 0 || file.Content[0].Kind != yaml.MappingNode {
 		return nil, errors.New("serverless.yml is not a mapping")
 	}
-	c := &converter{doc: file.Content[0], version: version, dir: dir, name: "koldstart", resourceNames: map[string]string{}}
+	c := &converter{doc: file.Content[0], dir: dir, name: "koldstart", resourceNames: map[string]string{}}
 	for _, opt := range opts {
 		opt(c)
 	}
@@ -202,9 +201,9 @@ func (c *converter) convert() (*Result, error) {
 		c.todo(Review, "provider.stage", fmt.Sprintf("deploy with --stage %s, or set KOLDSTART_STAGE=%s: koldstart deploys to dev by default", stage, stage))
 	}
 	w.blank()
-	w.line("amends %s", quote(schema.PackageURI(c.version, schema.Project)))
+	w.line("amends %s", quote("@koldstart/"+schema.Project))
 	w.blank()
-	w.line("import %s", quote(schema.PackageURI(c.version, schema.Kdst)))
+	w.line("import %s", quote("@koldstart/"+schema.Kdst))
 	w.blank()
 
 	app := c.service()

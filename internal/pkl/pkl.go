@@ -3,6 +3,7 @@ package pkl
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -71,8 +72,9 @@ func isMusl() bool {
 	return len(matches) > 0
 }
 
-// cacheDir is where downloaded binaries go: $XDG_CACHE_HOME/koldstart, or ~/.cache/koldstart.
-func cacheDir() (string, error) {
+// CacheDir is where koldstart keeps what it downloads or extracts: $XDG_CACHE_HOME/koldstart, or
+// ~/.cache/koldstart.
+func CacheDir() (string, error) {
 	if dir := os.Getenv("XDG_CACHE_HOME"); dir != "" {
 		return filepath.Join(dir, "koldstart"), nil
 	}
@@ -101,7 +103,7 @@ func Find(ctx context.Context) (string, error) {
 			return path, nil
 		}
 	}
-	dir, err := cacheDir()
+	dir, err := CacheDir()
 	if err != nil {
 		return "", err
 	}
@@ -220,15 +222,35 @@ func older(v, than [3]int) bool {
 // Evaluator evaluates pkl modules with one binary.
 type Evaluator struct {
 	Binary string
+	// Notes is where a note goes when a project is resolved before it is evaluated; nil writes
+	// none.
+	Notes io.Writer
+	// Name is the name of the command, for errors that say what to run; koldstart when empty.
+	Name string
 }
 
 // EvalJSON evaluates the module at path with the external properties props, and returns its
-// output as json.
+// output as json. A module in a project, under a PklProject at or above its directory, is
+// evaluated in that project, which is resolved first when its PklProject.deps.json is missing or
+// older than its PklProject. A module in none is evaluated without one, whatever directory pkl
+// runs in.
 //
 //nolint:gosec // runs our pkl on the user's module
 func (e Evaluator) EvalJSON(ctx context.Context, path string, props map[string]string) ([]byte, error) {
-	args := make([]string, 0, 4+2*len(props))
+	project, err := FindProject(path)
+	if err != nil {
+		return nil, err
+	}
+	args := make([]string, 0, 6+2*len(props))
 	args = append(args, "eval", "--format", "json")
+	if project == "" {
+		args = append(args, "--no-project")
+	} else {
+		if err := e.resolveStale(ctx, project); err != nil {
+			return nil, err
+		}
+		args = append(args, "--project-dir", project)
+	}
 	for _, k := range slices.Sorted(maps.Keys(props)) {
 		args = append(args, "--property", k+"="+props[k])
 	}
@@ -240,7 +262,7 @@ func (e Evaluator) EvalJSON(ctx context.Context, path string, props map[string]s
 	if err := cmd.Run(); err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) && stderr.Len() > 0 {
-			return nil, &EvalError{Path: path, Message: report(stderr.String(), path)}
+			return nil, &EvalError{Path: path, Message: report(stderr.String(), path), Project: project, name: e.name()}
 		}
 		return nil, fmt.Errorf("running %s on %s: %w\ncheck it runs, or set %s to another pkl binary", e.Binary, path, err, EnvBinary)
 	}
@@ -252,9 +274,20 @@ func (e Evaluator) EvalJSON(ctx context.Context, path string, props map[string]s
 type EvalError struct {
 	Path    string
 	Message string
+	// Project is the directory of the project it was evaluated in, "" for none.
+	Project string
+	// name is the command's name, for what to run.
+	name string
 }
 
 func (e *EvalError) Error() string {
+	dependency := "@" + Dependency + "/"
+	switch {
+	case strings.Contains(e.Message, "Cannot resolve dependency because there is no project found") && strings.Contains(e.Message, dependency):
+		return fmt.Sprintf("%s imports %s, which needs a %s beside it or above it that names the schema package: run %s upgrade to write one\n\n%s", e.Path, dependency, ProjectFile, cmp.Or(e.name, "koldstart"), e.Message)
+	case strings.Contains(e.Message, "Cannot find a dependency named `"+Dependency+"`"):
+		return fmt.Sprintf("%s imports %s, but %s has no %s dependency: run %s upgrade to add it\n\n%s", e.Path, dependency, shown(filepath.Join(e.Project, ProjectFile)), Dependency, cmp.Or(e.name, "koldstart"), e.Message)
+	}
 	if e.downloadFailed() {
 		return fmt.Sprintf("pkl cannot evaluate %s: a package it uses did not download; check this machine is online, and that the version it names exists\n\n%s", e.Path, e.Message)
 	}

@@ -62,7 +62,7 @@ const goldenName = "kdst"
 // todos are the ones beside it.
 func TestGolden(t *testing.T) {
 	golden(t, func(t *testing.T, dir string, src []byte) {
-		res, err := Convert(src, "0.1.0", dir, WithName(goldenName))
+		res, err := Convert(src, dir, WithName(goldenName))
 		if err != nil {
 			t.Fatalf("Convert: %v", err)
 		}
@@ -97,12 +97,12 @@ func evaluator(t *testing.T) pkl.Evaluator {
 func TestGoldenEvaluates(t *testing.T) {
 	ev := evaluator(t)
 	golden(t, func(t *testing.T, dir string, src []byte) {
-		res, err := Convert(src, "0.1.0", dir, WithName(goldenName))
+		res, err := Convert(src, dir, WithName(goldenName))
 		if err != nil {
 			t.Fatal(err)
 		}
 		for _, stage := range []string{res.Stage, "prod"} {
-			problems, err := Check(context.Background(), ev, res.Pkl, "0.1.0", stage)
+			problems, err := Check(context.Background(), ev, res.Pkl, stage)
 			if err != nil {
 				t.Fatalf("Check for %q: %v", stage, err)
 			}
@@ -116,7 +116,7 @@ func TestGoldenEvaluates(t *testing.T) {
 // TestConvertRefuses checks a serverless.yml for another cloud, or that is not yaml, is refused.
 func TestConvertRefuses(t *testing.T) {
 	for _, src := range []string{"provider:\n  name: azure\n", "- just\n- a list\n", "{nope"} {
-		if _, err := Convert([]byte(src), "0.1.0", "."); err == nil {
+		if _, err := Convert([]byte(src), "."); err == nil {
 			t.Errorf("Convert(%q): want an error", src)
 		}
 	}
@@ -137,7 +137,7 @@ func TestWithName(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			res, err := Convert(src, "0.1.0", ".", tt.opts...)
+			res, err := Convert(src, ".", tt.opts...)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -247,7 +247,7 @@ func TestIntrinsicsByStage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	path, cleanup, err := schema.Local(src, "0.1.0")
+	path, cleanup, err := schema.Local(src)
 	if err != nil {
 		t.Fatal(err)
 	}
