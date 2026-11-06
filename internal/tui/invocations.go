@@ -206,16 +206,18 @@ func (m model) invocationsView() string {
 	return indent(renderCell(invocationsSummary(f.requests), column{width: tableWidth()}, nil) + "\n\n" + f.invocations.View())
 }
 
-// invocationState is one invocation of the function, with the lines of the log it wrote.
+// invocationState is one invocation of the function, with the lines of the log it wrote, and the
+// page it was opened from, the function's or a line of its logs, which going back returns to.
 type invocationState struct {
 	req    request
 	scroll int
+	from   page
 	// cache keeps the lines of the log read and drawn.
 	cache *invocationCache
 }
 
 func (m model) openInvocation(r request) (model, tea.Cmd) {
-	m.state.invocation = invocationState{req: r, cache: &invocationCache{}}
+	m.state.invocation = invocationState{req: r, from: m.page, cache: &invocationCache{}}
 	return m.switchPage(invocationPage), nil
 }
 
@@ -234,7 +236,7 @@ func (m model) stepInvocation(by int) (model, tea.Cmd) {
 		return m.setStatus("this is the oldest invocation in the logs read: ↑ on the logs tab reads further back", styles.ToneMuted)
 	default:
 		f.invocations.setCursor(j)
-		m.state.invocation = invocationState{req: f.requests[j], cache: m.state.invocation.cache}
+		m.state.invocation = invocationState{req: f.requests[j], from: m.state.invocation.from, cache: m.state.invocation.cache}
 		return m, nil
 	}
 }
@@ -243,7 +245,7 @@ func (m model) invocationUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 	v := &m.state.invocation
 	switch {
 	case key.Matches(msg, m.keys.Back, m.keys.Quit):
-		return m.switchPage(functionPage), nil
+		return m.switchPage(v.from), nil
 	case key.Matches(msg, m.keys.Copy):
 		return m.copy(v.req.id)
 	case key.Matches(msg, m.keys.Next):

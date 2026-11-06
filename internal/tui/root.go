@@ -539,7 +539,11 @@ func (m model) trail(p page) []string {
 		}
 		return append(m.trail(from), m.state.diff.title)
 	case invocationPage:
-		return append(m.trail(functionPage), shortRequest(m.state.invocation.req.id))
+		from := m.state.invocation.from
+		if from != logLinePage {
+			from = functionPage
+		}
+		return append(m.trail(from), shortRequest(m.state.invocation.req.id))
 	case outputPage:
 		return []string{crumbStages, ref, stageTabs[outputsTab], m.state.output.name}
 	case inputsPage:
