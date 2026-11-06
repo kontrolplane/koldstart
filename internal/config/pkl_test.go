@@ -229,6 +229,223 @@ functions {
 	}
 }
 
+// header starts a koldstart.pkl that amends the schema in pkl/ and imports kdst.pkl.
+func header(t *testing.T) string {
+	t.Helper()
+	schema, err := filepath.Abs(filepath.Join("..", "..", "pkl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return "amends \"" + filepath.Join(schema, "Project.pkl") + "\"\n\nimport \"" + filepath.Join(schema, "kdst.pkl") + "\"\n\napp = \"shop\"\n"
+}
+
+// render writes body after header to a file of dir named after name, and returns the json pkl
+// renders for it.
+func render(t *testing.T, ev pkl.Evaluator, dir, name, body string) string {
+	t.Helper()
+	path := filepath.Join(dir, strings.NewReplacer(" ", "-", "/", "-").Replace(name)+".pkl")
+	if err := os.WriteFile(path, []byte(header(t)+body+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := ev.EvalJSON(context.Background(), path, map[string]string{"stage": "dev"})
+	if err != nil {
+		t.Fatalf("evaluating %s: %v", name, err)
+	}
+	return string(out)
+}
+
+// TestEventHelpers checks each event helper of kdst.pkl, and one amended, renders the json of
+// the event written out in full.
+func TestEventHelpers(t *testing.T) {
+	ev := evaluator(t)
+	tests := []struct {
+		name  string
+		short string
+		long  string
+	}{
+		{name: "get", short: `kdst.get("/orders/{id}")`, long: `new kdst.HttpRoute { method = "GET"; path = "/orders/{id}" }`},
+		{name: "post", short: `kdst.post("/orders")`, long: `new kdst.HttpRoute { method = "POST"; path = "/orders" }`},
+		{name: "put", short: `kdst.put("/orders/{id}")`, long: `new kdst.HttpRoute { method = "PUT"; path = "/orders/{id}" }`},
+		{name: "patch", short: `kdst.patch("/orders/{id}")`, long: `new kdst.HttpRoute { method = "PATCH"; path = "/orders/{id}" }`},
+		{name: "del", short: `kdst.del("/orders/{id}")`, long: `new kdst.HttpRoute { method = "DELETE"; path = "/orders/{id}" }`},
+		{name: "head", short: `kdst.head("/orders")`, long: `new kdst.HttpRoute { method = "HEAD"; path = "/orders" }`},
+		{name: "options", short: `kdst.options("/orders")`, long: `new kdst.HttpRoute { method = "OPTIONS"; path = "/orders" }`},
+		{name: "any", short: `kdst.any("$default")`, long: `new kdst.HttpRoute { method = "ANY"; path = "$default" }`},
+		{
+			name:  "get amended",
+			short: `(kdst.get("/orders")) { authorizer = "users"; scopes { "orders:read" } }`,
+			long:  `new kdst.HttpRoute { method = "GET"; path = "/orders"; authorizer = "users"; scopes { "orders:read" } }`,
+		},
+		{name: "schedule", short: `kdst.schedule("rate(1 hour)")`, long: `new kdst.Schedule { expression = "rate(1 hour)" }`},
+		{
+			name:  "schedule amended",
+			short: `(kdst.schedule("cron(0 9 ? * MON-FRI *)")) { timezone = "Europe/Amsterdam"; enabled = false }`,
+			long:  `new kdst.Schedule { expression = "cron(0 9 ? * MON-FRI *)"; timezone = "Europe/Amsterdam"; enabled = false }`,
+		},
+		{name: "queue by name", short: `kdst.fromQueue("jobs")`, long: `new kdst.Queue { queue = kdst.ref("jobs", "Arn") }`},
+		{
+			name:  "queue by arn",
+			short: `kdst.fromQueue("arn:aws:sqs:eu-west-1:123456789012:jobs")`,
+			long:  `new kdst.Queue { queue = "arn:aws:sqs:eu-west-1:123456789012:jobs" }`,
+		},
+		{
+			name:  "queue by an output",
+			short: `kdst.fromQueue(kdst.stageOutput("billing", "dev", "jobsArn"))`,
+			long:  `new kdst.Queue { queue = kdst.stageOutput("billing", "dev", "jobsArn") }`,
+		},
+		{
+			name:  "queue amended",
+			short: `(kdst.fromQueue("jobs")) { batchSize = 5; maximumBatchingWindow = 2.s }`,
+			long:  `new kdst.Queue { queue = kdst.ref("jobs", "Arn"); batchSize = 5; maximumBatchingWindow = 2.s }`,
+		},
+		{name: "topic by name", short: `kdst.fromTopic("alerts")`, long: `new kdst.Topic { topic = kdst.ref("alerts", "TopicArn") }`},
+		{
+			name:  "topic by arn",
+			short: `kdst.fromTopic("arn:aws:sns:eu-west-1:123456789012:billing")`,
+			long:  `new kdst.Topic { topic = "arn:aws:sns:eu-west-1:123456789012:billing" }`,
+		},
+		{name: "stream by name", short: `kdst.fromStream("clicks")`, long: `new kdst.Stream { stream = kdst.ref("clicks", "Arn") }`},
+		{name: "table stream by name", short: `kdst.fromTableStream("orders")`, long: `new kdst.Stream { stream = kdst.ref("orders", "StreamArn") }`},
+		{
+			name:  "table stream by arn",
+			short: `(kdst.fromTableStream("arn:aws:dynamodb:eu-west-1:123456789012:table/orders/stream/2026-01-01T00:00:00.000")) { startingPosition = "TRIM_HORIZON" }`,
+			long:  `new kdst.Stream { stream = "arn:aws:dynamodb:eu-west-1:123456789012:table/orders/stream/2026-01-01T00:00:00.000"; startingPosition = "TRIM_HORIZON" }`,
+		},
+		{name: "bucket by name", short: `kdst.fromBucket("uploads")`, long: `new kdst.Bucket { bucket = kdst.ref("uploads", "BucketName") }`},
+		{name: "bucket by arn", short: `kdst.fromBucket("arn:aws:s3:::archive")`, long: `new kdst.Bucket { bucket = "archive" }`},
+		{
+			name:  "bucket amended",
+			short: `(kdst.fromBucket("uploads")) { events { "s3:ObjectCreated:*" }; prefix = "incoming/" }`,
+			long:  `new kdst.Bucket { bucket = kdst.ref("uploads", "BucketName"); events { "s3:ObjectCreated:*" }; prefix = "incoming/" }`,
+		},
+		{
+			name:  "eventbridge",
+			short: `(kdst.fromEventBridge(new Dynamic { source { "orders" } })) { bus = "orders" }`,
+			long:  `new kdst.EventRule { pattern = new Dynamic { source { "orders" } }; bus = "orders" }`,
+		},
+		{name: "websocket", short: `kdst.fromWebSocket("$connect")`, long: `new kdst.WebSocketRoute { route = "$connect" }`},
+	}
+	dir := t.TempDir()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			events := func(event string) string {
+				return `functions { ["api"] { runtime = "nodejs22.x"; handler = "src/api.handler"; events { ` + event + ` } } }`
+			}
+			short := render(t, ev, dir, tt.name+"-short", events(tt.short))
+			long := render(t, ev, dir, tt.name+"-long", events(tt.long))
+			if short != long {
+				t.Errorf("%s renders\n%s\nwant\n%s", tt.short, short, long)
+			}
+		})
+	}
+}
+
+// TestResourceShorthands checks each resource shorthand of kdst.pkl, and ones amended, render
+// the json of the resource written out in full.
+func TestResourceShorthands(t *testing.T) {
+	ev := evaluator(t)
+	bucketProperties := `PublicAccessBlockConfiguration { BlockPublicAcls = true; BlockPublicPolicy = true; IgnorePublicAcls = true; RestrictPublicBuckets = true }
+      BucketEncryption { ServerSideEncryptionConfiguration { new { ServerSideEncryptionByDefault { SSEAlgorithm = "AES256" } } } }`
+	tests := []struct {
+		name  string
+		short string
+		long  string
+	}{
+		{
+			name:  "table",
+			short: `kdst.table("id")`,
+			long: `new { type = "AWS::DynamoDB::Table"; properties {
+      BillingMode = "PAY_PER_REQUEST"
+      AttributeDefinitions { new { AttributeName = "id"; AttributeType = "S" } }
+      KeySchema { new { AttributeName = "id"; KeyType = "HASH" } }
+      PointInTimeRecoverySpecification { PointInTimeRecoveryEnabled = true }
+    } }`,
+		},
+		{
+			name:  "table with a sort key",
+			short: `(kdst.table("customer")) { sortKey = "createdAt"; sortKeyType = "N" }`,
+			long: `new { type = "AWS::DynamoDB::Table"; properties {
+      BillingMode = "PAY_PER_REQUEST"
+      AttributeDefinitions { new { AttributeName = "customer"; AttributeType = "S" }; new { AttributeName = "createdAt"; AttributeType = "N" } }
+      KeySchema { new { AttributeName = "customer"; KeyType = "HASH" }; new { AttributeName = "createdAt"; KeyType = "RANGE" } }
+      PointInTimeRecoverySpecification { PointInTimeRecoveryEnabled = true }
+    } }`,
+		},
+		{
+			name:  "table amended",
+			short: `(kdst.table("id")) { partitionKeyType = "N"; deletionPolicy = "delete"; properties { TableClass = "STANDARD_INFREQUENT_ACCESS" } }`,
+			long: `new { type = "AWS::DynamoDB::Table"; deletionPolicy = "delete"; properties {
+      BillingMode = "PAY_PER_REQUEST"
+      AttributeDefinitions { new { AttributeName = "id"; AttributeType = "N" } }
+      KeySchema { new { AttributeName = "id"; KeyType = "HASH" } }
+      PointInTimeRecoverySpecification { PointInTimeRecoveryEnabled = true }
+      TableClass = "STANDARD_INFREQUENT_ACCESS"
+    } }`,
+		},
+		{name: "queue", short: `kdst.queue()`, long: `new { type = "AWS::SQS::Queue"; properties { MessageRetentionPeriod = 1209600 } }`},
+		{
+			name:  "queue amended",
+			short: `(kdst.queue()) { properties { VisibilityTimeout = 60; MessageRetentionPeriod = 3600 } }`,
+			long:  `new { type = "AWS::SQS::Queue"; properties { MessageRetentionPeriod = 3600; VisibilityTimeout = 60 } }`,
+		},
+		{name: "bucket", short: `kdst.bucket()`, long: `new { type = "AWS::S3::Bucket"; properties { ` + bucketProperties + ` } }`},
+		{
+			name:  "bucket amended",
+			short: `(kdst.bucket()) { deletionPolicy = "delete"; properties { VersioningConfiguration { Status = "Enabled" } } }`,
+			long:  `new { type = "AWS::S3::Bucket"; deletionPolicy = "delete"; properties { ` + bucketProperties + `; VersioningConfiguration { Status = "Enabled" } } }`,
+		},
+		{name: "topic", short: `kdst.topic()`, long: `new { type = "AWS::SNS::Topic" }`},
+		{
+			name:  "topic amended",
+			short: `(kdst.topic()) { properties { DisplayName = "alerts" } }`,
+			long:  `new { type = "AWS::SNS::Topic"; properties { DisplayName = "alerts" } }`,
+		},
+	}
+	dir := t.TempDir()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			short := render(t, ev, dir, tt.name+"-short", `resources { ["r"] = `+tt.short+` }`)
+			long := render(t, ev, dir, tt.name+"-long", `resources { ["r"] = `+tt.long+` }`)
+			if short != long {
+				t.Errorf("%s renders\n%s\nwant\n%s", tt.short, short, long)
+			}
+		})
+	}
+}
+
+// TestFunctionDefault checks the default of functions applies to every function, and a function
+// that sets the same property keeps its own.
+func TestFunctionDefault(t *testing.T) {
+	ev := evaluator(t)
+	dir := t.TempDir()
+	body := `functions {
+  default { memory = 256; timeout = 10.s }
+  ["api"] { runtime = "nodejs22.x"; handler = "src/api.handler" }
+  ["worker"] { runtime = "nodejs22.x"; handler = "src/worker.handler"; memory = 2048 }
+}`
+	path := filepath.Join(dir, "koldstart.pkl")
+	if err := os.WriteFile(path, []byte(header(t)+body+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p, err := config.Load(context.Background(), ev, path, "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		function string
+		memory   int
+		timeout  int
+	}{
+		{function: "api", memory: 256, timeout: 10},
+		{function: "worker", memory: 2048, timeout: 10},
+	}
+	for _, tt := range tests {
+		if fn := p.Functions[tt.function]; fn.Memory != tt.memory || fn.Timeout != tt.timeout {
+			t.Errorf("%s: memory %d, timeout %d, want %d and %d", tt.function, fn.Memory, fn.Timeout, tt.memory, tt.timeout)
+		}
+	}
+}
+
 // TestSchemaRefuses checks the schema reports mistakes, pointing at the line.
 func TestSchemaRefuses(t *testing.T) {
 	ev := evaluator(t)
@@ -245,6 +462,8 @@ func TestSchemaRefuses(t *testing.T) {
 		{name: "output of a short account", body: `functions { ["api"] { runtime = "nodejs22.x"; handler = "x.y"; environment { ["X"] = new StageOutput { app = "a"; stage = "b"; output = "c"; account = "1234" } } } }`, want: `\d{12}`},
 		{name: "param with a leading slash", body: `functions { ["api"] { runtime = "nodejs22.x"; handler = "x.y"; environment { ["X"] = kdst.param("/orders/key") } } }`, want: `kdst.param("/orders/key"): the name goes after /<app>/<stage>/: drop the leading /, or use kdst.ssm("/orders/key")`},
 		{name: "secret with dot dot", body: `functions { ["api"] { runtime = "nodejs22.x"; handler = "x.y"; environment { ["X"] = kdst.secret("../prod/db") } } }`, want: `kdst.secret("../prod/db"): the name goes after <app>/<stage>/ and has no empty segments or ..`},
+		{name: "bucket by another arn", body: `functions { ["api"] { runtime = "nodejs22.x"; handler = "x.y"; events { kdst.fromBucket("arn:aws:sqs:eu-west-1:123456789012:jobs") } } }`, want: "not the arn of a bucket"},
+		{name: "table of an unknown key type", body: `resources { ["orders"] = (kdst.table("id")) { partitionKeyType = "X" } }`, want: "partitionKeyType"},
 		{name: "secret with an empty segment", body: `functions { ["api"] { runtime = "nodejs22.x"; handler = "x.y"; environment { ["X"] = kdst.secret("db//main").field("password") } } }`, want: "kdst.secretsmanager() for the full name"},
 	}
 	dir := t.TempDir()
