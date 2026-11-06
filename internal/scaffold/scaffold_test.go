@@ -75,6 +75,9 @@ func TestTemplatesEvaluate(t *testing.T) {
 			if p.App != "orders" || p.Region != "eu-west-1" || p.Functions["api"].Runtime != tt.runtime || p.Functions["api"].Handler != tt.handler {
 				t.Fatalf("evaluated to %+v", p)
 			}
+			if memory := p.Functions["api"].Memory; memory != 256 {
+				t.Errorf("api memory = %d, want 256 from the default of functions", memory)
+			}
 			nodes, err := desired.Build(p, desired.Target{Account: "123456789012", Region: "eu-west-1", Bucket: "b",
 				Archives: map[string]build.Archive{"api": {Function: "api", SHA256: "abc"}}})
 			if err != nil {
