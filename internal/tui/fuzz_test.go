@@ -146,8 +146,8 @@ func FuzzTint(f *testing.F) {
 }
 
 // FuzzJSONLines checks a value of any json is written as lines with nothing the terminal would act
-// on, that what an invocation returns is too, json or not, and that both wrap to the width. A
-// width is at least 2, the room a wide rune takes.
+// on, and that they wrap to the width. A width is at least 2, the room a wide rune takes. What an
+// invocation returns is drawn by a jsonView, which FuzzJSONView checks.
 func FuzzJSONLines(f *testing.F) {
 	f.Add([]byte(`{"memory":128,"name":"orders-dev-api"}`), 40)
 	f.Add([]byte(`{"KEY":{"$koldstart":"secret","source":"ssm","name":"/orders/key"},"x":"\u001b[2J\u202e"}`), 20)
@@ -157,19 +157,6 @@ func FuzzJSONLines(f *testing.F) {
 	f.Add([]byte(`"\u2028\u0085\u009b"`), 1)
 	f.Fuzz(func(t *testing.T, data []byte, width int) {
 		width = 2 + fuzzWidth(width, 120)
-		body := payloadLines(data)
-		for _, line := range hardwrapLines(body, width) {
-			fuzzPlain(t, "a line returned", line)
-			if w := ansi.StringWidth(line); w > width {
-				t.Fatalf("a line returned %d wide, more than %d: %q", w, width, line)
-			}
-		}
-		for _, line := range body {
-			got, want := hardwrapLines([]string{line}, width), strings.Split(ansi.Hardwrap(line, width, true), "\n")
-			if strings.Join(got, "\n") != strings.Join(want, "\n") {
-				t.Fatalf("hardwrapLines(%q, %d) = %q, ansi.Hardwrap %q", line, width, got, want)
-			}
-		}
 		var v any
 		if json.Unmarshal(data, &v) != nil {
 			return

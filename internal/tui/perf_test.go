@@ -382,6 +382,7 @@ func perfPages(tb testing.TB, w, h int) map[string]model {
 	invoke := perfInvoke(perfKeys(inv, "tab"))
 	pages["invoke"] = invoke
 	pages["invoke event"] = perfKeys(invoke, "down")
+	pages["invoke payload"] = perfKeys(invoke, "v")
 	plan := perfKeys(fn, "d")
 	pages["plan"] = plan
 	pages["plan diff"] = perfKeys(plan, "down", "down", "enter")
@@ -400,7 +401,7 @@ func TestPerfPages(t *testing.T) {
 		"overview": overviewPage, "stage functions": stagePage, "stage resources": stagePage, "stage outputs": stagePage,
 		"stage history": stagePage, "version": versionPage, "resource": resourcePage, "resource in aws": resourcePage,
 		"function": functionPage, "logs": functionPage, "invocations": functionPage, "invocation": invocationPage,
-		"invoke": functionPage, "invoke event": functionPage, "plan": planPage, "plan diff": diffPage,
+		"invoke": functionPage, "invoke event": functionPage, "invoke payload": functionPage, "plan": planPage, "plan diff": diffPage,
 	}
 	pages := perfPages(t, 200, 60)
 	for name, p := range want {
@@ -439,6 +440,9 @@ func TestPerfPages(t *testing.T) {
 	if got := pages["invoke event"].selectedEvent(); got != "broken.json" {
 		t.Errorf("the event chosen is %s, want broken.json", got)
 	}
+	if p := pages["invoke payload"].state.function.pane; p.result || p.view.empty() || p.event != "big.json" {
+		t.Errorf("the pane shows the result %v, or the payload of %q, want the payload of big.json", p.result, p.event)
+	}
 	if got := pages["resource"].state.resource.res.id; got != "resource/table" {
 		t.Errorf("the resource is %s, want resource/table", got)
 	}
@@ -451,9 +455,11 @@ func perfFresh(m model) model {
 	results := make(map[string]invocationResult, len(m.state.function.results))
 	for k, r := range m.state.function.results {
 		r.logs = &wrappedLog{}
+		r.view.cache = &jsonCache{}
 		results[k] = r
 	}
 	m.state.function.results = results
+	m.state.function.pane.view.cache = &jsonCache{}
 	m.state.diff.wrapped = &diffRows{}
 	m.state.resource.applied.cache = &jsonCache{}
 	m.state.resource.props.cache = &jsonCache{}
@@ -509,7 +515,7 @@ func perfBench(b *testing.B) map[string]model {
 // perfPageNames are the pages benchmarked, in order.
 var perfPageNames = []string{
 	"overview", "stage functions", "stage resources", "stage outputs", "stage history", "version", "resource",
-	"resource in aws", "function", "logs", "invocations", "invocation", "invoke", "invoke event", "plan", "plan diff",
+	"resource in aws", "function", "logs", "invocations", "invocation", "invoke", "invoke event", "invoke payload", "plan", "plan diff",
 }
 
 // BenchmarkView draws a frame of each heavy page at 200 by 60.

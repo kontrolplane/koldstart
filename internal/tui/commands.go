@@ -97,7 +97,6 @@ type liveLoadedMsg struct {
 type invokedMsg struct {
 	gen   int
 	event string
-	local bool
 	// result is what the invocation returned, read off the interface's goroutine, as a payload
 	// can be megabytes.
 	result invocationResult

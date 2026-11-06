@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -118,37 +119,6 @@ func (r invocationResult) logCells(width int) []cell {
 	return cells
 }
 
-// payloadLines are the lines of what an invocation returned, indented when it is json, and
-// cleaned.
-func payloadLines(payload []byte) []string {
-	if len(bytes.TrimSpace(payload)) == 0 {
-		return nil
-	}
-	return strings.Split(styles.CleanBlock(strings.TrimRight(prettyJSON(payload), "\n")), "\n")
-}
-
-// hardwrapLines breaks each line wider than width where the width runs out, as ansi.Hardwrap
-// does, cutting a line of ascii without measuring it.
-func hardwrapLines(lines []string, width int) []string {
-	width = max(1, width)
-	out := make([]string, 0, len(lines))
-	for _, line := range lines {
-		switch {
-		case len(line) <= width:
-			out = append(out, line)
-		case printableASCII(line):
-			for len(line) > width {
-				out = append(out, line[:width])
-				line = line[width:]
-			}
-			out = append(out, line)
-		default:
-			out = append(out, strings.Split(ansi.Hardwrap(line, width, true), "\n")...)
-		}
-	}
-	return out
-}
-
 // errNotJSON is an event file that does not hold json.
 var errNotJSON = errors.New("not json")
 
@@ -159,6 +129,9 @@ type eventFile struct {
 	// data is what it holds, and err why it cannot be sent, nil for one that can.
 	data []byte
 	err  error
+	// view is what it holds as json, or as the lines it is, read once so choosing it costs
+	// nothing.
+	view jsonView
 }
 
 var eventColumns = []column{
@@ -243,6 +216,7 @@ func (m model) readEventFiles() model {
 			ev.err = fmt.Errorf("reading the event %s: %w", e.Name(), err)
 		} else {
 			ev.data, ev.size, ev.err = data, int64(len(data)), checkEvent(e.Name(), data)
+			ev.view = newJSONViewBytes(data)
 		}
 		files, infos = append(files, e.Name()), append(infos, ev)
 	}
@@ -449,8 +423,10 @@ type invokePane struct {
 	event   string
 	result  bool
 	focused bool
-	synced  bool
-	view    jsonView
+	// view is of the result when built is set, otherwise of the payload, of event, once synced.
+	view   jsonView
+	built  bool
+	synced bool
 }
 
 // showPane shows the result, or the payload, of the selected event.
@@ -465,35 +441,31 @@ func (m model) showPane(result bool) model {
 	return m.syncPane(false)
 }
 
-// syncPane points the pane at the selected event. The view of a result it leaves is kept with the
-// result, so its folds and cursor are there when it comes back. Again set, it reads the view
+// syncPane points the pane at the selected event. The view it leaves is kept with its result or
+// its event, so its folds and cursor are there when it comes back. Again set, it reads the view
 // anew, the payload of an event read again keeping what was done to it.
 func (m model) syncPane(again bool) model {
 	f := &m.state.function
 	p := &f.pane
 	event := m.selectedEvent()
-	if p.synced && p.event == event && !again {
+	same := p.synced && p.event == event && p.built == p.result
+	if same && !again {
 		p.view.blurred = !p.focused
 		return m
 	}
-	moved := p.event != event
-	if p.synced && p.result && moved {
-		if r, ok := f.results[p.event]; ok {
-			r.view = p.view
-			f.results[p.event] = r
-		}
+	if p.synced && !same {
+		m = m.keepView(again)
 	}
 	old := p.view
-	switch {
-	case p.result:
+	if p.result {
 		p.view = f.results[event].view
-	case !p.synced || moved || again:
+	} else {
 		p.view = m.payloadView()
-		if !moved {
+		if same {
 			p.view = p.view.carry(old)
 		}
 	}
-	p.event, p.synced = event, true
+	p.event, p.built, p.synced = event, p.result, true
 	if p.view.empty() {
 		p.focused = false
 	}
@@ -501,13 +473,32 @@ func (m model) syncPane(again bool) model {
 	return m
 }
 
-// payloadView is the selected event as json, or its lines when it is not json.
-func (m model) payloadView() jsonView {
-	ev, ok := m.selectedEventFile()
-	if !ok {
-		return newJSONViewBytes([]byte(defaultEvent))
+// keepView keeps the pane's view with what it was of: the result of its event, or the event,
+// unless the events were read again and the one it was of is not what it was.
+func (m model) keepView(again bool) model {
+	f := &m.state.function
+	p := f.pane
+	if p.built {
+		if r, ok := f.results[p.event]; ok {
+			r.view = p.view
+			f.results[p.event] = r
+		}
+		return m
 	}
-	return newJSONViewBytes(ev.data)
+	if i := slices.Index(f.eventFiles, p.event); i >= 0 && i < len(f.eventInfo) && !again {
+		f.eventInfo = slices.Clone(f.eventInfo)
+		f.eventInfo[i].view = p.view
+	}
+	return m
+}
+
+// payloadView is the selected event as json, or its lines when it is not json, as it was read
+// when the events were listed.
+func (m model) payloadView() jsonView {
+	if ev, ok := m.selectedEventFile(); ok {
+		return ev.view
+	}
+	return newJSONViewBytes([]byte(defaultEvent))
 }
 
 // paneKey gives a key to the json of the pane while it has the keys, before the function's own:
@@ -688,7 +679,7 @@ func (m model) invokeKeys() [][2]string {
 	if m.paneScrolls() {
 		h = append(h, [2]string{k.PageUp.Help().Key + "/" + k.PageDown.Help().Key, "scroll"})
 	}
-	if !f.pane.view.empty() && !(f.pane.result && r.running) {
+	if !f.pane.view.empty() && (!f.pane.result || !r.running) {
 		h = append(h, hint(k.View, "open json"))
 	}
 	h = append(h, hint(k.Pane))
@@ -792,15 +783,11 @@ func resultFacts(r invocationResult) []cell {
 		fact("cold start", styles.S(formatMillis(r.report.init), styles.ToneInfo))
 	}
 	if n := logLineCount(r.inv.Logs); n > 0 {
-		what := "log"
-		if r.local {
-			what = "output"
-		}
 		unit := " lines"
 		if n == 1 {
 			unit = " line"
 		}
-		fact(what, styles.S(formatInt(n), styles.ToneBody), styles.S(unit, styles.ToneFaint))
+		fact("log", styles.S(formatInt(n), styles.ToneBody), styles.S(unit, styles.ToneFaint))
 	}
 	if id := r.requestID(); id != "" {
 		fact("request", styles.S(id, styles.ToneFaint))
@@ -913,12 +900,8 @@ func resultLines(r invocationResult, v jsonView, width int) (lazyLines, int) {
 		}
 	}
 	if strings.TrimSpace(r.inv.Logs) != "" {
-		title := "log"
-		if r.local {
-			title = "output"
-		}
 		cells := r.logCells(width)
-		lines.add("", styles.SectionHeader(title, width))
+		lines.add("", styles.SectionHeader("log", width))
 		lines.addDrawn(len(cells), func(i int) string { return renderCell(cells[i], column{width: width}, nil) })
 	}
 	return lines, at

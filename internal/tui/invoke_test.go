@@ -317,15 +317,17 @@ func TestInvokeEvents(t *testing.T) {
 // returned, or the error it failed with as the cli writes it; shift+c copies the request id.
 func TestInvokePane(t *testing.T) {
 	tests := []struct {
-		name   string
-		result cli.Invocation
-		keys   []string
-		want   string
-		copied string
+		name    string
+		result  cli.Invocation
+		keys    []string
+		want    string
+		notWant string
+		copied  string
 	}{
 		{name: "payload", keys: []string{"c"}, want: `"id": 7`, copied: `{"id": 7}`},
 		{name: "result", result: cli.Invocation{Payload: []byte(`{"ok":true}`)}, keys: []string{"i", "c"}, want: `"ok": true`, copied: `{"ok":true}`},
-		{name: "back to the payload", result: cli.Invocation{Payload: []byte(`{"ok":true}`)}, keys: []string{"i", "v", "c"}, want: `"id": 7`, copied: `{"id": 7}`},
+		{name: "back to the payload", result: cli.Invocation{Payload: []byte(`{"ok":true}`)}, keys: []string{"i", "v", "c"}, want: `"id": 7`, notWant: `"ok"`, copied: `{"id": 7}`},
+		{name: "to the result again", result: cli.Invocation{Payload: []byte(`{"ok":true}`)}, keys: []string{"i", "v", "v", "c"}, want: `"ok": true`, notWant: `"id"`, copied: `{"ok":true}`},
 		{name: "failure", result: cli.Invocation{Payload: []byte(ikNodeFailure), Error: "Unhandled"}, keys: []string{"i", "c"}, want: "TypeError",
 			copied: "TypeError: x is undefined\n    at handler (file:///var/task/index.mjs:3:9)\n    at Runtime.handleOnceNonStreaming (file:///var/runtime/index.mjs:1173:29)"},
 		{name: "request id", result: cli.Invocation{Payload: []byte(`{}`), RequestID: "r-9"}, keys: []string{"i", "C"}, want: "request r-9", copied: "r-9"},
@@ -336,8 +338,8 @@ func TestInvokePane(t *testing.T) {
 			f.result = tt.result
 			m := invokeTabWith(t, f, map[string]string{"a.json": `{"id": 7}`})
 			m = pressKeys(t, m, tt.keys...)
-			if v := screen(m); !strings.Contains(v, tt.want) {
-				t.Errorf("no %q in:\n%s", tt.want, v)
+			if v := screen(m); !strings.Contains(v, tt.want) || tt.notWant != "" && strings.Contains(v, tt.notWant) {
+				t.Errorf("want %q and not %q in:\n%s", tt.want, tt.notWant, v)
 			}
 			if got := m.paneCopyValue(); tt.keys[len(tt.keys)-1] == "c" && got != tt.copied {
 				t.Errorf("c copies %q, want %q", got, tt.copied)
@@ -411,7 +413,7 @@ func TestInvokeLayout(t *testing.T) {
 		"2 mb":      {Payload: big},
 		"not json":  {Payload: []byte("plain \x1b[2J words")},
 	}
-	events := map[string]string{"big.json": string(big), "broken.json": "{\n" + strings.Repeat("x", 300), "small.json": `{"id":1}`}
+	events := map[string]string{"big.json": string(big), "broken.json": "{\n\x1b[2J" + strings.Repeat("x", 300), "small.json": `{"id":1}`}
 	for _, size := range [][2]int{{78, 22}, {120, 40}, {200, 60}} {
 		w, h := size[0], size[1]
 		for name, inv := range results {
