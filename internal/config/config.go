@@ -1,5 +1,5 @@
 // Package config loads a koldstart.pkl: it evaluates it with pkl, decodes the json pkl renders,
-// and checks what the schema cannot.
+// fills in the runtimes and handlers its functions leave out, and checks what the schema cannot.
 package config
 
 import (

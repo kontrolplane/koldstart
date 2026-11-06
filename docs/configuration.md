@@ -33,8 +33,6 @@ The package is released with koldstart, under the same version. Its schema has a
 ```pkl
 functions {
   ["api"] {
-    runtime = "nodejs22.x"
-    handler = "src/api.handler"
     memory = 512
     timeout = 10.s
     environment {
@@ -46,8 +44,8 @@ functions {
 
 | property              | default   | description                                                                                       |
 | --------------------- | --------- | ------------------------------------------------------------------------------------------------- |
-| `runtime`             |           | `nodejs22.x` or `nodejs24.x` for javascript and typescript, `provided.al2023` for go, `python3.12` or `python3.13` for python; none with an `image` |
-| `handler`             |           | for node and python, the file and its function, `src/api.handler`; for go, the package to build, `./cmd/worker`; none with an `image` |
+| `runtime`             | inferred  | `nodejs22.x` or `nodejs24.x` for javascript and typescript, `provided.al2023` for go, `python3.12` or `python3.13` for python; none with an `image`; see [conventions](#conventions) |
+| `handler`             | inferred  | for node and python, the file and its function, `src/api.handler`; for go, the package to build, `./cmd/worker`; none with an `image`; see [conventions](#conventions) |
 | `image`               |           | a container image to build and run instead, see [container images](#container-images)              |
 | `layers`              |           | lambda layers, by their version's arn, at most five; not for go or an image                         |
 | `memory`              | `1024`    | megabytes, from `128` to `10240`                                                                   |
@@ -66,6 +64,27 @@ functions {
 | `typecheck`           | `false`   | for typescript: run `tsc --noEmit` before bundling, which needs node and typescript installed       |
 
 Each function gets a role and a log group of its own. The role may write to the log group, and has what `link`, `permissions`, its events and its runtime secrets add.
+
+### conventions
+
+A function without an `image` that leaves out `runtime` and `handler` gets them from its name and the files of the project, here for `["api"]`:
+
+| file                                                                  | runtime           | handler           |
+| --------------------------------------------------------------------- | ----------------- | ----------------- |
+| `src/api.ts`, `.mts`, `.cts`, `.tsx`, `.js`, `.mjs`, `.cjs` or `.jsx` | `nodejs22.x`      | `src/api.handler` |
+| `src/api.py`                                                          | `python3.13`      | `src/api.handler` |
+| go files in `cmd/api/`                                                | `provided.al2023` | `./cmd/api`       |
+
+A function that sets `runtime` alone gets that runtime's handler, so `runtime = "nodejs24.x"` runs `src/api.handler`. One that sets `handler` alone gets the runtime of what it names: go for `./services/api` or a directory of go files, otherwise node or python for the file that is there. A function's page in `kdst ui` shows the runtime it ends up with, and the handler lambda runs.
+
+When none of the files is there, or more than one runtime fits, the configuration is refused before anything is built:
+
+```
+function api: no src/api.ts, src/api.py or cmd/api/ here: set runtime and handler
+function api: src/api.ts and src/api.py are both here: set runtime to nodejs22.x or python3.13
+```
+
+`kdst migrate` writes both, as the handlers of a serverless.yml rarely follow the convention.
 
 ### building
 

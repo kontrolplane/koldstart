@@ -11,7 +11,7 @@
 > [!NOTE]
 > koldstart has no release yet: 0.1.0 is next. Everything below is built; the plan is in [#1](https://github.com/kontrolplane/koldstart/issues/1).
 
-Here is an http api in typescript and a queue worker in go, sharing a table. [examples/full-featured](./examples/full-featured) is a complete version of it, with the handlers:
+Here is an http api in typescript and a queue worker in go, sharing a table. Neither function sets a runtime or handler: koldstart infers them from the function's name and its files, `src/api.ts` and `cmd/worker/`, as [conventions](docs/configuration.md#conventions) describes. [examples/full-featured](./examples/full-featured) is a complete version of it, with the handlers:
 
 ```pkl
 amends "package://github.com/kontrolplane/koldstart/releases/download/v0.1.0/koldstart@0.1.0#/Project.pkl"
@@ -23,8 +23,6 @@ region = "eu-west-1"
 
 functions {
   ["api"] {
-    runtime = "nodejs22.x"
-    handler = "src/api.handler"
     memory = if (kdst.stage == "prod") 1024 else 256
     environment {
       ["API_KEY"] = kdst.param("api-key")
@@ -36,8 +34,6 @@ functions {
     }
   }
   ["worker"] {
-    runtime = "provided.al2023"
-    handler = "./cmd/worker"
     link { ["orders"] = "readwrite" }
     events {
       new kdst.Queue { queue = kdst.ref("jobs", "Arn"); batchSize = 10 }
