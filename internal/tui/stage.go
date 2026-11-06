@@ -1015,8 +1015,8 @@ type headFact struct {
 
 // stageFacts are the lines above the tabs, as the function's overview has its own: the stage's
 // name, and the facts of it on a line below, how many resources it has and a remove kept, its
-// account and region, when it was last deployed and by whom, and its lock. Where they do not fit,
-// the date of the deploy goes, and the account and a region the header shows already.
+// account and region where they are not the header's, when it was last deployed and by whom, and
+// its lock. Where they do not fit, the date of the deploy and the account go.
 func (m model) stageFacts() string {
 	s := m.state.stage
 	if s.st == nil {
@@ -1032,12 +1032,13 @@ func (m model) stageFacts() string {
 		k := cell{styles.S(formatInt(kept), styles.ToneBody), styles.S(" kept", styles.ToneFaint)}
 		facts = append(facts, headFact{value: k, short: k})
 	}
-	account := headFact{value: text(orDash(s.st.Account), styles.ToneBody)}
-	region := headFact{value: text(s.ref.Region, styles.ToneMuted)}
-	if s.ref.Region != m.ident.Region {
-		region.short = region.value
+	if s.st.Account != "" && s.st.Account != m.ident.Account {
+		facts = append(facts, headFact{value: text(s.st.Account, styles.ToneBody)})
 	}
-	facts = append(facts, account, region)
+	if s.ref.Region != m.ident.Region {
+		region := text(s.ref.Region, styles.ToneMuted)
+		facts = append(facts, headFact{value: region, short: region})
+	}
 	switch {
 	case s.st.DeployedAt.IsZero():
 		never := text("not deployed yet", styles.ToneMuted)

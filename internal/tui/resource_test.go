@@ -313,8 +313,8 @@ func TestResourceKeys(t *testing.T) {
 			if tt.scroll != nil && !tt.scroll(m) {
 				t.Errorf("scroll %d", m.state.resource.scroll)
 			}
-			if !strings.Contains(screen(m), " "+tt.path+" ") {
-				t.Errorf("the frame does not show the path %s:\n%s", tt.path, screen(m))
+			if shown := strings.Contains(screen(m), " "+tt.path+" "); shown != (tt.path != ".") {
+				t.Errorf("the frame shows the path %s: %t, want it shown but at the top:\n%s", tt.path, shown, screen(m))
 			}
 		})
 	}

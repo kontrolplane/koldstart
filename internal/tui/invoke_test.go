@@ -85,7 +85,7 @@ func TestInvokeResult(t *testing.T) {
 		{
 			name:   "returned",
 			result: cli.Invocation{Payload: []byte(`{"statusCode":200}`), Duration: 120e6},
-			want:   []string{"✓ ok  in aws · ", "duration 120ms", "returned ─", `"statusCode": 200`},
+			want:   []string{"✓ ok · in aws · ", "duration 120ms", "returned ─", `"statusCode": 200`},
 			status: "api returned in 120ms",
 		},
 		{
@@ -96,7 +96,7 @@ func TestInvokeResult(t *testing.T) {
 		{
 			name:   "node",
 			result: cli.Invocation{Payload: []byte(ikNodeFailure), Error: "Unhandled", Duration: 3e6},
-			want:   []string{"✗ failed  in aws", "error ─", "TypeError: x is undefined", "  at handler (file:///var/task/index.mjs:3:9)", "  at Runtime.handleOnceNonStreaming"},
+			want:   []string{"✗ failed · in aws", "error ─", "TypeError: x is undefined", "  at handler (file:///var/task/index.mjs:3:9)", "  at Runtime.handleOnceNonStreaming"},
 			status: "api failed: TypeError: x is undefined",
 		},
 		{
@@ -113,13 +113,13 @@ func TestInvokeResult(t *testing.T) {
 		{
 			name:   "timed out",
 			result: cli.Invocation{Payload: []byte(ikTimeout), Error: "Unhandled", RequestID: "r-1", Logs: ikReport("r-1", "timeout")},
-			want:   []string{"⏱ timed out  in aws", "Sandbox.Timedout: RequestId: r-1 Error: Task timed out after 3.00 seconds", "request r-1"},
+			want:   []string{"⏱ timed out · in aws", "Sandbox.Timedout: RequestId: r-1 Error: Task timed out after 3.00 seconds", "request r-1"},
 			status: "api timed out: Sandbox.Timedout: RequestId: r-1 Error: Task timed out after 3.00 seconds",
 		},
 		{
 			name:   "failed without a payload",
 			result: cli.Invocation{Error: "Unhandled"},
-			want:   []string{"✗ failed  in aws", "Unhandled", "returned ─", "nothing"},
+			want:   []string{"✗ failed · in aws", "Unhandled", "returned ─", "nothing"},
 			status: "api failed: Unhandled",
 		},
 		{
@@ -300,7 +300,7 @@ func TestInvokeHints(t *testing.T) {
 func TestInvokeEvents(t *testing.T) {
 	m := invokeTabWith(t, newFake(t), map[string]string{"get-order.json": `{"id": 1, "items": [1, 2]}`, "broken.json": "{oops"})
 	v := screen(m)
-	for _, want := range []string{"event", "size", "modified", "broken  not json", "5 b", "get-order", "26 b", "0s ago", "payload 5 b", "▲ broken.json is not json, on line 1", "{oops"} {
+	for _, want := range []string{"event", "size", "modified", "broken  not json", "5 b", "get-order", "26 b", "just now", "payload 5 b", "▲ broken.json is not json, on line 1", "{oops"} {
 		if !strings.Contains(v, want) {
 			t.Errorf("no %q in:\n%s", want, v)
 		}

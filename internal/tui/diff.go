@@ -130,7 +130,7 @@ func (m model) openDiff(title, detail string, before, after any) (model, tea.Cmd
 
 // diffWidth is the width the diff page draws its lines in, and diffTextWidth the width of the
 // json in them, after the marker of the change navigated to and the gutter of + and -.
-func diffWidth() int     { return contentWidth - 4 }
+func diffWidth() int     { return detailWidth() }
 func diffTextWidth() int { return diffWidth() - 3 }
 
 // diffHeaderLines are the lines above a diff's json, diffContext the lines kept around each

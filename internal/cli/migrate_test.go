@@ -32,7 +32,7 @@ func TestMigrateWritesProject(t *testing.T) {
 		want      string
 		printed   string
 	}{
-		{name: "none", wantLocal: true, printed: "wrote PklProject, with the schema of koldstart dev ("},
+		{name: "none", wantLocal: true, printed: "wrote PklProject, with the schema of koldstart dev\n"},
 		{name: "without the dependency", existing: "amends \"pkl:Project\"\n", wantLocal: true, printed: "wrote PklProject"},
 		{name: "with it", existing: kept, want: kept, printed: "kept PklProject, which names the schema already"},
 	}

@@ -838,11 +838,11 @@ func (r logRow) paintIn(width int, s stampMode) string {
 }
 
 // paintLogRow draws a row of the tab in width columns, after the cursor's marker on the rows of
-// the line under it and a space on the others.
+// the line under it and spaces on the others, one column in as a table's marker is.
 func (m model) paintLogRow(r logRow, list logList, cursor, width int) string {
-	gutter := " "
+	gutter := "   "
 	if !r.rule && r.item == cursor {
-		gutter = styles.Accent("▌")
+		gutter = " " + styles.Accent("▌") + " "
 	}
 	if r.rule {
 		return gutter + m.ruleLine(list.items[r.item].req, width)

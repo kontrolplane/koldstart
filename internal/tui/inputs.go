@@ -37,7 +37,7 @@ func (m model) openInputs(c engine.Change) (model, tea.Cmd) {
 const inputsHeaderLines = 3
 
 // inputsWidth is the width the inputs page draws its lines in.
-func inputsWidth() int { return contentWidth - 4 }
+func inputsWidth() int { return detailWidth() }
 
 // shown is the json of the inputs, or nil when there are none.
 func (s *inputsState) shown() *jsonView {

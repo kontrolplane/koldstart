@@ -268,7 +268,7 @@ func (m model) shownRequest() request {
 }
 
 // invocationWidth is the width of the invocation page, as of every page of detail.
-func invocationWidth() int { return contentWidth - 4 }
+func invocationWidth() int { return detailWidth() }
 
 // invocationLines are the lines of the invocation page: the head, what lambda reports of it, and
 // the lines of its log, each drawn only where it is in sight.

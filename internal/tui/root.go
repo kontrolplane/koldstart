@@ -323,12 +323,13 @@ func (m model) render() string {
 	return place(m.width, m.height, view)
 }
 
-// content is what the frame holds: the page, with the help or an error over it.
+// content is what the frame holds: the page, with an error over it, or the help on its own, as
+// its card is nearly as wide as the frame and slivers of the page beside it read as stray marks.
 func (m model) content() string {
 	page := m.pageView()
 	switch {
 	case m.showHelp:
-		return overlay(page, m.helpView())
+		return overlay("", m.helpView())
 	case m.error != "":
 		return overlay(page, dialog("error", styles.ToneDanger, styles.Body(styles.CleanBlock(m.error)), "", styles.Faint("press any key to close")))
 	}
@@ -397,6 +398,9 @@ func (m model) view(p page) string {
 type fact struct {
 	label string
 	value cell
+	// middle cuts the value in the middle where it does not fit, as a bucket's name, whose end,
+	// its account and region, tells it apart.
+	middle bool
 }
 
 // header shows who the interface works as, and where: the profile, account, region and state
@@ -408,9 +412,9 @@ func (m model) header() string {
 		project = cell{styles.S(m.project, styles.ToneText), styles.S(" · "+m.projectStage, styles.ToneMuted)}
 	}
 	columns := [][2]fact{
-		{{"profile", text(orDash(id.Profile), styles.ToneBody)}, {"account", text(orDash(id.Account), styles.ToneBody)}},
-		{{"region", text(orDash(id.Region), styles.ToneBody)}, {"bucket", text(orDash(id.Bucket), styles.ToneMuted)}},
-		{{"project", project}, {"as", text(orDash(callerName(id.Caller)), styles.ToneMuted)}},
+		{{label: "profile", value: text(orDash(id.Profile), styles.ToneBody)}, {label: "account", value: text(orDash(id.Account), styles.ToneBody)}},
+		{{label: "region", value: text(orDash(id.Region), styles.ToneBody)}, {label: "bucket", value: text(orDash(id.Bucket), styles.ToneMuted), middle: true}},
+		{{label: "project", value: project}, {label: "as", value: text(orDash(callerName(id.Caller)), styles.ToneMuted)}},
 	}
 	want := make([]int, len(columns))
 	for i, c := range columns {
@@ -426,7 +430,7 @@ func (m model) header() string {
 		}
 		var lines []string
 		for _, f := range c {
-			value := renderCell(f.value, column{width: max(1, widths[i]-headerLabelWidth)}, nil)
+			value := renderCell(f.value, column{width: max(1, widths[i]-headerLabelWidth), middle: f.middle}, nil)
 			lines = append(lines, styles.Faint(fmt.Sprintf("%-*s", headerLabelWidth, f.label))+value)
 		}
 		rendered = append(rendered, strings.Join(lines, "\n"))
@@ -716,7 +720,7 @@ func (m model) frameMeta() (string, string) {
 		if at := v.matchPosition(); at != "" {
 			meta += styles.Render(styles.S(" · "+at, styles.ToneFaint))
 		}
-		if p := styles.Clean(v.path()); p != "" {
+		if p := styles.Clean(v.path()); p != "" && p != "." {
 			foot = append(foot, footPart{full: styles.Faint(cutMiddle(p, frameWidth/2)), short: styles.Faint(cutMiddle(p, frameWidth/4))})
 		}
 	}
@@ -967,12 +971,17 @@ func (m model) stageHints() [][2]string {
 	s := m.state.stage
 	rows := len(s.tables[s.tab].rows) > 0
 	var h [][2]string
-	if row, ok := s.selectedRow(); ok && s.tab == resourcesTab && row.res < 0 {
+	row, ok := s.selectedRow()
+	heading := ok && s.tab == resourcesTab && row.res < 0
+	switch {
+	case heading && s.filter.text == "":
+		h = append(h, [2]string{hint(k.View)[0] + "/" + hint(k.Fold)[0], "fold"})
+	case heading:
 		h = append(h, hint(k.View, "fold"))
-	} else if rows {
+	case rows:
 		h = append(h, hint(k.View))
 	}
-	if rows && s.tab == resourcesTab && s.filter.text == "" {
+	if rows && !heading && s.tab == resourcesTab && s.filter.text == "" {
 		h = append(h, hint(k.Fold))
 	}
 	h = append(h, hint(k.NextTab))

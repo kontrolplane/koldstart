@@ -154,8 +154,9 @@ func (l pickList) position(cursor int) string {
 }
 
 // selectable draws height lines of a page with rows that can be selected, the selected one marked
-// and painted as a table paints the row under its cursor. It scrolls so the selected row is in
-// sight, and returns the scroll it drew at.
+// and painted as a table paints the row under its cursor, its mark one column in as a table's is,
+// so a row is drawn three columns in and must fit in three less than the page. It scrolls so the
+// selected row is in sight, and returns the scroll it drew at.
 func selectable(l pickList, cursor, scroll, height int) (string, int) {
 	selected := -1
 	if cursor >= 0 && cursor < len(l.rows) {
@@ -170,13 +171,13 @@ func selectable(l pickList, cursor, scroll, height int) (string, int) {
 	for i, line := range l.lines.window(scroll, scroll+height) {
 		switch {
 		case scroll+i == selected && cursor < len(l.lit):
-			out = append(out, cursorMark(styles.P.Selection)+l.lit[cursor]())
+			out = append(out, " "+cursorMark(styles.P.Selection)+l.lit[cursor]())
 		case scroll+i == selected:
-			out = append(out, styles.Accent("▌")+" "+line)
+			out = append(out, " "+styles.Accent("▌")+" "+line)
 		case scroll+i < l.head:
 			out = append(out, " "+line)
 		default:
-			out = append(out, "  "+line)
+			out = append(out, "   "+line)
 		}
 	}
 	return strings.Join(out, "\n"), scroll
@@ -281,3 +282,8 @@ func scrolledLines(l lazyLines, offset, height int) string {
 	offset = max(0, min(offset, l.len()-height))
 	return strings.Join(l.window(offset, offset+height), "\n")
 }
+
+// detailWidth is the width of the lines of a detail page, a resource, an output, a diff, a
+// version, a plan, an invocation or a line of the logs: they start one column in and end one
+// before the frame, as a table's rows do, so their section rules end where a table's does.
+func detailWidth() int { return contentWidth - 2 }

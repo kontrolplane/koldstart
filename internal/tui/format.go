@@ -51,7 +51,7 @@ func formatAgo(t time.Time) string {
 	}
 	d := time.Since(t)
 	switch {
-	case d < 0:
+	case d < 5*time.Second:
 		return "just now"
 	case d < time.Minute:
 		return fmt.Sprintf("%ds ago", int(d.Seconds()))

@@ -74,7 +74,7 @@ func lgCursor(m model) string {
 func lgMarked(m model) []string {
 	var out []string
 	for line := range strings.SplitSeq(ansi.Strip(m.logsView()), "\n") {
-		if strings.HasPrefix(line, "▌") {
+		if strings.HasPrefix(line, " ▌") {
 			out = append(out, line)
 		}
 	}
@@ -298,7 +298,7 @@ func TestLogsStamps(t *testing.T) {
 			m, _ := onLogs(t, []cli.LogEvent{{Time: at, Message: long}})
 			m = pressKeys(t, m, tt.keys...)
 			lines := strings.Split(ansi.Strip(m.logsView()), "\n")
-			if len(lines) < 2 || !strings.HasPrefix(lines[1][len("▌"):], tt.prefix) {
+			if len(lines) < 2 || !strings.HasPrefix(lines[1][len(" ▌ "):], tt.prefix) {
 				t.Fatalf("the line is drawn as %q, want it to start %q", lines, tt.prefix)
 			}
 			if got := m.state.function.logs.room(); got != tt.room {

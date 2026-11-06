@@ -107,7 +107,7 @@ func initRegion(ctx context.Context, opts *Options) string {
 // printInit says what init wrote and kept, the app and its region, the schema it amends, why
 // its PklProject is not resolved when it is not, and what to run next.
 func printInit(w io.Writer, name, dir, app, region, template string, dep schema.Dependency, res scaffold.Result, note string) {
-	_, _ = fmt.Fprintf(w, "started %s, which deploys to %s, with the schema of koldstart %s\n\n", app, region, dep)
+	_, _ = fmt.Fprintf(w, "started %s, which deploys to %s, with the schema of koldstart %s\n\n", app, region, dep.Name())
 	for _, f := range res.Written {
 		_, _ = fmt.Fprintf(w, "  wrote %s\n", f)
 	}

@@ -847,7 +847,7 @@ func resultHead(r invocationResult, width int) []string {
 	if r.local {
 		where = "on this machine"
 	}
-	lines := cellLines(cell{status, styles.S("  "+where, styles.ToneMuted), sep(), styles.S(formatAgo(r.at), styles.ToneFaint)}, width)
+	lines := cellLines(cell{status, sep(), styles.S(where, styles.ToneMuted), sep(), styles.S(formatAgo(r.at), styles.ToneFaint)}, width)
 	return append(lines, packFacts(resultFacts(r), width)...)
 }
 

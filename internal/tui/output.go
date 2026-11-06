@@ -128,7 +128,7 @@ func (m model) followOutputCursor(msg tea.KeyPressMsg, before int) model {
 }
 
 // outputWidth is the width the output page draws its lines in.
-func outputWidth() int { return contentWidth - 4 }
+func outputWidth() int { return detailWidth() }
 
 // outputValueLines are a value that is not json as plain lines in width, as it is, every line
 // wrapped under its indent. json is read in a jsonView.

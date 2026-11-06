@@ -129,12 +129,12 @@ func TestSelectable(t *testing.T) {
 				t.Errorf("scroll %d, want %d", scroll, tt.want)
 			}
 			out := strings.Split(ansi.Strip(view), "\n")
-			if got := strings.TrimSpace(strings.TrimPrefix(out[0], "▌")); got != tt.first {
+			if got := strings.TrimSpace(strings.TrimPrefix(out[0], " ▌")); got != tt.first {
 				t.Errorf("first line %q, want %q", got, tt.first)
 			}
 			marked := 0
 			for _, line := range out {
-				if strings.HasPrefix(line, "▌") {
+				if strings.HasPrefix(line, " ▌") {
 					marked++
 				}
 			}
