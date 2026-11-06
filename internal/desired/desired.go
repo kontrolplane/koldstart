@@ -336,7 +336,7 @@ var assumeRolePolicy = trust("lambda.amazonaws.com", nil)
 func (b *builder) resource(name string, r config.Resource) engine.Node {
 	props := b.properties(r.Properties)
 	policy := r.DeletionPolicy
-	if policy == "" && stateful(r.Type) {
+	if policy == "" && Stateful(r.Type) {
 		policy = engine.PolicyRetain
 	}
 	return engine.Node{
@@ -385,7 +385,7 @@ var statefulTypes = []string{
 	"AWS::Redshift::Cluster", "AWS::Backup::BackupVault", "AWS::Timestream::Table",
 }
 
-// stateful reports whether a resource type holds data, and is retained by default.
-func stateful(typ string) bool {
+// Stateful reports whether a resource type holds data, and is retained by default.
+func Stateful(typ string) bool {
 	return slices.Contains(statefulTypes, typ)
 }

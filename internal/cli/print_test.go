@@ -22,6 +22,7 @@ func TestDescribeChange(t *testing.T) {
 		{before: "a", after: map[string]any{"$koldstart": "secret", "name": "x"}, want: "(a secret)"},
 		{before: strings.Repeat("a", 100), after: "b", want: "changed"},
 		{before: map[string]any{"sha256": "0123456789abcdef"}, after: map[string]any{"sha256": "fedcba9876543210"}, want: "0123456789ab → fedcba987654"},
+		{before: map[string]any{"$koldstart": "secret", "source": "ssm", "name": "/orders/key"}, after: "plain", want: `(secret ssm:/orders/key) → "plain"`},
 	}
 	for _, tt := range tests {
 		if got := describeChange(tt.before, tt.after); got != tt.want {
@@ -30,15 +31,60 @@ func TestDescribeChange(t *testing.T) {
 	}
 }
 
-// TestFieldChanges checks the properties of a resource are listed one by one.
+// TestFieldChanges checks the properties of a resource and the environment of a function are
+// listed one by one, and the rest of the inputs whole.
 func TestFieldChanges(t *testing.T) {
-	c := engine.Change{Fields: []string{"properties"},
-		Before: map[string]any{"properties": map[string]any{"VisibilityTimeout": 30.0, "QueueName": "q"}},
-		After:  map[string]any{"properties": map[string]any{"VisibilityTimeout": 120.0, "QueueName": "q", "DelaySeconds": 5.0}},
+	tests := []struct {
+		name string
+		c    engine.Change
+		want string
+	}{
+		{name: "properties", c: engine.Change{Fields: []string{"properties"},
+			Before: map[string]any{"properties": map[string]any{"VisibilityTimeout": 30.0, "QueueName": "q"}},
+			After:  map[string]any{"properties": map[string]any{"VisibilityTimeout": 120.0, "QueueName": "q", "DelaySeconds": 5.0}},
+		}, want: "properties.DelaySeconds: added; properties.VisibilityTimeout: 30 → 120"},
+		{name: "environment", c: engine.Change{Fields: []string{"environment", "memory"},
+			Before: map[string]any{"memory": 512.0, "environment": map[string]any{"TABLE": "orders", "STAGE": "dev"}},
+			After:  map[string]any{"memory": 1024.0, "environment": map[string]any{"TABLE": map[string]any{"$koldstart": "unknown"}, "STAGE": "dev"}},
+		}, want: "environment.TABLE: known after apply; memory: 512 → 1024"},
+		{name: "a secret", c: engine.Change{Fields: []string{engine.SecretChanged}}, want: "a secret or another stage's output changed"},
 	}
-	got := strings.Join(FieldChanges(c), "; ")
-	if got != "properties.DelaySeconds: added; properties.VisibilityTimeout: 30 → 120" {
-		t.Errorf("FieldChanges = %q", got)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := strings.Join(FieldChanges(tt.c), "; "); got != tt.want {
+				t.Errorf("FieldChanges = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestReplaceNotes checks a replace says which fields need a new resource, or every field when
+// none was named, and what happens to the old one: deleted with its data when its type holds
+// data, left in place when it is retained.
+func TestReplaceNotes(t *testing.T) {
+	tests := []struct {
+		name   string
+		c      engine.Change
+		reason string
+		loss   string
+		lost   bool
+	}{
+		{name: "a table", c: engine.Change{Action: engine.Replace, Type: "AWS::DynamoDB::Table", Fields: []string{"properties"}, Forces: []string{"properties.KeySchema"}},
+			reason: "changing properties.KeySchema needs a new resource", loss: "the old one is deleted, and the data it holds with it", lost: true},
+		{name: "a retained table", c: engine.Change{Action: engine.Replace, Type: "AWS::DynamoDB::Table", Forces: []string{"properties.KeySchema"}, Retained: true},
+			reason: "changing properties.KeySchema needs a new resource", loss: "the old one stays in place beside the new one, as it is retained"},
+		{name: "none named", c: engine.Change{Action: engine.Replace, Type: "koldstart::Lambda::Function", Fields: []string{"name", "memory"}},
+			reason: "changing name, memory needs a new resource"},
+		{name: "finishing one", c: engine.Change{Action: engine.Replace, Type: "AWS::S3::Bucket", Resume: true}},
+		{name: "an update", c: engine.Change{Action: engine.Update, Type: "AWS::S3::Bucket", Fields: []string{"name"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			loss, lost := ReplaceLoss(tt.c)
+			if got := ReplaceReason(tt.c); got != tt.reason || loss != tt.loss || lost != tt.lost {
+				t.Errorf("reason %q, loss %q %v; want %q, %q %v", got, loss, lost, tt.reason, tt.loss, tt.lost)
+			}
+		})
 	}
 }
 
@@ -190,14 +236,9 @@ func TestWritePlanJSON(t *testing.T) {
       "action": "update",
       "fields": [
         {
-          "after": {
-            "API_KEY": "ssm:/orders/api-key",
-            "URL": "https://x?a=1&b=2"
-          },
-          "before": {
-            "API_KEY": "ssm:/orders/api-key"
-          },
-          "field": "environment"
+          "after": "https://x?a=1&b=2",
+          "before": null,
+          "field": "environment.URL"
         },
         {
           "after": 1024,

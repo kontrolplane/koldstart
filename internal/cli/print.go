@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 
+	"github.com/kontrolplane/koldstart/internal/desired"
 	"github.com/kontrolplane/koldstart/internal/engine"
 )
 
@@ -157,6 +159,16 @@ func printPlanTo(w io.Writer, app, stage, region, account string, plan *engine.P
 		if len(c.Drift) > 0 {
 			_, _ = fmt.Fprintf(w, "        changed outside koldstart: %s\n", strings.Join(c.Drift, ", "))
 		}
+		if why := ReplaceReason(c); why != "" {
+			_, _ = fmt.Fprintf(w, "        %s\n", colour.paint(sgrYellow, why))
+		}
+		if loss, lost := ReplaceLoss(c); loss != "" {
+			tone := sgrFaint
+			if lost {
+				tone = sgrRed
+			}
+			_, _ = fmt.Fprintf(w, "        %s\n", colour.paint(tone, loss))
+		}
 		if c.Action == engine.Update || c.Action == engine.Replace || c.Action == engine.Adopt {
 			for _, change := range FieldChanges(c) {
 				_, _ = fmt.Fprintf(w, "        %s\n", change)
@@ -186,18 +198,90 @@ func planCounts(plan *engine.Plan) string {
 	return strings.Join(parts, ", ")
 }
 
-// FieldChanges says how each changed input changes. The properties of a resource are listed one
-// by one, as they are what the configuration sets.
+// FieldChanges says how each changed input changes. The properties of a resource and the
+// environment of a function are listed one by one, as they are what the configuration sets.
 func FieldChanges(c engine.Change) []string {
-	var out []string
-	for _, d := range fieldDiffs(c) {
-		if d.field == engine.SecretChanged {
-			out = append(out, "a secret or another stage's output changed")
-			continue
-		}
-		out = append(out, d.field+": "+describeChange(d.before, d.after))
+	details := FieldDetails(c)
+	out := make([]string, 0, len(details))
+	for _, d := range details {
+		out = append(out, d.String())
 	}
 	return out
+}
+
+// FieldChange is one input a change changes, as the text plan says it.
+type FieldChange struct {
+	// Field is the input: a resource's property as properties.<name>, a function's variable as
+	// environment.<name>, or engine.SecretChanged when only a secret or another stage's output
+	// changed.
+	Field string
+	// Before and After are the values written short, when both are; otherwise How says how the
+	// input changes: added, removed, changed, known after apply or (a secret).
+	Before, After string
+	How           string
+	// Code is a function's code, its values the start of each sha256.
+	Code bool
+}
+
+// String is the change as the text plan writes it, as memory: 256 → 1024.
+func (f FieldChange) String() string {
+	switch {
+	case f.Field == engine.SecretChanged:
+		return "a secret or another stage's output changed"
+	case f.How != "":
+		return f.Field + ": " + f.How
+	}
+	return f.Field + ": " + f.Before + " → " + f.After
+}
+
+// FieldDetails are the inputs a change changes, in the order FieldChanges lists them, each with
+// its values written short or how it changes.
+func FieldDetails(c engine.Change) []FieldChange {
+	diffs := fieldDiffs(c)
+	out := make([]FieldChange, 0, len(diffs))
+	for _, d := range diffs {
+		f := FieldChange{Field: d.field}
+		if d.field != engine.SecretChanged {
+			f.Before, f.After, f.How, f.Code = describeValues(d.before, d.after)
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+// ReplaceReason says why a change replaces its resource, as changing name needs a new resource:
+// the fields that force it, or every field it changes when none does on its own.
+func ReplaceReason(c engine.Change) string {
+	if c.Action != engine.Replace || c.Resume {
+		return ""
+	}
+	fields := c.Forces
+	if len(fields) == 0 {
+		for _, d := range fieldDiffs(c) {
+			if d.field != engine.SecretChanged {
+				fields = append(fields, d.field)
+			}
+		}
+	}
+	if len(fields) == 0 {
+		return ""
+	}
+	return "changing " + strings.Join(fields, ", ") + " needs a new resource"
+}
+
+// ReplaceLoss says what a replace does with the old resource, and whether what it holds is lost:
+// one retained stays in place beside the new one, as --allow-replace allows, and one of a type
+// that holds data is deleted with it.
+func ReplaceLoss(c engine.Change) (string, bool) {
+	switch {
+	case c.Action != engine.Replace || c.Resume:
+		return "", false
+	case c.Retained:
+		return "the old one stays in place beside the new one, as it is retained", false
+	case desired.Stateful(c.Type):
+		return "the old one is deleted, and the data it holds with it", true
+	}
+	return "", false
 }
 
 // fieldDiff is one input a change changes, from before to after.
@@ -206,15 +290,19 @@ type fieldDiff struct {
 	before, after any
 }
 
-// fieldDiffs are the inputs a change changes, the properties of a resource one by one, as
-// FieldChanges and plan -o json list them. engine.SecretChanged stands for a secret or another
-// stage's output that changed.
+// splitFields are the inputs that are maps of what the configuration sets each of, listed key
+// by key: a resource's properties and a function's environment.
+var splitFields = []string{"properties", "environment"}
+
+// fieldDiffs are the inputs a change changes, the properties of a resource and the environment
+// of a function one by one, as FieldChanges and plan -o json list them. engine.SecretChanged
+// stands for a secret or another stage's output that changed.
 func fieldDiffs(c engine.Change) []fieldDiff {
 	var out []fieldDiff
 	for _, f := range c.Fields {
 		before, isMapB := c.Before[f].(map[string]any)
 		after, isMapA := c.After[f].(map[string]any)
-		if f == engine.SecretChanged || f != "properties" || !isMapB || !isMapA {
+		if f == engine.SecretChanged || !slices.Contains(splitFields, f) || !isMapB || !isMapA {
 			out = append(out, fieldDiff{field: f, before: c.Before[f], after: c.After[f]})
 			continue
 		}
@@ -248,6 +336,10 @@ type changeJSON struct {
 	Drift         []string    `json:"drift,omitempty"`
 	Resume        bool        `json:"resume,omitempty"`
 	Gone          bool        `json:"gone,omitempty"`
+	// Forces are the fields of a replace that need a new resource, and Retained says the old
+	// one stays in place beside it.
+	Forces   []string `json:"forces,omitempty"`
+	Retained bool     `json:"retained,omitempty"`
 }
 
 // fieldJSON is one input a change changes. Before is null for one added, and after for one
@@ -267,7 +359,7 @@ func writePlanJSON(w io.Writer, app, stage, region, account string, plan *engine
 			continue
 		}
 		out.Counts[string(c.Action)]++
-		change := changeJSON{Action: string(c.Action), ID: c.ID, Type: c.Type, Drift: c.Drift, Resume: c.Resume, Gone: c.Gone}
+		change := changeJSON{Action: string(c.Action), ID: c.ID, Type: c.Type, Drift: c.Drift, Resume: c.Resume, Gone: c.Gone, Forces: c.Forces, Retained: c.Retained}
 		if c.Action == engine.Update || c.Action == engine.Replace || c.Action == engine.Adopt {
 			for _, d := range fieldDiffs(c) {
 				if d.field == engine.SecretChanged {
@@ -312,26 +404,37 @@ func shownInput(v any) any {
 
 // describeChange says how an input changes: before and after for short values, less for the rest.
 func describeChange(before, after any) string {
+	b, a, how, _ := describeValues(before, after)
+	if how != "" {
+		return how
+	}
+	return b + " → " + a
+}
+
+// describeValues writes an input before and after short, when both are, and says how it changes
+// otherwise. code is set for a function's code, written as the start of each sha256.
+func describeValues(before, after any) (b, a, how string, code bool) {
 	switch {
 	case engine.IsUnknown(after):
-		return "known after apply"
+		return "", "", "known after apply", false
 	case engine.IsSecret(after):
-		return "(a secret)"
+		return "", "", "(a secret)", false
 	}
 	if b, a := codeHash(before), codeHash(after); b != "" && a != "" {
-		return b + " → " + a
+		return b, a, "", true
 	}
-	b, a := short(before), short(after)
-	if b != "" && a != "" {
-		return b + " → " + a
+	if b, a := short(before), short(after); b != "" && a != "" {
+		return b, a, "", false
 	}
-	if before == nil {
-		return "added"
+	switch {
+	case before == nil:
+		how = "added"
+	case after == nil:
+		how = "removed"
+	default:
+		how = "changed"
 	}
-	if after == nil {
-		return "removed"
-	}
-	return "changed"
+	return "", "", how, false
 }
 
 // codeHash returns the start of the sha256 of a function's code input, or "".
@@ -360,6 +463,9 @@ func short(v any) string {
 	case float64, bool:
 		return fmt.Sprint(x)
 	case map[string]any:
+		if _, own := x[ownMarker]; own {
+			return ownValue(x)
+		}
 		if len(x) > 4 {
 			return ""
 		}
@@ -371,6 +477,15 @@ func short(v any) string {
 	default:
 		return ""
 	}
+}
+
+// ownValue writes one of koldstart's own values in parentheses, by what it stands for, as
+// (secret ssm:/orders/key) or (output orders/prod.url), so it does not read as a string.
+func ownValue(v map[string]any) string {
+	if engine.IsSecret(v) {
+		return "(secret " + engine.Describe(v) + ")"
+	}
+	return "(" + engine.Describe(v) + ")"
 }
 
 // pastTenses say what each action did, for progress.
