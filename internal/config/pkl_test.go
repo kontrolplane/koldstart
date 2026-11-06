@@ -28,8 +28,9 @@ func evaluator(t *testing.T) pkl.Evaluator {
 	return pkl.Evaluator{Binary: binary}
 }
 
-// TestSchema evaluates the example project against the schema, for two stages, and checks the
-// json decodes, unknown fields refused, into what the file says.
+// TestSchema evaluates the example project against the schema, in its pkl project, whose
+// koldstart dependency is pkl/ as a local one, for two stages, and checks the json decodes,
+// unknown fields refused, into what the file says.
 func TestSchema(t *testing.T) {
 	ev := evaluator(t)
 	path := filepath.Join("testdata", "orders", "koldstart.pkl")

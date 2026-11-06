@@ -30,14 +30,12 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 
 	"github.com/kontrolplane/koldstart/internal/state"
-	schema "github.com/kontrolplane/koldstart/pkl"
 )
 
-// The example the tests deploy, the app it is, and the schema version it amends.
+// The example the tests deploy, and the app it is.
 const (
 	example = "../../examples/full-featured"
 	app     = "shop"
-	version = "0.1.0"
 )
 
 // stalePrefix starts the stages the tests deploy, and staleAfter is when the sweep removes one
@@ -80,7 +78,7 @@ func newProject(t *testing.T, stage string) *project {
 	}
 	tmp := t.TempDir()
 	p := &project{t: t, dir: filepath.Join(tmp, "shop"), kdst: filepath.Join(tmp, "kdst"), stage: stage, cfg: cfg}
-	run(t, "../..", "go", "build", "-o", p.kdst, "./cmd/koldstart")
+	run(t, "../..", "go", "build", "-ldflags", "-X github.com/kontrolplane/koldstart/internal/version.buildVersion=dev", "-o", p.kdst, "./cmd/koldstart")
 	copyDir(t, example, p.dir)
 	run(t, p.dir, "npm", "ci", "--no-audit", "--no-fund")
 	p.useLocalSchema()
@@ -88,24 +86,14 @@ func newProject(t *testing.T, stage string) *project {
 	return p
 }
 
-// useLocalSchema points the example at the schema of this tree, which is what a release of it
-// would package.
+// useLocalSchema points the example's PklProject at the schema of this tree, which is what a
+// release of it would package, with kdst upgrade: as a dev build, kdst depends on the schema it
+// embeds, extracted into its cache.
 func (p *project) useLocalSchema() {
-	path := filepath.Join(p.dir, "koldstart.pkl")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		p.t.Fatal(err)
+	out := run(p.t, p.dir, p.kdst, "upgrade")
+	if !strings.Contains(out, "→ dev (") {
+		p.t.Fatalf("kdst upgrade did not point the example at its own schema:\n%s", out)
 	}
-	text := string(data)
-	for _, module := range []string{schema.Project, schema.Kdst} {
-		src, err := fs.ReadFile(schema.Files, module)
-		if err != nil {
-			p.t.Fatal(err)
-		}
-		write(p.t, filepath.Join(p.dir, ".schema", module), string(src))
-		text = strings.ReplaceAll(text, schema.PackageURI(version, module), ".schema/"+module)
-	}
-	write(p.t, path, text)
 }
 
 // kdstRun runs kdst on the stage, and returns what it wrote. It fails the test when kdst fails.

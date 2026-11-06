@@ -16,6 +16,8 @@ A shop's orders, in [koldstart.pkl](./koldstart.pkl): an http api in typescript 
 
 The worker is a go module of its own, [go.mod](./go.mod), with its `toolchain` pinned so every machine builds the same zip. The typescript is bundled by koldstart, with the aws sdk from `node_modules`.
 
+[PklProject](./PklProject) names the schema, the package of koldstart 0.1.0, which `koldstart.pkl` imports as `@koldstart/`. Its lock file, `PklProject.deps.json`, holds the package's checksum, so it can only be written once 0.1.0 is published: until then it is not here, and the first `kdst plan` with a release writes it, to be committed. [examples_test.go](../examples_test.go) evaluates the example against the schema in this tree, `pkl/`, so it needs neither the package nor the lock file.
+
 ## deploying it
 
 ```bash
