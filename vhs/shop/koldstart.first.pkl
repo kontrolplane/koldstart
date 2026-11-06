@@ -1,0 +1,19 @@
+// The shop as it was first deployed, before orders could be placed, so the history of dev has a
+// deploy before the one koldstart.pkl makes.
+amends "koldstart.pkl"
+
+import "../../pkl/kdst.pkl"
+
+functions {
+  ["api"] {
+    memory = 128
+    events = new {
+      new kdst.HttpRoute { method = "GET"; path = "/products" }
+      new kdst.HttpRoute { method = "GET"; path = "/orders/{id}" }
+    }
+  }
+}
+
+outputs {
+  ["features"] = #"{"checkout":false,"reviews":false,"currencies":["EUR"]}"#
+}

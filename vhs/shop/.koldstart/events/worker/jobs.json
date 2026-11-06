@@ -1,0 +1,6 @@
+{
+  "Records": [
+    { "messageId": "4f1c2a9e", "body": "{\"order\":\"ord_7291\",\"kind\":\"fulfil\"}" },
+    { "messageId": "7b3d81c0", "body": "{\"order\":\"ord_7292\",\"kind\":\"refund\"}" }
+  ]
+}

@@ -1,0 +1,77 @@
+// The shop make vhs deploys to floci, for the recording of kdst ui in the README. It amends the
+// schema in this tree, as there is no release to download it from yet. Floci's cloud control
+// returns no Arn, so nothing links a resource or refers to its Arn: the worker names its queue by
+// the arn floci gives it, in floci's account.
+amends "../../pkl/Project.pkl"
+
+import "../../pkl/kdst.pkl"
+
+app = "shop"
+region = "eu-west-1"
+
+tags {
+  ["team"] = "checkout"
+}
+
+functions {
+  ["api"] {
+    runtime = "nodejs22.x"
+    handler = "src/api.handler"
+    memory = if (kdst.stage == "prod") 1024 else 256
+    timeout = 10.s
+    environment {
+      ["ORDERS_TABLE"] = kdst.ref("orders", "TableName")
+      ["CURRENCY"] = "EUR"
+    }
+    events {
+      new kdst.HttpRoute { method = "GET"; path = "/products" }
+      new kdst.HttpRoute { method = "GET"; path = "/orders/{id}" }
+      new kdst.HttpRoute { method = "POST"; path = "/orders" }
+    }
+  }
+  ["worker"] {
+    runtime = "nodejs22.x"
+    handler = "src/worker.handler"
+    timeout = 30.s
+    environment {
+      ["ORDERS_TABLE"] = kdst.ref("orders", "TableName")
+    }
+    events {
+      new kdst.Queue { queue = "arn:aws:sqs:eu-west-1:000000000000:shop-\(kdst.stage)-jobs"; batchSize = 10 }
+    }
+  }
+  ["report"] {
+    runtime = "nodejs22.x"
+    handler = "src/report.handler"
+    memory = 512
+    timeout = 1.min
+    events {
+      new kdst.Schedule { expression = "cron(0 7 * * ? *)"; enabled = kdst.stage == "prod" }
+    }
+  }
+}
+
+resources {
+  ["orders"] {
+    type = "AWS::DynamoDB::Table"
+    properties {
+      TableName = "shop-\(kdst.stage)-orders"
+      BillingMode = "PAY_PER_REQUEST"
+      AttributeDefinitions { new { AttributeName = "id"; AttributeType = "S" } }
+      KeySchema { new { AttributeName = "id"; KeyType = "HASH" } }
+    }
+  }
+  ["jobs"] {
+    type = "AWS::SQS::Queue"
+    properties {
+      QueueName = "shop-\(kdst.stage)-jobs"
+      VisibilityTimeout = 60
+    }
+  }
+}
+
+outputs {
+  ["ordersTable"] = kdst.ref("orders", "TableName")
+  ["docs"] = "https://github.com/kontrolplane/koldstart/tree/main/vhs/shop"
+  ["features"] = #"{"checkout":true,"reviews":false,"currencies":["EUR","GBP","USD"],"limits":{"basket":50,"perMinute":120}}"#
+}

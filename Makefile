@@ -12,7 +12,7 @@ govulncheck   := go run golang.org/x/vuln/cmd/govulncheck@v1.9.0
 actionlint    := go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 goreleaser    := go run github.com/goreleaser/goreleaser/v2@v2.20.0
 
-.PHONY: check test lint vuln build image snapshot schema emulator emulator-down test-emulator
+.PHONY: check test lint vuln build image snapshot schema emulator emulator-down test-emulator vhs
 
 # Everything ci checks.
 check: lint vuln test
@@ -63,3 +63,12 @@ emulator-down:
 # The tests that talk to aws, against floci. Start it with make emulator first.
 test-emulator:
 	KOLDSTART_TEST_ENDPOINT=http://127.0.0.1:4566 go test -race -count=1 -run Emulator ./...
+
+# The recording of kdst ui in the README, assets/cassette.gif and the screenshots in
+# assets/pages/, made with vhs, ffmpeg and ttyd. It deploys the shop in vhs/shop to a floci of its
+# own on 127.0.0.1:4567, which it starts afresh and removes again, so make emulator's is left alone.
+vhs: build
+	docker compose -f vhs/docker-compose.yaml down
+	docker compose -f vhs/docker-compose.yaml up --detach --wait
+	vhs/seed.sh
+	vhs vhs/cassette.tape; status=$$?; docker compose -f vhs/docker-compose.yaml down; exit $$status
