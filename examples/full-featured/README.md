@@ -4,10 +4,11 @@ A shop's orders, in [koldstart.pkl](./koldstart.pkl): an http api in typescript 
 
 | what                  | where                                                       |
 | --------------------- | ----------------------------------------------------------- |
-| http routes           | `api`: `GET /orders/{id}` and `POST /orders`                |
-| a queue               | `worker` reads `jobs`, retrying only the orders that failed |
+| defaults              | `functions { default { ... } }`: memory and log retention of every function |
+| http routes           | `api`: `kdst.get("/orders/{id}")` and `kdst.post("/orders")` |
+| a queue               | `worker` reads `jobs`, `kdst.fromQueue("jobs")`, retrying only the orders that failed |
 | a schedule            | `report`, every hour, enabled in `prod`                     |
-| a table and a queue   | `resources`, through cloud control                          |
+| a table and a queue   | `kdst.table("id")` and `kdst.queue()` in `resources`, through cloud control |
 | `link`                | the access and the variables, such as `ORDERS_NAME`         |
 | a secret              | `API_KEY`, `kdst.param("api-key")`: `/shop/<stage>/api-key` |
 | a stage of its own    | `memory` is larger in `prod`                                |
@@ -15,6 +16,8 @@ A shop's orders, in [koldstart.pkl](./koldstart.pkl): an http api in typescript 
 | events to invoke with | [.koldstart/events](./.koldstart/events), for `kdst ui`     |
 
 The worker is a go module of its own, [go.mod](./go.mod), with its `toolchain` pinned so every machine builds the same zip. The typescript is bundled by koldstart, with the aws sdk from `node_modules`.
+
+[PklProject](./PklProject) names the schema, the package of koldstart 0.1.0, which `koldstart.pkl` imports as `@koldstart/`. Its lock file, `PklProject.deps.json`, holds the package's checksum, so it can only be written once 0.1.0 is published: until then it is not here, and the first `kdst plan` with a release writes it, to be committed. [examples_test.go](../examples_test.go) evaluates the example against the schema in this tree, `pkl/`, so it needs neither the package nor the lock file.
 
 ## deploying it
 

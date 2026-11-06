@@ -1,0 +1,2 @@
+not needed in koldstart:
+  custom: each ${self:custom...} got its value where it was used: rate

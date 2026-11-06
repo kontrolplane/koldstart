@@ -1,5 +1,6 @@
 // Package scaffold writes a new project: a koldstart.pkl with one function behind an http route,
-// its handler in typescript, go or python, and the entries koldstart needs in .gitignore.
+// the PklProject that names its schema, its handler in typescript, go or python, and the entries
+// koldstart needs in .gitignore.
 package scaffold
 
 import (
@@ -45,8 +46,8 @@ type Options struct {
 	App      string
 	Region   string
 	Template string
-	// Version is the koldstart whose schema package the configuration amends.
-	Version string
+	// Dependency is the schema the PklProject names, which the configuration amends.
+	Dependency schema.Dependency
 	// Force writes over a koldstart.pkl that is there.
 	Force bool
 }
@@ -79,7 +80,8 @@ func AppName(dir string) string {
 }
 
 // Write writes the template into the directory. Files that are there already are kept, but for
-// koldstart.pkl, which is refused unless o.Force is set.
+// koldstart.pkl, which is refused unless o.Force is set. A PklProject that is there gets the
+// koldstart dependency when it has none.
 func Write(o Options) (Result, error) {
 	if !slices.Contains(Templates, o.Template) {
 		return Result{}, fmt.Errorf("no template %q: want %s or %s", o.Template, strings.Join(Templates[:len(Templates)-1], ", "), Templates[len(Templates)-1])
@@ -90,12 +92,7 @@ func Write(o Options) (Result, error) {
 	if _, err := os.Stat(filepath.Join(o.Dir, Config)); err == nil && !o.Force {
 		return Result{}, fmt.Errorf("%s is there already: pass --force to write over it", Config)
 	}
-	vars := map[string]string{
-		"App":     o.App,
-		"Region":  o.Region,
-		"Project": schema.PackageURI(o.Version, schema.Project),
-		"Kdst":    schema.PackageURI(o.Version, schema.Kdst),
-	}
+	vars := map[string]string{"App": o.App, "Region": o.Region}
 	root := "templates/" + o.Template
 	var res Result
 	err := fs.WalkDir(files, root, func(name string, d fs.DirEntry, err error) error {
@@ -120,6 +117,15 @@ func Write(o Options) (Result, error) {
 	})
 	if err != nil {
 		return Result{}, err
+	}
+	written, err := schema.WriteProject(o.Dir, o.Dependency)
+	if err != nil {
+		return Result{}, err
+	}
+	if written {
+		res.Written = append(res.Written, schema.Package)
+	} else {
+		res.Kept = append(res.Kept, schema.Package)
 	}
 	res.Gitignore, err = ignore(filepath.Join(o.Dir, ".gitignore"))
 	return res, err

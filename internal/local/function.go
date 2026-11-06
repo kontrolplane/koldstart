@@ -105,11 +105,15 @@ func (l Runner) dir(f Function) string {
 }
 
 // Runtime returns the runtime api and process for f, built with Build first. It warns when the
-// node on this machine is not the one the function runs on in lambda.
+// node on this machine is not the one the function runs on in lambda, and when the function has
+// layers, which are not here.
 //
 //nolint:gosec // runs the user's own function
 func (l Runner) Runtime(f Function) (*Runtime, error) {
 	dir := l.dir(f)
+	if note := layersMissing(len(f.Config.Layers)); note != "" {
+		_, _ = fmt.Fprintln(f.Output, note)
+	}
 	var command func(addr string) *exec.Cmd
 	switch {
 	case f.Config.IsNode():
@@ -290,6 +294,18 @@ func (l Runner) env(f Function, dir, addr string) []string {
 }
 
 var nodeMajor = regexp.MustCompile(`^v(\d+)\.`)
+
+// layersMissing warns that a function's layers are not added when it runs here, so what they put
+// under /opt, packages or files, is missing; none for a function without layers.
+func layersMissing(n int) string {
+	switch n {
+	case 0:
+		return ""
+	case 1:
+		return "note: the function's layer is not added here: what it puts under /opt is missing"
+	}
+	return fmt.Sprintf("note: the function's %d layers are not added here: what they put under /opt is missing", n)
+}
 
 // nodeMismatch warns when the node at path is another major version than the runtime runs.
 //

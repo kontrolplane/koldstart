@@ -1,15 +1,28 @@
 /// A koldstart project: the functions of an app, what invokes them, and the resources they use.
 ///
 /// A `koldstart.pkl` amends this module, and imports `kdst.pkl` for `ref()`, the secrets, the
-/// stage and the events:
+/// stage and the events, from the koldstart dependency of the `PklProject` beside it:
 ///
 /// ```
-/// amends "package://github.com/kontrolplane/koldstart/releases/download/v0.1.0/koldstart@0.1.0#/Project.pkl"
-/// import "package://github.com/kontrolplane/koldstart/releases/download/v0.1.0/koldstart@0.1.0#/kdst.pkl"
+/// amends "@koldstart/Project.pkl"
+/// import "@koldstart/kdst.pkl"
+/// ```
+///
+/// The `PklProject` names the package of a release once, and `kdst upgrade` moves it to another:
+///
+/// ```
+/// amends "pkl:Project"
+///
+/// dependencies {
+///   ["koldstart"] { uri = "package://github.com/kontrolplane/koldstart/releases/download/v0.1.0/koldstart@0.1.0" }
+/// }
 /// ```
 module koldstart.Project
 
-/// The version of this schema. koldstart refuses a file with a newer one than it reads.
+/// The version of this schema. koldstart refuses a file with a newer one than it reads. It goes
+/// up with `config.SchemaVersion` when what this module renders changes in a way an older
+/// koldstart cannot read: a new field it must act on, or a changed shape. Something an older one
+/// may safely ignore does not count.
 fixed schemaVersion: Int = 1
 
 /// The name of the application, in the name of everything deployed and in its state.
@@ -243,7 +256,9 @@ class Throttling {
   burst: Int(isPositive)
 }
 
-class Resource {
+/// Another aws resource. `kdst.table()`, `kdst.queue()`, `kdst.bucket()` and `kdst.topic()` give
+/// one with its type and properties filled in, which amends as one written out does.
+open class Resource {
   /// The CloudFormation type name, such as `AWS::DynamoDB::Table`.
   type: String(matches(Regex(#"AWS::[A-Za-z0-9]+::[A-Za-z0-9]+"#)))
   /// The properties CloudFormation documents for the type.

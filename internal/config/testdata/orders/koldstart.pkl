@@ -1,6 +1,6 @@
-amends "../../../../pkl/Project.pkl"
+amends "@koldstart/Project.pkl"
 
-import "../../../../pkl/kdst.pkl"
+import "@koldstart/kdst.pkl"
 
 app = "orders"
 region = "eu-west-1"

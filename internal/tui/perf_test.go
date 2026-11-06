@@ -487,7 +487,9 @@ func TestPerfCachesFollowThePalette(t *testing.T) {
 				m := pages[name]
 				before := m.render()
 				themeUse(t, tt.dark, false, tt.profile)
-				got, want := m.render(), perfFresh(m).render()
+				got := themeSeconds.ReplaceAllString(m.render(), "Ns ago")
+				want := themeSeconds.ReplaceAllString(perfFresh(m).render(), "Ns ago")
+				before = themeSeconds.ReplaceAllString(before, "Ns ago")
 				switch {
 				case got == before && tt.profile != colorprofile.NoTTY:
 					t.Errorf("%s draws alike in both palettes, so the check checks nothing", name)

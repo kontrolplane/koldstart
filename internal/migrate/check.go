@@ -12,8 +12,8 @@ import (
 // Check evaluates a converted koldstart.pkl for stage, against the schema built into koldstart,
 // so it needs no released package. It returns pkl's report when the file does not evaluate; what
 // a deploy would refuse in a file that does comes back as todos to fix.
-func Check(ctx context.Context, ev config.Evaluator, source, version, stage string) ([]Todo, error) {
-	path, cleanup, err := schema.Local([]byte(source), version)
+func Check(ctx context.Context, ev config.Evaluator, source, stage string) ([]Todo, error) {
+	path, cleanup, err := schema.Local([]byte(source))
 	if err != nil {
 		return nil, err
 	}

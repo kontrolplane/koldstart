@@ -10,17 +10,25 @@ kdst migrate path/to/serverless.yml --out koldstart.pkl
 Without a path, it reads `./serverless.yml`. It does not write over a `koldstart.pkl` that is there, unless you pass `--force`, and `--out` writes it elsewhere. It ends with the `plan` to run next, with the `--stage` that `provider.stage` names:
 
 ```text
-wrote koldstart.pkl; left to you:
+wrote PklProject, with the schema of koldstart 0.1.0
+resolved it into PklProject.deps.json
+wrote koldstart.pkl, with 6 things left to you
 
-  provider.stage: koldstart deploys to dev by default: pass --stage prod, or set KOLDSTART_STAGE
-  functions.api.permissions: the statements of provider.iam are on every function: narrow them
+works differently, to check:
+  provider.stage: deploy with --stage prod, or set KOLDSTART_STAGE=prod: koldstart deploys to dev by default
+  provider.runtime: runs on nodejs22.x now, as koldstart does not build nodejs20.x: test it there
+  provider.iam.role.statements: every function got these statements: keep in each what it needs, or use link
+
+not needed in koldstart:
+  custom: each ${self:custom...} got its value where it was used: tableName
+  plugins.serverless-esbuild: koldstart bundles typescript with esbuild itself
   plugins.serverless-offline: kdst offline serves the http routes on this machine
-
-the TODO comments in koldstart.pkl say where each one belongs
 
 next:
   kdst plan --stage prod
 ```
+
+The `koldstart.pkl` imports the schema as `@koldstart/`, and the `PklProject` beside it names the schema package of the koldstart you run, as `kdst init` writes it, resolved into `PklProject.deps.json`; commit both. A `PklProject` that is there already is kept, with the koldstart dependency added when it has none. When it cannot be resolved, offline for one, migrate says so and keeps the files, and the `plan` resolves it first. [configuration](./configuration.md#pklproject) has the rest.
 
 koldstart does not read `serverless.yml` itself, and does not run serverless framework plugins. The conversion is done once, and the pkl file is what you keep.
 
@@ -43,17 +51,18 @@ koldstart does not read `serverless.yml` itself, and does not run serverless fra
 | python runtimes, and a handler such as `src.handler.main`   | `python3.12` or `python3.13`, older ones as `python3.12`, and `src/handler.main` |
 | `functions.<name>.layers`                                   | `layers`, by their arns                                              |
 | `functions.<name>.image` of `provider.ecr.images`           | `image { context; dockerfile; buildArgs; command }`                  |
-| `events: httpApi`                                           | `kdst.HttpRoute`, `*` as `$default`, with its authorizer and scopes   |
-| `events: http`                                              | `kdst.HttpRoute` on the http api, with a note                         |
-| `events: schedule`                                          | `kdst.Schedule`, one for each rate, with `enabled` and `input`        |
-| `events: sqs`                                               | `kdst.Queue`                                                         |
-| `events: stream`                                            | `kdst.Stream`                                                        |
-| `events: sns`                                               | `kdst.Topic`; a topic given by name becomes a resource, as the serverless framework made it |
-| `events: s3`                                                | `kdst.Bucket`; a bucket that is not `existing` becomes a resource     |
+| `events: httpApi`                                           | `kdst.get("/path")` and the other methods' helpers, `*` as `kdst.any("$default")`, amended with its authorizer and scopes |
+| `events: http`                                              | the same, on the http api, with a note                               |
+| `events: schedule`                                          | `kdst.schedule("rate(...)")`, one for each rate, amended with `enabled` and `input` |
+| `events: sqs`                                               | `kdst.fromQueue()`, of a queue of `resources` by its name or of an arn; `kdst.Queue` for any other value |
+| `events: stream`                                            | `kdst.fromStream()` or `kdst.fromTableStream()`, the same way; `kdst.Stream` for any other value |
+| `events: sns`                                               | `kdst.fromTopic()`, the same way; a topic given by name becomes a resource, as the serverless framework made it |
+| `events: s3`                                                | `kdst.fromBucket()` of a bucket that is not `existing`, which becomes a resource; `kdst.Bucket` of one that is |
 | `events: eventBridge` with a `pattern`                      | `kdst.EventRule`, with `eventBus`, `input` and `enabled`             |
-| `events: websocket`, and `websocketsApiRouteSelectionExpression` | `kdst.WebSocketRoute`, and `websocket.routeSelection`          |
+| `events: websocket`, and `websocketsApiRouteSelectionExpression` | `kdst.fromWebSocket()`, and `websocket.routeSelection`         |
 | `events: alb`                                               | `kdst.LoadBalancer`, with its path, host and method conditions       |
 | `resources.Resources`                                       | `resources`, the same type and properties, and `DeletionPolicy`       |
+| a table, queue, bucket or topic with what its shorthand sets | `kdst.table()`, `kdst.queue()`, `kdst.bucket()` or `kdst.topic()`, amended with the other properties; written out in full when any of what the shorthand sets differs |
 | `resources.Outputs`                                         | `outputs`                                                            |
 | `Ref`, `!Ref`                                               | `kdst.ref(<name>, "Identifier")`, or `"FunctionName"` for a function  |
 | `Fn::GetAtt`, `!GetAtt`                                     | `kdst.ref(<name>, <attribute>)`                                      |
@@ -91,7 +100,7 @@ A variable inside a longer string becomes pkl interpolation: `orders-${sls:stage
 - `custom` and `plugins`. What refers to `custom` gets its value. Some plugins are no longer needed: koldstart bundles typescript itself, so `serverless-esbuild` and `serverless-plugin-typescript` can go, `serverless-offline` is `kdst offline`, and every function has its own role already.
 - runtimes other than node, go and python, which koldstart does not deploy: those functions are left out; and a function of a prebuilt image, given by its uri, which koldstart does not take, as it builds images itself.
 - `layers` that `serverless.yml` builds, which koldstart does not build: publish them, and give functions their arns. A go function's layers, which go functions do not take.
-- events other than the ones above, such as `cognitoUserPool`, `iot` and `cloudwatchLog`; an `eventBridge` event of a schedule, which is `kdst.Schedule`, and its `inputPath`, `inputTransformer` and `retryPolicy`; the header, query and ip conditions of an `alb` event; a websocket route's authorizer.
+- events other than the ones above, such as `cognitoUserPool`, `iot` and `cloudwatchLog`; an `eventBridge` event of a schedule, which is `kdst.schedule()`, and its `inputPath`, `inputTransformer` and `retryPolicy`; the header, query and ip conditions of an `alb` event; a websocket route's authorizer.
 - resources of a `Custom::` type, and `DependsOn`, `Condition` and the other attributes of a resource besides `DeletionPolicy`.
 
 ## moving a stage that is already deployed

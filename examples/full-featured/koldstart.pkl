@@ -1,6 +1,6 @@
-amends "package://github.com/kontrolplane/koldstart/releases/download/v0.1.0/koldstart@0.1.0#/Project.pkl"
+amends "@koldstart/Project.pkl"
 
-import "package://github.com/kontrolplane/koldstart/releases/download/v0.1.0/koldstart@0.1.0#/kdst.pkl"
+import "@koldstart/kdst.pkl"
 
 app = "shop"
 region = "eu-west-1"
@@ -10,6 +10,12 @@ tags {
 }
 
 functions {
+  // what every function gets, unless it sets its own
+  default {
+    memory = 512
+    logRetention = 14
+  }
+
   ["api"] {
     memory = if (kdst.stage == "prod") 1024 else 256
     timeout = 10.s
@@ -22,8 +28,8 @@ functions {
       ["jobs"] = "readwrite"
     }
     events {
-      new kdst.HttpRoute { method = "GET"; path = "/orders/{id}" }
-      new kdst.HttpRoute { method = "POST"; path = "/orders" }
+      kdst.get("/orders/{id}")
+      kdst.post("/orders")
     }
   }
 
@@ -33,7 +39,7 @@ functions {
       ["orders"] = "readwrite"
     }
     events {
-      new kdst.Queue { queue = kdst.ref("jobs", "Arn"); batchSize = 10 }
+      kdst.fromQueue("jobs")
     }
   }
 
@@ -42,23 +48,15 @@ functions {
       ["orders"] = "read"
     }
     events {
-      new kdst.Schedule { expression = "rate(1 hour)"; enabled = kdst.stage == "prod" }
+      (kdst.schedule("rate(1 hour)")) { enabled = kdst.stage == "prod" }
     }
   }
 }
 
 resources {
-  ["orders"] {
-    type = "AWS::DynamoDB::Table"
-    properties {
-      BillingMode = "PAY_PER_REQUEST"
-      AttributeDefinitions { new { AttributeName = "id"; AttributeType = "S" } }
-      KeySchema { new { AttributeName = "id"; KeyType = "HASH" } }
-    }
-  }
+  ["orders"] = kdst.table("id")
 
-  ["jobs"] {
-    type = "AWS::SQS::Queue"
+  ["jobs"] = (kdst.queue()) {
     properties {
       VisibilityTimeout = 60
     }

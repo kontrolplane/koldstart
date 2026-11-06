@@ -1,11 +1,11 @@
 # configuration
 
-A koldstart project is one [pkl](https://pkl-lang.org/) file, `koldstart.pkl` by default. It amends `Project.pkl`, the shape of the configuration, and imports `kdst.pkl`, which holds what goes inside functions and resources: the stage, `ref()`, the secrets, the events and the authorizers.
+A koldstart project is one [pkl](https://pkl-lang.org/) file, `koldstart.pkl` by default. It amends `Project.pkl`, the shape of the configuration, and imports `kdst.pkl`, which holds what goes inside functions and resources: the stage, `ref()`, the secrets, the events and their helpers, the resource shorthands and the authorizers.
 
 ```pkl
-amends "package://github.com/kontrolplane/koldstart/releases/download/v0.1.0/koldstart@0.1.0#/Project.pkl"
+amends "@koldstart/Project.pkl"
 
-import "package://github.com/kontrolplane/koldstart/releases/download/v0.1.0/koldstart@0.1.0#/kdst.pkl"
+import "@koldstart/kdst.pkl"
 
 app = "orders"
 region = "eu-west-1"
@@ -13,7 +13,39 @@ region = "eu-west-1"
 
 Amending it gives you type checking, defaults and completion in any editor with a pkl plugin. A mistake, such as a misspelled property or a memory size lambda does not offer, is reported with its line when the file is evaluated, before anything is built.
 
-The package is released with koldstart, under the same version. Its schema has a version of its own: a koldstart refuses a file written against a newer schema than it reads, and says to upgrade.
+## PklProject
+
+`@koldstart/` is the koldstart dependency of the pkl project the file is in: the `PklProject` beside it, or the nearest one above it, as in a repository with one project for several services. `kdst init` and `kdst migrate` write it:
+
+```pkl
+amends "pkl:Project"
+
+dependencies {
+  ["koldstart"] { uri = "package://github.com/kontrolplane/koldstart/releases/download/v0.1.0/koldstart@0.1.0" }
+}
+```
+
+The schema package is released with koldstart, under the same version, on its GitHub release: the metadata at the package uri, and the zip it names. pkl resolves the `PklProject` into `PklProject.deps.json`, which pins the package by its checksum and is committed with it. koldstart resolves it before it evaluates the file when the lock file is missing or older than the `PklProject`, and says so on stderr; that downloads the package's metadata, and evaluating downloads the package, into pkl's cache, `~/.pkl/cache`.
+
+A version that is not released, or a machine that is offline, stops there with an error that says which. `kdst upgrade` sets the dependency to the version of the koldstart you run, and resolves it again: see [upgrading](../README.md#upgrading).
+
+### local and released schema
+
+A release of koldstart writes the package uri of its own version. A build from source, `go install` or `make build` without a release tag, has no release to point at, so it writes a local dependency on the schema built into it instead:
+
+```pkl
+dependencies {
+  ["koldstart"] = import("/home/you/.cache/koldstart/schema/9bd5ddef938b4d34/PklProject")
+}
+```
+
+It extracts `Project.pkl`, `kdst.pkl` and their `PklProject` into `$XDG_CACHE_HOME/koldstart/schema/`, or `~/.cache/koldstart/schema/`, under a hash of the files, so a build with another schema gets a directory of its own. Resolving it downloads nothing. The path is of this machine: a project to share depends on a release.
+
+A file without a `PklProject` that amends the full uri, `package://github.com/kontrolplane/koldstart/releases/download/v0.1.0/koldstart@0.1.0#/Project.pkl`, still evaluates, with no project. `@koldstart/` without a `PklProject`, or with one that has no koldstart dependency, is refused, and the error says to run `kdst upgrade`, which writes or completes it.
+
+### schema version
+
+The schema has a version of its own, `schemaVersion`, which `Project.pkl` renders: a koldstart refuses a file written against a newer schema than it reads, and says to upgrade. It goes up only when what the schema renders changes in a way an older koldstart cannot read, such as a new field it must act on; something an older one may ignore leaves it as it is.
 
 ## project
 
@@ -64,6 +96,21 @@ functions {
 | `typecheck`           | `false`   | for typescript: run `tsc --noEmit` before bundling, which needs node and typescript installed       |
 
 Each function gets a role and a log group of its own. The role may write to the log group, and has what `link`, `permissions`, its events and its runtime secrets add.
+
+`default`, pkl's default of a mapping, holds what every function gets:
+
+```pkl
+functions {
+  default {
+    memory = 256
+    logRetention = 14
+  }
+  ["api"] {}
+  ["worker"] { memory = 1024 }
+}
+```
+
+A function that sets a property itself keeps its own value, as `worker` does with `memory`.
 
 ### conventions
 
@@ -148,7 +195,35 @@ url = new { auth = "iam" }
 
 ## events
 
-Events are added to a function's `events`, using the classes in `kdst.pkl`.
+Events are added to a function's `events`, with the helpers of `kdst.pkl`:
+
+```pkl
+events {
+  kdst.get("/orders/{id}")
+  (kdst.post("/orders")) { authorizer = "users" }
+  kdst.schedule("rate(5 minutes)")
+  (kdst.fromQueue("jobs")) { batchSize = 5 }
+  kdst.fromTopic("alerts")
+  kdst.fromTableStream("orders")
+  (kdst.fromBucket("uploads")) { prefix = "incoming/" }
+  (kdst.fromEventBridge(new Dynamic { source { "orders.service" } })) { bus = "orders" }
+  kdst.fromWebSocket("$connect")
+}
+```
+
+| helper                                   | gives                                                                  |
+| ---------------------------------------- | ---------------------------------------------------------------------- |
+| `kdst.get(path)`, `post`, `put`, `patch`, `del`, `head`, `options`, `any` | an `HttpRoute` of that method; `del` as `delete` is a keyword of pkl |
+| `kdst.schedule(expression)`              | a `Schedule`                                                           |
+| `kdst.fromQueue(name or arn)`            | a `Queue`; a name is `kdst.ref(name, "Arn")`                            |
+| `kdst.fromTopic(name or arn)`            | a `Topic`; a name is `kdst.ref(name, "TopicArn")`                       |
+| `kdst.fromStream(name or arn)`           | a `Stream` of a kinesis stream; a name is `kdst.ref(name, "Arn")`       |
+| `kdst.fromTableStream(name or arn)`      | a `Stream` of a dynamodb table's stream; a name is `kdst.ref(name, "StreamArn")` |
+| `kdst.fromBucket(name or arn)`           | a `Bucket`; a name is `kdst.ref(name, "BucketName")`, and `arn:aws:s3:::<name>` any other bucket |
+| `kdst.fromEventBridge(pattern)`          | an `EventRule` on the default bus                                       |
+| `kdst.fromWebSocket(route)`              | a `WebSocketRoute`                                                      |
+
+A name is a resource of the project; anything that starts with `arn:`, or a value such as `kdst.stageOutput()`, is passed as it is. Each helper gives the event's class, so the rest of the class amends it, in parentheses. The classes are the long form, and the only one for a load balancer:
 
 ```pkl
 events {
@@ -213,6 +288,27 @@ A function with websocket routes may post to the connections of the api, and get
 
 Anything that is not a function goes in `resources`. A resource has a CloudFormation type name and the properties CloudFormation documents for it, and koldstart creates, updates and deletes it through the [cloud control api](https://docs.aws.amazon.com/cloudcontrolapi/latest/userguide/what-is-cloudcontrolapi.html), without a stack. The [resource type reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-template-resource-type-ref.html) lists the types and their properties. A type cloud control cannot create is refused before anything is planned.
 
+`kdst.pkl` has shorthands for the common ones:
+
+```pkl
+resources {
+  ["orders"] = kdst.table("id")
+  ["events"] = (kdst.table("customer")) { sortKey = "createdAt"; sortKeyType = "N" }
+  ["jobs"] = (kdst.queue()) { properties { VisibilityTimeout = 60 } }
+  ["uploads"] = (kdst.bucket()) { properties { VersioningConfiguration { Status = "Enabled" } } }
+  ["alerts"] = kdst.topic()
+}
+```
+
+| shorthand                 | type                   | properties                                                                  |
+| ------------------------- | ---------------------- | --------------------------------------------------------------------------- |
+| `kdst.table(partitionKey)` | `AWS::DynamoDB::Table` | on-demand billing, point-in-time recovery, the partition key a string; `sortKey`, `partitionKeyType` and `sortKeyType`, `S`, `N` or `B`, amend it |
+| `kdst.queue()`            | `AWS::SQS::Queue`      | messages kept 14 days, the most sqs allows, rather than 4                    |
+| `kdst.bucket()`           | `AWS::S3::Bucket`      | all public access blocked, objects encrypted with keys of s3 (`AES256`)      |
+| `kdst.topic()`            | `AWS::SNS::Topic`      | none                                                                        |
+
+A shorthand is a resource like any other: `properties { ... }` adds to its properties or changes one, `deletionPolicy` and the rest amend it, and `link` and `kdst.ref()` work on it as on one written out. To replace what it sets rather than add to it, such as a bucket's encryption with a kms key, assign it with `=`: `properties { BucketEncryption = new { ... } }`. The long form is the type and the properties:
+
 ```pkl
 resources {
   ["uploads"] {
@@ -241,10 +337,7 @@ A change to a property is sent as a patch of what changed. A change to a propert
 Resources that hold data are retained: `kdst remove` leaves them in place, and the next deploy of the stage takes them over again. They are tables, buckets, databases, file systems, streams, keys, secrets, user pools, repositories, caches and search domains. `deletionPolicy` decides for one resource:
 
 ```pkl
-["cache"] {
-  type = "AWS::DynamoDB::Table"
-  deletionPolicy = "delete"
-}
+["cache"] = (kdst.table("key")) { deletionPolicy = "delete" }
 ```
 
 A plan that would replace a retained resource stops, because the new one starts empty, and says which properties need a new one. `kdst plan --allow-replace` and `kdst deploy --allow-replace` replace it, and leave the old one in place; when the new one needs the old one's name, give it another.

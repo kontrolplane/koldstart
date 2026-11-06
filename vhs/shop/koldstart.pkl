@@ -1,0 +1,66 @@
+// The shop make vhs deploys to floci, for the recording of kdst ui in the README. It amends the
+// schema in this tree, as there is no release to download it from yet. Floci's cloud control
+// returns no Arn, so nothing links a resource or refers to its Arn: the worker names its queue by
+// the arn floci gives it, in floci's account.
+amends "../../pkl/Project.pkl"
+
+import "../../pkl/kdst.pkl"
+
+app = "shop"
+region = "eu-west-1"
+
+tags {
+  ["team"] = "checkout"
+}
+
+functions {
+  ["api"] {
+    memory = if (kdst.stage == "prod") 1024 else 256
+    timeout = 10.s
+    environment {
+      ["ORDERS_TABLE"] = kdst.ref("orders", "TableName")
+      ["CURRENCY"] = "EUR"
+    }
+    events {
+      kdst.get("/products")
+      kdst.get("/orders/{id}")
+      kdst.post("/orders")
+    }
+  }
+  ["worker"] {
+    timeout = 30.s
+    environment {
+      ["ORDERS_TABLE"] = kdst.ref("orders", "TableName")
+    }
+    events {
+      kdst.fromQueue("arn:aws:sqs:eu-west-1:000000000000:shop-\(kdst.stage)-jobs")
+    }
+  }
+  ["report"] {
+    memory = 512
+    timeout = 1.min
+    events {
+      (kdst.schedule("cron(0 7 * * ? *)")) { enabled = kdst.stage == "prod" }
+    }
+  }
+}
+
+resources {
+  ["orders"] = (kdst.table("id")) {
+    properties {
+      TableName = "shop-\(kdst.stage)-orders"
+    }
+  }
+  ["jobs"] = (kdst.queue()) {
+    properties {
+      QueueName = "shop-\(kdst.stage)-jobs"
+      VisibilityTimeout = 60
+    }
+  }
+}
+
+outputs {
+  ["ordersTable"] = kdst.ref("orders", "TableName")
+  ["docs"] = "https://github.com/kontrolplane/koldstart/tree/main/vhs/shop"
+  ["features"] = #"{"checkout":true,"reviews":false,"currencies":["EUR","GBP","USD"],"limits":{"basket":50,"perMinute":120}}"#
+}

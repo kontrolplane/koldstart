@@ -1,0 +1,126 @@
+service: ledger
+
+provider:
+  name: aws
+  runtime: nodejs22.x
+  region: eu-west-1
+
+functions:
+  api:
+    handler: src/api.handler
+    events:
+      - httpApi: DELETE /entries/{id}
+      - httpApi:
+          method: patch
+          path: /entries/{id}
+      - httpApi: OPTIONS /entries
+  worker:
+    handler: src/worker.handler
+    events:
+      - sqs:
+          arn: !GetAtt Inbox.Arn
+      - sqs: arn:aws:sqs:eu-west-1:123456789012:shared
+      - sqs:
+          arn: !Sub arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:other
+      - stream:
+          type: dynamodb
+          arn: !GetAtt Entries.StreamArn
+      - stream:
+          type: kinesis
+          arn:
+            Fn::GetAtt: [Clicks, Arn]
+      - sns:
+          arn: !Ref Audit
+      - schedule: ${self:custom.rate}
+
+custom:
+  rate: rate(10 minutes)
+
+resources:
+  Resources:
+    Entries:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Delete
+      Properties:
+        TableName: ledger-entries
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        StreamSpecification:
+          StreamViewType: NEW_IMAGE
+    Balances:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: account
+            AttributeType: N
+          - AttributeName: at
+            AttributeType: N
+        KeySchema:
+          - AttributeName: account
+            KeyType: HASH
+          - AttributeName: at
+            KeyType: RANGE
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+    Accounts:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: email
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: byEmail
+            KeySchema:
+              - AttributeName: email
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+    Inbox:
+      Type: AWS::SQS::Queue
+      Properties:
+        MessageRetentionPeriod: 1209600
+        VisibilityTimeout: 60
+    Outbox:
+      Type: AWS::SQS::Queue
+      Properties:
+        MessageRetentionPeriod: 345600
+    Statements:
+      Type: AWS::S3::Bucket
+      Properties:
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          BlockPublicPolicy: true
+          IgnorePublicAcls: true
+          RestrictPublicBuckets: true
+        BucketEncryption:
+          ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: AES256
+        VersioningConfiguration:
+          Status: Enabled
+    Exports:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ledger-exports
+    Audit:
+      Type: AWS::SNS::Topic
+    Clicks:
+      Type: AWS::Kinesis::Stream
+      Properties:
+        ShardCount: 1

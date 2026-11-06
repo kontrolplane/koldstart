@@ -167,6 +167,50 @@ func TestNodeRuntimeInAModuleProject(t *testing.T) {
 	}
 }
 
+// TestNodeSlowInit checks a function whose module takes longer to load than its timeout still
+// runs, as in lambda, where the init phase has a limit of its own and the timeout starts with the
+// event.
+func TestNodeSlowInit(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("no node on the PATH")
+	}
+	tests := []struct {
+		name   string
+		source string
+	}{
+		{name: "loads in 1.5s", source: "const until = Date.now() + 1500\nwhile (Date.now() < until) {}\nexport const handler = async () => ({ ok: true })\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			write(t, root, map[string]string{"src/api.ts": tt.source})
+			fn := config.Function{Runtime: config.RuntimeNode22, Handler: "src/api.handler", Memory: 128, Timeout: 1}
+			r, out := start(t, root, fn, nil)
+			payload, err := r.Invoke(context.Background(), []byte(`{}`))
+			if err != nil || string(payload) != `{"ok":true}` {
+				t.Fatalf("Invoke = %s, %v\n%s", payload, err, out)
+			}
+		})
+	}
+}
+
+// TestLayersMissing checks a function with layers is told they are not added when it runs here.
+func TestLayersMissing(t *testing.T) {
+	tests := []struct {
+		layers int
+		want   string
+	}{
+		{layers: 0, want: ""},
+		{layers: 1, want: "note: the function's layer is not added here: what it puts under /opt is missing"},
+		{layers: 3, want: "note: the function's 3 layers are not added here: what they put under /opt is missing"},
+	}
+	for _, tt := range tests {
+		if got := layersMissing(tt.layers); got != tt.want {
+			t.Errorf("layersMissing(%d) = %q, want %q", tt.layers, got, tt.want)
+		}
+	}
+}
+
 // TestNodeInitError checks a module that fails to load is reported as lambda reports it.
 func TestNodeInitError(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {

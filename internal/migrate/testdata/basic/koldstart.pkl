@@ -2,9 +2,9 @@
 // A TODO comment marks each thing it could not convert, or converted differently.
 // serverless.yml deployed to prod by default; koldstart deploys to dev: pass --stage prod.
 
-amends "package://github.com/kontrolplane/koldstart/releases/download/v0.1.0/koldstart@0.1.0#/Project.pkl"
+amends "@koldstart/Project.pkl"
 
-import "package://github.com/kontrolplane/koldstart/releases/download/v0.1.0/koldstart@0.1.0#/kdst.pkl"
+import "@koldstart/kdst.pkl"
 
 app = "orders"
 region = "eu-west-1"
@@ -41,14 +41,8 @@ functions {
       }
     }
     events {
-      new kdst.HttpRoute {
-        method = "GET"
-        path = "/orders/{id}"
-      }
-      new kdst.HttpRoute {
-        method = "POST"
-        path = "/orders"
-      }
+      kdst.get("/orders/{id}")
+      kdst.post("/orders")
     }
   }
   ["worker"] {
@@ -76,8 +70,7 @@ functions {
       }
     }
     events {
-      new kdst.Queue {
-        queue = kdst.ref("JobsQueue", "Arn")
+      (kdst.fromQueue("JobsQueue")) {
         batchSize = 10
         reportBatchItemFailures = true
       }

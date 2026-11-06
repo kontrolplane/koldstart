@@ -2,12 +2,80 @@ package cli
 
 import (
 	"bytes"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/kontrolplane/koldstart/internal/migrate"
+	"github.com/kontrolplane/koldstart/internal/pkl"
+	schema "github.com/kontrolplane/koldstart/pkl"
 )
+
+// TestMigrateWritesProject runs migrate as a dev build, and checks it writes a PklProject that
+// depends on the schema extracted into the cache and resolves it, adds the dependency to a
+// PklProject without one, and keeps one that has one.
+func TestMigrateWritesProject(t *testing.T) {
+	if _, err := exec.LookPath("pkl"); err != nil && os.Getenv(pkl.EnvBinary) == "" && os.Getenv("CI") == "" {
+		t.Skip("no pkl on the PATH")
+	}
+	elsewhere, err := schema.Extract(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept := elsewhere.PklProject()
+	tests := []struct {
+		name      string
+		existing  string
+		wantLocal bool
+		want      string
+		printed   string
+	}{
+		{name: "none", wantLocal: true, printed: "wrote PklProject, with the schema of koldstart dev ("},
+		{name: "without the dependency", existing: "amends \"pkl:Project\"\n", wantLocal: true, printed: "wrote PklProject"},
+		{name: "with it", existing: kept, want: kept, printed: "kept PklProject, which names the schema already"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			cache := t.TempDir()
+			t.Setenv("XDG_CACHE_HOME", cache)
+			files := map[string]string{"serverless.yml": "service: orders\nprovider:\n  name: aws\n  runtime: nodejs22.x\nfunctions:\n  api:\n    handler: src/api.handler\n"}
+			if tt.existing != "" {
+				files[pkl.ProjectFile] = tt.existing
+			}
+			for name, content := range files {
+				if err := os.WriteFile(name, []byte(content), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			root := Root(nameShort, nil)
+			var out bytes.Buffer
+			root.SetOut(&out)
+			root.SetArgs([]string{"migrate"})
+			if err := root.Execute(); err != nil {
+				t.Fatalf("migrate: %v\n%s", err, out.String())
+			}
+			got, _ := os.ReadFile(pkl.ProjectFile)
+			dep, err := schema.ReadDependency(string(got))
+			switch {
+			case err != nil:
+				t.Errorf("PklProject:\n%s\n%v", got, err)
+			case tt.wantLocal && (!dep.Local() || !strings.HasPrefix(dep.Dir, filepath.Join(cache, "koldstart", "schema"))):
+				t.Errorf("PklProject depends on %+v, want the schema in the cache", dep)
+			case !tt.wantLocal && string(got) != tt.want:
+				t.Errorf("PklProject =\n%s\nwant it kept as\n%s", got, tt.want)
+			}
+			if !strings.Contains(out.String(), tt.printed) {
+				t.Errorf("printed no %q:\n%s", tt.printed, out.String())
+			}
+			if _, err := os.Stat(pkl.DepsFile); err != nil || !strings.Contains(out.String(), "resolved it into PklProject.deps.json") {
+				t.Errorf("not resolved: %v\n%s", err, out.String())
+			}
+		})
+	}
+}
 
 // TestPrintMigration checks migrate says where it wrote, how many todos it left and what they are,
 // the ones to fix first, how many the file marks, and the plan to run next: in the file's

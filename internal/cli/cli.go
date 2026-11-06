@@ -47,6 +47,9 @@ type Options struct {
 	Debug   bool
 	// name is the name the binary was run as, for errors that say what to run.
 	name string
+	// notes is where loading the configuration says it resolves its PklProject first; stderr
+	// when nil.
+	notes io.Writer
 }
 
 // binary is the name the binary was run as, koldstart when it is not known.
@@ -150,7 +153,7 @@ works on a stage works on the one --stage names, dev without it.`, name),
 			root.AddCommand(cmd)
 		}
 	}
-	add(groupStart, initCommand(name, opts), migrateCommand(name))
+	add(groupStart, initCommand(name, opts), migrateCommand(name), upgradeCommand(name, opts))
 	add(groupDeploy, packageCommand(name, opts), planCommand(name, opts), deployCommand(name, opts),
 		importCommand(name, opts), removeCommand(name, opts), unlockCommand(name, opts))
 	add(groupWork, invokeCommand(name, opts), offlineCommand(name, opts), logsCommand(name, opts), outputsCommand(name, opts))

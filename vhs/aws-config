@@ -1,0 +1,7 @@
+# The aws profile of the floci make vhs starts, vhs/docker-compose.yaml. Use it with
+#   AWS_CONFIG_FILE=vhs/aws-config kdst --profile vhs ui
+[profile vhs]
+region = eu-west-1
+endpoint_url = http://127.0.0.1:4567
+aws_access_key_id = test
+aws_secret_access_key = test

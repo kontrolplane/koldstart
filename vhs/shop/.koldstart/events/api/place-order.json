@@ -1,0 +1,7 @@
+{
+  "version": "2.0",
+  "routeKey": "POST /orders",
+  "rawPath": "/orders",
+  "body": "{\"lines\":[{\"item\":\"tee\",\"quantity\":2},{\"item\":\"cap\",\"quantity\":1}]}",
+  "requestContext": { "http": { "method": "POST", "path": "/orders" } }
+}

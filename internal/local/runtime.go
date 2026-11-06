@@ -59,11 +59,15 @@ type Runtime struct {
 	initErr  *FunctionError
 }
 
+// initTimeout is how long a function may take to start and ask for its first event, the limit
+// lambda puts on its init phase. Its own timeout runs from when it is given the event.
+const initTimeout = 10 * time.Second
+
 type invocation struct {
-	id       string
-	payload  []byte
-	deadline time.Time
-	done     chan outcome
+	id      string
+	payload []byte
+	timeout time.Duration
+	done    chan outcome
 }
 
 type outcome struct {
@@ -176,20 +180,22 @@ func (r *Runtime) Invoke(ctx context.Context, payload []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	inv := &invocation{id: requestID(), payload: payload, deadline: time.Now().Add(r.Timeout), done: make(chan outcome, 1)}
-	timer := time.NewTimer(r.Timeout)
-	defer timer.Stop()
+	inv := &invocation{id: requestID(), payload: payload, timeout: r.Timeout, done: make(chan outcome, 1)}
+	starting := time.NewTimer(initTimeout)
+	defer starting.Stop()
 
 	select {
 	case r.next <- inv:
 	case <-exited:
 		return nil, r.exitError()
-	case <-timer.C:
+	case <-starting.C:
 		r.stop()
-		return nil, &FunctionError{Type: "Runtime.InitTimeout", Message: fmt.Sprintf("the function did not ask for an event within %s", r.Timeout)}
+		return nil, &FunctionError{Type: "Runtime.InitTimeout", Message: fmt.Sprintf("the function did not ask for an event within %s", initTimeout)}
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+	timer := time.NewTimer(r.Timeout)
+	defer timer.Stop()
 
 	select {
 	case out := <-inv.done:
@@ -222,7 +228,7 @@ func (r *Runtime) handleNext(w http.ResponseWriter, req *http.Request) {
 		r.mu.Unlock()
 		h := w.Header()
 		h.Set("Lambda-Runtime-Aws-Request-Id", inv.id)
-		h.Set("Lambda-Runtime-Deadline-Ms", strconv.FormatInt(inv.deadline.UnixMilli(), 10))
+		h.Set("Lambda-Runtime-Deadline-Ms", strconv.FormatInt(time.Now().Add(inv.timeout).UnixMilli(), 10))
 		h.Set("Lambda-Runtime-Invoked-Function-Arn", r.ARN)
 		h.Set("Lambda-Runtime-Trace-Id", traceID())
 		h.Set("Content-Type", "application/json")
