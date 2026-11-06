@@ -458,6 +458,27 @@ func TestSecrets(t *testing.T) {
 	}
 }
 
+// TestStageSecrets checks a secret of kdst.param() is resolved by its full name under the app
+// and stage, and its value reaches the provider.
+func TestStageSecrets(t *testing.T) {
+	p, err := config.Decode([]byte(`{"schemaVersion": 1, "app": "orders", "stage": "dev", "functions": {"api": {"environment": {
+		"KEY": {"$koldstart": "secret", "source": "ssm", "name": "api-key", "scope": "stage", "key": "", "atRuntime": false}}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := newHarness(t)
+	h.engine.Secrets = fakeSecrets{"ssm:/orders/dev/api-key:": "one"}
+	nodes := []Node{{ID: "function/api", Type: fakeType, Name: "api", Inputs: map[string]any{
+		"env": map[string]any{"KEY": SecretValue(*p.Functions["api"].Environment["KEY"].Secret)},
+	}}}
+	if _, err := h.deploy(nodes); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.fake.Resources()["api"].Inputs["env"].(map[string]any)["KEY"]; got != "one" {
+		t.Errorf("the provider got %v, want the value of /orders/dev/api-key", got)
+	}
+}
+
 // TestOrderRefuses checks a ref to a missing node and a cycle are refused before anything runs.
 func TestOrderRefuses(t *testing.T) {
 	missing := []Node{{ID: "a", Type: fakeType, Inputs: map[string]any{"x": Ref("b", "Arn")}}}

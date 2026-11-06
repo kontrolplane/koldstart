@@ -206,6 +206,55 @@ func TestEvents(t *testing.T) {
 	}
 }
 
+// TestStageSecrets checks the secrets kdst.param() and kdst.secret() give reach the function's
+// inputs, as the plan shows them, and its role by their full names under the app and stage.
+func TestStageSecrets(t *testing.T) {
+	tests := []struct {
+		name     string
+		secret   string
+		describe string
+		arn      string
+	}{
+		{
+			name:     "kdst.param",
+			secret:   `{"$koldstart": "secret", "source": "ssm", "name": "api-key", "scope": "stage", "key": "", "atRuntime": true}`,
+			describe: "ssm:/orders/dev/api-key",
+			arn:      "arn:aws:ssm:eu-west-1:123456789012:parameter/orders/dev/api-key",
+		},
+		{
+			name:     "kdst.secret",
+			secret:   `{"$koldstart": "secret", "source": "secretsmanager", "name": "db", "scope": "stage", "key": "password", "atRuntime": true}`,
+			describe: "secretsmanager:orders/dev/db#password",
+			arn:      "arn:aws:secretsmanager:eu-west-1:123456789012:secret:orders/dev/db-??????",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := os.ReadFile("../config/testdata/orders.json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			data = []byte(strings.Replace(string(data), `"LOG_LEVEL": "info"`, `"LOG_LEVEL": "info", "SECRET": `+tt.secret, 1))
+			p, err := config.Decode(data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			nodes, err := Build(p, target())
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := byID(nodes)
+			env := got["function/api"].Inputs["environment"].(map[string]any)
+			if d := engine.Describe(env["SECRET"]); d != tt.describe {
+				t.Errorf("SECRET is %s, want %s", d, tt.describe)
+			}
+			if policy := js(t, got["role/api"].Inputs["policy"]); !strings.Contains(policy, `"`+tt.arn+`"`) {
+				t.Errorf("the policy lacks %s: %s", tt.arn, policy)
+			}
+		})
+	}
+}
+
 // TestRuntimeSecrets checks a secret the function reads itself is allowed on its role, and a field
 // of it is named in a variable beside it.
 func TestRuntimeSecrets(t *testing.T) {

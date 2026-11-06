@@ -56,6 +56,10 @@ class Secret {
   fixed `$koldstart`: "secret" = "secret"
   source: "ssm"|"secretsmanager"
   name: String(!isEmpty)
+  /// `"stage"` when [name] is under the app and stage, as `kdst.param()` and `kdst.secret()` give
+  /// it: koldstart reads `/<app>/<stage>/<name>` from ssm, or `<app>/<stage>/<name>` from secrets
+  /// manager. `"absolute"` reads [name] as it is.
+  scope: "absolute"|"stage" = "absolute"
   key: String = ""
   /// When true, the environment variable holds the arn, the function may read it, and the
   /// function reads the value itself, so it is not in the function's configuration.

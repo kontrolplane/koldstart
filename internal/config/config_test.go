@@ -263,3 +263,102 @@ func TestLoad(t *testing.T) {
 		}
 	}
 }
+
+// scoped is a project of app orders on stage dev with one secret, s, as pkl renders it, in a
+// function's environment, a join, an output and a resource's properties.
+func scoped(s string) []byte {
+	return []byte(`{"schemaVersion": 1, "app": "orders", "stage": "dev",
+		"functions": {"api": {"runtime": "nodejs22.x", "handler": "a.b",
+			"environment": {"KEY": ` + s + `}, "layers": [{"$koldstart": "join", "parts": ["x", ` + s + `]}]}},
+		"outputs": {"key": ` + s + `},
+		"resources": {"db": {"type": "AWS::RDS::DBInstance", "properties": {"MasterUserPassword": ` + s + `}}}}`)
+}
+
+// TestDecodeScopes checks a secret under the app and stage gets its full name wherever it is,
+// and one without a scope, or an absolute one, keeps its name.
+func TestDecodeScopes(t *testing.T) {
+	tests := []struct {
+		name   string
+		secret string
+		want   Secret
+	}{
+		{
+			name:   "kdst.param",
+			secret: `{"$koldstart": "secret", "source": "ssm", "name": "api-key", "scope": "stage", "key": "", "atRuntime": false}`,
+			want:   Secret{Source: SourceSSM, Name: "/orders/dev/api-key"},
+		},
+		{
+			name:   "kdst.secret with a field",
+			secret: `{"$koldstart": "secret", "source": "secretsmanager", "name": "db/main", "scope": "stage", "key": "password", "atRuntime": true}`,
+			want:   Secret{Source: SourceSecretsManager, Name: "orders/dev/db/main", Key: "password", AtRuntime: true},
+		},
+		{
+			name:   "kdst.ssm",
+			secret: `{"$koldstart": "secret", "source": "ssm", "name": "/shared/key", "scope": "absolute", "key": "", "atRuntime": false}`,
+			want:   Secret{Source: SourceSSM, Name: "/shared/key"},
+		},
+		{
+			name:   "kdst.ssm without a slash",
+			secret: `{"$koldstart": "secret", "source": "ssm", "name": "key", "scope": "absolute", "key": "", "atRuntime": false}`,
+			want:   Secret{Source: SourceSSM, Name: "key"},
+		},
+		{
+			name:   "a schema without scope",
+			secret: `{"$koldstart": "secret", "source": "secretsmanager", "name": "db", "key": "", "atRuntime": false}`,
+			want:   Secret{Source: SourceSecretsManager, Name: "db"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, err := Decode(scoped(tt.secret))
+			if err != nil {
+				t.Fatalf("Decode: %v", err)
+			}
+			fn := p.Functions["api"]
+			for where, v := range map[string]Value{"environment": fn.Environment["KEY"], "join": fn.Layers[0].Join[1], "outputs": p.Outputs["key"]} {
+				if v.Secret == nil || *v.Secret != tt.want {
+					t.Errorf("%s: %+v, want %+v", where, v.Secret, tt.want)
+				}
+			}
+			prop := p.Resources["db"].Properties["MasterUserPassword"].(map[string]any)
+			if _, ok := prop["scope"]; ok || prop["name"] != tt.want.Name {
+				t.Errorf("properties: %v, want the name %s and no scope", prop, tt.want.Name)
+			}
+		})
+	}
+}
+
+// TestDecodeScopeRefuses checks a name under the app and stage with a leading /, an empty
+// segment or .. is refused, naming the helper, where it is and what to use instead.
+func TestDecodeScopeRefuses(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+		secret string
+		want   []string
+	}{
+		{name: "leading slash", source: "ssm", secret: "/orders/api-key", want: []string{`functions.api.environment.KEY: kdst.param("/orders/api-key")`, "after /orders/dev/", "drop the leading /", `kdst.ssm("/orders/api-key")`}},
+		{name: "leading slash of a secret", source: "secretsmanager", secret: "/db", want: []string{`kdst.secret("/db")`, "after orders/dev/", `kdst.secretsmanager("/db")`}},
+		{name: "empty segment", source: "ssm", secret: "a//b", want: []string{`kdst.param("a//b")`, "no empty segments or ..", "kdst.ssm()"}},
+		{name: "dot dot", source: "secretsmanager", secret: "../prod/db", want: []string{`kdst.secret("../prod/db")`, "kdst.secretsmanager()"}},
+		{name: "trailing slash", source: "ssm", secret: "a/", want: []string{`kdst.param("a/")`}},
+		{name: "empty", source: "ssm", secret: "", want: []string{`kdst.param("")`}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := `{"$koldstart": "secret", "source": "` + tt.source + `", "name": "` + tt.secret + `", "scope": "stage", "key": "", "atRuntime": false}`
+			_, err := Decode(scoped(s))
+			if err == nil {
+				t.Fatal("Decode: want an error")
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("Decode = %v, want %q in it", err, want)
+				}
+			}
+		})
+	}
+	if _, err := Decode(scoped(`{"$koldstart": "secret", "source": "ssm", "name": "a", "scope": "nope"}`)); err == nil || !strings.Contains(err.Error(), "absolute or stage") {
+		t.Errorf("an unknown scope: Decode = %v, want an error", err)
+	}
+}

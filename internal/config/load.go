@@ -51,7 +51,9 @@ func Load(ctx context.Context, ev Evaluator, path, stage string) (*Project, erro
 // Decode reads the json pkl renders for a koldstart.pkl.
 func Decode(data []byte) (*Project, error) {
 	var head struct {
-		SchemaVersion int `json:"schemaVersion"`
+		SchemaVersion int    `json:"schemaVersion"`
+		App           string `json:"app"`
+		Stage         string `json:"stage"`
 	}
 	if err := json.Unmarshal(data, &head); err != nil {
 		return nil, err
@@ -61,6 +63,10 @@ func Decode(data []byte) (*Project, error) {
 	}
 	if head.SchemaVersion > SchemaVersion {
 		return nil, fmt.Errorf("the file uses schema %d, this koldstart reads up to %d: upgrade koldstart", head.SchemaVersion, SchemaVersion)
+	}
+	data, err := scopeSecrets(data, head.App, head.Stage)
+	if err != nil {
+		return nil, err
 	}
 
 	var raw struct {
