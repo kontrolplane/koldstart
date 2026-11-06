@@ -198,18 +198,28 @@ func (t *dataTable) fill(extra int) int {
 	return extra
 }
 
-// needs is how wide each column's title and rows are.
+// needs is how wide each column's title and rows are, up to one more than the table's width, as
+// no column gets more.
 func (t dataTable) needs() []int {
 	need := make([]int, len(t.columns))
 	for i, c := range t.columns {
 		need[i] = ansi.StringWidth(c.title)
 		for _, r := range t.rows {
 			if i < len(r) {
-				need[i] = max(need[i], cellWidth(r[i]))
+				need[i] = max(need[i], cellWidthUpTo(r[i], t.fitWidth))
 			}
 		}
 	}
 	return need
+}
+
+// cellWidthUpTo is how wide a cell's text is, measured no further than limit, so a value of
+// megabytes costs what a short one does: a cell wider than limit is limit+1.
+func cellWidthUpTo(c cell, limit int) int {
+	if _, used, whole := fitCell(c, limit); whole {
+		return used
+	}
+	return limit + 1
 }
 
 // shrink narrows the widest shown column, the rightmost of equals, a column at a time until the

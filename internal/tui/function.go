@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
@@ -369,15 +370,43 @@ func wrapped(s string, tone styles.Tone, width, limit int) []string {
 }
 
 // cutMiddle cuts plain text to width columns in the middle, keeping its start and more of its
-// end, as the end of an arn or a path names what it is.
+// end, as the end of an arn or a path names what it is. A wide rune the cut falls inside is left
+// out, so the text stays within width. Only the ends it keeps are measured, so
+// cutting a value of megabytes costs what cutting a line does: a rune takes no more columns than
+// it has bytes, and a value of more than cutMiddleBytes bytes a column is taken not to fit.
 func cutMiddle(s string, width int) string {
-	w := ansi.StringWidth(s)
-	if w <= width || width < 8 {
+	if width < 8 || len(s) <= width || len(s) <= cutMiddleBytes*width && ansi.StringWidth(s) <= width {
 		return s
 	}
 	head := (width - 1) / 4
 	tail := width - 1 - head
-	return ansi.Truncate(s, head, "") + "…" + ansi.TruncateLeft(s, w-tail, "")
+	start := s[:runeBefore(s, min(len(s), cutMiddleBytes*head))]
+	end := s[runeAfter(s, max(0, len(s)-cutMiddleBytes*tail)):]
+	cut := max(0, ansi.StringWidth(end)-tail)
+	kept := ansi.TruncateLeft(end, cut, "")
+	if ansi.StringWidth(kept) > tail {
+		kept = ansi.TruncateLeft(end, cut+1, "")
+	}
+	return ansi.Truncate(start, head, "") + "…" + kept
+}
+
+// cutMiddleBytes is the most bytes cutMiddle takes a column to hold.
+const cutMiddleBytes = 8
+
+// runeBefore is i, or the start of the rune of s it falls inside.
+func runeBefore(s string, i int) int {
+	for i > 0 && i < len(s) && !utf8.RuneStart(s[i]) {
+		i--
+	}
+	return i
+}
+
+// runeAfter is i, or the start of the rune of s after the one it falls inside.
+func runeAfter(s string, i int) int {
+	for i < len(s) && !utf8.RuneStart(s[i]) {
+		i++
+	}
+	return i
 }
 
 // overviewTwoColumns is the narrowest content area the overview is drawn in two columns in; a

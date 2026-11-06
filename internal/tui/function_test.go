@@ -55,6 +55,10 @@ func TestCutMiddle(t *testing.T) {
 		{name: "fits", s: "short", width: 10, want: "short"},
 		{name: "an arn", s: arn, width: 25, want: "arn:aw…ion:orders-dev-api"},
 		{name: "too narrow to cut", s: arn, width: 5, want: arn},
+		{name: "wide runes", s: strings.Repeat("日本", 20), width: 21, want: "日本…本日本日本日本"},
+		{name: "a wide rune cut", s: "a日本" + strings.Repeat("日本", 20) + "a", width: 22, want: "a日本…本日本日本日本a"},
+		{name: "wide runes that fit", s: strings.Repeat("日本", 5), width: 20, want: strings.Repeat("日本", 5)},
+		{name: "a megabyte", s: "https://" + strings.Repeat("a", 1<<20) + "/end", width: 25, want: "https:…aaaaaaaaaaaaaa/end"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
