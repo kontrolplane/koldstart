@@ -40,6 +40,20 @@ func TestReadFailure(t *testing.T) {
 			internal: []bool{false, true, true},
 		},
 		{
+			name:    "node, as its runtime logs it",
+			payload: `{"errorType":"Error","errorMessage":"boom","stack":["Error: boom","    at handler (/var/task/a.js:1:1)","    at node:internal/process/task_queues:95:5"]}`,
+			ok:      true, head: "Error: boom",
+			lines:    []string{"at handler (/var/task/a.js:1:1)", "at node:internal/process/task_queues:95:5"},
+			internal: []bool{false, true},
+		},
+		{
+			name:    "a stack in one string",
+			payload: `{"errorType":"Error","errorMessage":"boom","stack":"Error: boom\n    at handler (/var/task/a.js:1:1)"}`,
+			ok:      true, head: "Error: boom",
+			lines:    []string{"at handler (/var/task/a.js:1:1)"},
+			internal: []bool{false},
+		},
+		{
 			name:    "timeout",
 			payload: `{"errorType":"Sandbox.Timedout","errorMessage":"RequestId: r Error: Task timed out after 3.00 seconds"}`,
 			ok:      true, head: "Sandbox.Timedout: RequestId: r Error: Task timed out after 3.00 seconds", timedOut: true,

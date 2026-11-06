@@ -207,8 +207,9 @@ func (v logLineState) body(width int) []string {
 }
 
 // logLineText draws what a line says in width but its json, which a json view reads: its
-// message whole, tinted as the logs tint it and wrapped, and the pairs of logfmt each under its
-// key.
+// message whole, tinted as the logs tint it and wrapped, the error and stack trace of json that
+// holds one, as node's Invoke Error does, read as kdst invoke reads one, and the pairs of logfmt
+// each under its key.
 func logLineText(e cli.LogEvent, width int) []string {
 	parts := splitLogLine(e.Message)
 	var out []string
@@ -217,6 +218,10 @@ func logLineText(e cli.LogEvent, width int) []string {
 		for _, c := range logCells(parts.message, width) {
 			out = append(out, renderCell(c, column{width: width}, nil))
 		}
+	}
+	if f, ok := cli.ReadFailure([]byte(parts.json)); ok && len(f.Trace) > 0 {
+		out = append(out, "", styles.SectionHeader("error", width))
+		out = append(out, traceLines(f, width)...)
 	}
 	if len(parts.pairs) > 0 {
 		out = append(out, "", styles.SectionHeader("fields", width))

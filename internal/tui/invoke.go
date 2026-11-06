@@ -871,11 +871,18 @@ func failureLines(r invocationResult, width int) []string {
 	if !r.failed {
 		return cellLines(text(r.inv.Error, styles.ToneDanger), width)
 	}
+	return traceLines(r.failure, width)
+}
+
+// traceLines are a failure's type and message, and its stack trace under them, the frames of the
+// runtime and of dependencies faint, as the invoke tab and the page of a line of the logs draw
+// one.
+func traceLines(f cli.Failure, width int) []string {
 	var lines []string
-	for line := range strings.SplitSeq(styles.CleanBlock(r.failure.Head()), "\n") {
+	for line := range strings.SplitSeq(styles.CleanBlock(f.Head()), "\n") {
 		lines = append(lines, cellLines(text(line, styles.ToneDanger), width)...)
 	}
-	for _, line := range r.failure.Trace {
+	for _, line := range f.Trace {
 		tone := styles.ToneBody
 		if line.Internal {
 			tone = styles.ToneFaint

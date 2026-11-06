@@ -39,19 +39,25 @@ func (f Failure) TimedOut() bool {
 }
 
 // failure is the error a function returned, as its runtime writes it: its type, its message and
-// its stack trace, as lines in node and python and as frames in go.
+// its stack trace, as lines in node and python and as frames in go. Stack is the trace as node's
+// runtime logs it, in the Invoke Error line: a list of lines, or the lines in one string.
 type failure struct {
 	Type    string            `json:"errorType"`
 	Message string            `json:"errorMessage"`
 	Trace   []json.RawMessage `json:"stackTrace"`
+	Stack   json.RawMessage   `json:"stack"`
 }
 
 // ReadFailure reads the error a function returned from what it returned, as node, python and go
-// write one. It is false for a payload without an errorMessage.
+// write one, or from the line of json node's runtime logs it in. It is false for a payload
+// without an errorMessage.
 func ReadFailure(payload []byte) (Failure, bool) {
 	var f failure
 	if json.Unmarshal(payload, &f) != nil || f.Message == "" {
 		return Failure{}, false
+	}
+	if len(f.Trace) == 0 && len(f.Stack) > 0 && json.Unmarshal(f.Stack, &f.Trace) != nil {
+		f.Trace = []json.RawMessage{f.Stack}
 	}
 	return newFailure(f.Type, f.Message, f.Trace), true
 }

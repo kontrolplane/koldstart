@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/kontrolplane/koldstart/internal/cli"
+	"github.com/kontrolplane/koldstart/internal/tui/styles"
 )
 
 // lgBig are lines of 50 kb: one of json, as a logger writes a large payload, and one of words.
@@ -68,6 +69,57 @@ func TestLogLinePage(t *testing.T) {
 				if strings.Contains(v, w) {
 					t.Errorf("the page says %q:\n%s", w, v)
 				}
+			}
+		})
+	}
+}
+
+// TestLogLineError checks a line of json that holds an error with its stack, as node's Invoke
+// Error and a logger write one, shows the error as kdst invoke reads it, its own frames in the
+// body ink and the runtime's faint, and one without a stack no error of its own.
+func TestLogLineError(t *testing.T) {
+	tests := []struct {
+		name    string
+		message string
+		want    []string
+		faint   string
+	}{
+		{
+			name:    "node's invoke error",
+			message: "2026-11-06T10:00:00.000Z\t" + lgNodeID + "\tERROR\tInvoke Error \t" + `{"errorType":"TypeError","errorMessage":"boom","stack":["TypeError: boom","    at handler (/var/task/index.mjs:4:22)","    at Runtime.handle (file:///var/runtime/index.mjs:1:1)"]}`,
+			want:    []string{"error ─", "TypeError: boom", "  at handler (/var/task/index.mjs:4:22)", "  at Runtime.handle (file:///var/runtime/index.mjs:1:1)", "json ─"},
+			faint:   "at Runtime.handle (file:///var/runtime/index.mjs:1:1)",
+		},
+		{
+			name:    "a stack in one string",
+			message: `{"errorType":"Error","errorMessage":"down","stack":"Error: down\n    at store (/var/task/node_modules/pg/x.js:1:1)"}`,
+			want:    []string{"error ─", "Error: down", "  at store (/var/task/node_modules/pg/x.js:1:1)"},
+			faint:   "at store (/var/task/node_modules/pg/x.js:1:1)",
+		},
+		{
+			name:    "without a stack",
+			message: `{"errorType":"Error","errorMessage":"down"}`,
+			want:    []string{"message ─", "Error: down", "json ─"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m, _ := onLogs(t, []cli.LogEvent{{Time: time.Now().Add(-time.Minute), Stream: "a", Message: tt.message}})
+			m = pressKeys(t, m, "enter")
+			if m.page != logLinePage {
+				t.Fatalf("enter did not open the line, the page is %d", m.page)
+			}
+			v := screen(m)
+			for _, w := range tt.want {
+				if !strings.Contains(v, w) {
+					t.Errorf("the page does not say %q:\n%s", w, v)
+				}
+			}
+			if tt.faint == "" && strings.Contains(v, "error ─") {
+				t.Errorf("an error without a stack has a section of its own:\n%s", v)
+			}
+			if tt.faint != "" && !strings.Contains(m.render(), styles.Faint(tt.faint)) {
+				t.Errorf("the frame %q is not faint", tt.faint)
 			}
 		})
 	}
