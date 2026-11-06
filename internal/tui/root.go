@@ -494,6 +494,9 @@ func (m model) trail(p page) []string {
 		f := m.state.function
 		return []string{crumbStages, ref, stageTabs[functionsTab], f.name, functionTabs[f.tab]}
 	case resourcePage:
+		if m.state.resource.fromFunction {
+			return append(m.trail(functionPage), m.state.resource.res.id)
+		}
 		return []string{crumbStages, ref, stageTabs[resourcesTab], m.state.resource.res.id}
 	case versionPage:
 		return []string{crumbStages, ref, stageTabs[historyTab], formatTime(m.state.version.version.LastModified)}
@@ -800,6 +803,8 @@ func (m model) shortHelp() [][2]string {
 	case functionPage:
 		var h [][2]string
 		switch m.state.function.tab {
+		case overviewTab:
+			h = append(h, m.functionOverviewHints()...)
 		case logsTab:
 			h = append(h, hint(k.Follow), hint(k.Filter), [2]string{"↑ at top", "older"})
 		case invocationsTab:

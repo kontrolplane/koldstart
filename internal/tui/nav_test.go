@@ -86,6 +86,7 @@ func TestNavBack(t *testing.T) {
 		{name: "function from an invocation", reach: []string{"enter"}, prep: []string{"tab", "tab", "j"}, into: []string{"enter"}, inside: invocationPage},
 		{name: "function logs from a plan", reach: []string{"enter"}, prep: []string{"tab", "/", "l", "i", "n", "e", "enter", "k", "k"}, into: []string{"d"}, inside: planPage},
 		{name: "function overview from a plan", reach: []string{"enter"}, prep: []string{"j", "j"}, into: []string{"d"}, inside: planPage},
+		{name: "function overview from its log group", reach: []string{"enter"}, prep: slices.Repeat([]string{"j"}, 6), into: []string{"enter"}, inside: resourcePage},
 		{name: "history from a version", prep: []string{"shift+tab", "j"}, into: []string{"enter"}, inside: versionPage},
 		{name: "version from a diff", reach: []string{"shift+tab", "j", "enter"}, prep: []string{"j", "j"}, into: []string{"enter"}, inside: diffPage},
 		{name: "plan from a diff", reach: []string{"d"}, prep: []string{"j"}, into: []string{"enter"}, inside: diffPage},

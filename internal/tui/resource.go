@@ -31,6 +31,9 @@ type resourceState struct {
 	res    stageResource
 	tab    resourceTab
 	scroll int
+	// fromFunction is set when the overview of a function opened the resource, which q goes back
+	// to.
+	fromFunction bool
 
 	liveGen int
 	// liveLoaded is the last read done; live stays from the one before while r reads it again.
@@ -95,10 +98,13 @@ func (m model) applyLive(msg liveLoadedMsg) (model, tea.Cmd) {
 }
 
 // resourceUpdate handles a key on the resource page. r reads it from aws again, the spinner
-// showing until it is in; c copies its id in aws, or its arn when it has no id.
+// showing until it is in; c copies its id in aws, or its arn when it has no id; q goes back to
+// the function that opened it, or the stage.
 func (m model) resourceUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 	r := &m.state.resource
 	switch {
+	case key.Matches(msg, m.keys.Back, m.keys.Quit) && r.fromFunction:
+		return m.switchPage(functionPage).syncFunction(), nil
 	case key.Matches(msg, m.keys.Back, m.keys.Quit):
 		return m.switchPage(stagePage), nil
 	case key.Matches(msg, m.keys.NextTab, m.keys.PrevTab, m.keys.Left, m.keys.Right):

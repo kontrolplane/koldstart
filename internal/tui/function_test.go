@@ -2,6 +2,7 @@ package tui
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -259,7 +260,7 @@ func TestOverviewStates(t *testing.T) {
 		{
 			name:     "deployed as it is",
 			function: cli.FunctionState{State: "Active", LastUpdate: "Successful", LastModified: time.Now(), CodeSHA256: strings.Repeat("ab", 32), CodeSize: 42 << 20, Memory: 1024, Timeout: 6, Runtime: "nodejs22.x"},
-			want:     []string{"✓ what koldstart deployed · 42 mb", "1,024 mb", "timeout  6s"},
+			want:     []string{"✓ what koldstart deployed · 42 mb", "1,024 mb · 6s timeout", "✓ active"},
 			notWant:  []string{"changed outside koldstart"},
 		},
 		{
@@ -312,58 +313,287 @@ func TestOverviewNotInvoked(t *testing.T) {
 	}
 }
 
-// TestOverviewEnvironmentAndTriggers checks the environment's names line up with secrets hidden,
-// and what invokes the function is listed by kind, its url first.
-func TestOverviewEnvironmentAndTriggers(t *testing.T) {
+// fdOpened is the urls the overview opened in the browser in a test; no test opens a browser.
+var fdOpened []string
+
+func init() {
+	openURL = func(url string) error {
+		fdOpened = append(fdOpened, url)
+		return nil
+	}
+}
+
+// fdFull is a fake of a function with a url, triggers of each kind, a role with a policy, a
+// secret, a url with a password and an output in its environment, and a vpc.
+func fdFull(t *testing.T) *fakeBackend {
+	t.Helper()
 	f := newFake(t)
+	f.function = cli.FunctionState{State: "Active", LastUpdate: "Successful", LastModified: time.Now(), CodeSHA256: strings.Repeat("ab", 32), Memory: 1024, Timeout: 6, Runtime: "nodejs22.x"}
 	st := f.states[ordersDev]
 	fn := st.Resources["function/api"]
 	var in map[string]any
 	if err := json.Unmarshal(fn.Inputs, &in); err != nil {
 		t.Fatal(err)
 	}
-	in["environment"].(map[string]any)["STRIPE_SECRET"] = "sk_live_123"
+	env := in["environment"].(map[string]any)
+	env["STRIPE_SECRET"] = "sk_live_123"
+	env["DATABASE_URL"] = "postgres://app:hunter2@db:5432/orders"
+	env["BILLING_URL"] = map[string]any{"$koldstart": "output", "app": "billing", "stage": "prod", "output": "url"}
+	in["vpc"] = map[string]any{"subnetIds": []string{"subnet-1", "subnet-2"}, "securityGroupIds": []string{"sg-1"}}
 	fn.Inputs, _ = json.Marshal(in)
+	st.Resources["role/api"].Inputs, _ = json.Marshal(map[string]any{
+		"name": "orders-dev-api", "managedPolicies": []string{"arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"},
+		"policy": map[string]any{"Version": "2012-10-17", "Statement": []any{
+			map[string]any{"Effect": "Allow", "Action": []any{"dynamodb:GetItem", "dynamodb:PutItem"}, "Resource": []any{"arn:aws:dynamodb:eu-west-1:123456789012:table/orders-dev", "arn:aws:dynamodb:eu-west-1:123456789012:table/orders-dev/index/*"}},
+			map[string]any{"Effect": "Deny", "Action": "s3:*", "Resource": "*"},
+		}},
+	})
 	st.Resources["url/api"] = &state.Resource{PhysicalID: "u", Attributes: map[string]string{"FunctionUrl": "https://abc.lambda-url.eu-west-1.on.aws/"}}
 	st.Resources["integration/api"] = &state.Resource{PhysicalID: "i"}
 	st.Resources["route/GET /orders"] = &state.Resource{PhysicalID: "r", Dependencies: []string{"httpapi", "integration/api"}}
-	st.Resources["schedule/api/nightly"] = &state.Resource{PhysicalID: "s"}
+	st.Resources["schedule/api/0"] = &state.Resource{PhysicalID: "s", Inputs: json.RawMessage(`{"expression":"rate(5 minutes)","timezone":"Europe/Amsterdam"}`)}
+	st.Resources["mapping/api/jobs"] = &state.Resource{PhysicalID: "m", Inputs: json.RawMessage(`{"source":"arn:aws:sqs:eu-west-1:123456789012:orders-dev-jobs"}`)}
+	return f
+}
 
-	v := screen(pressKeys(t, started(t, f), "enter"))
+// fdCursorTo moves the overview's cursor down to the first row whose text holds label.
+func fdCursorTo(t *testing.T, m model, label string) model {
+	t.Helper()
+	m = pressKeys(t, m, "g")
+	for range m.functionOverview().rowCount() {
+		if strings.Contains(fdRowText(m), label) {
+			return m
+		}
+		m = pressKeys(t, m, "j")
+	}
+	t.Fatalf("no row of the overview holds %q", label)
+	return m
+}
+
+// fdRowText is the text of the row under the overview's cursor, its lines joined.
+func fdRowText(m model) string {
+	o := m.functionOverview()
+	col, r := o.locate(m.state.function.cursor)
+	if col < 0 {
+		return ""
+	}
+	c := o.cols[col]
+	var lines []string
+	for i, of := range c.rowOf {
+		if of == r {
+			lines = append(lines, strings.TrimSpace(ansi.Strip(c.lines[i])))
+		}
+	}
+	return strings.Join(lines, " ")
+}
+
+// TestOverviewEnvironmentAndTriggers checks the environment is sorted and counted, secrets hidden
+// and refs shown by what they stand for, and what invokes the function listed by its kind and
+// what it is, its url first.
+func TestOverviewEnvironmentAndTriggers(t *testing.T) {
+	v := screen(pressKeys(t, started(t, fdFull(t)), "enter"))
 	for _, want := range []string{
+		"environment 5", "BILLING_URL   = output billing/prod.url", "DATABASE_URL  = postgres://app:" + hidden + "@db:5432/orders",
 		"KEY           = ssm:/orders/key", "STRIPE_SECRET = " + hidden, "TABLE         = orders",
-		"url       https://abc.lambda-url.eu-west-1.on.aws/", "route     GET /orders", "schedule  nightly",
+		"invoked by 4", "url  https://abc.lambda-url.eu-west-1.on.aws/", "route  GET /orders",
+		"schedule  rate(5 minutes) Europe/Amsterdam", "queue  orders-dev-jobs",
 	} {
 		if !strings.Contains(v, want) {
 			t.Errorf("the overview has no %q:\n%s", want, v)
 		}
 	}
-	if strings.Contains(v, "sk_live_123") || strings.Contains(v, "nothing: invoke it") {
+	if strings.Contains(v, "sk_live_123") || strings.Contains(v, "hunter2") || strings.Contains(v, "nothing: invoke it") {
 		t.Errorf("a secret is shown, or the function is said to have no triggers:\n%s", v)
+	}
+	if i, j := strings.Index(v, "BILLING_URL"), strings.Index(v, "TABLE "); i < 0 || j < i {
+		t.Errorf("the environment is not sorted:\n%s", v)
 	}
 }
 
-// TestOverviewScroll checks the overview scrolls no further than its longer column, so one key
-// back up moves it, and the frame says which lines are in sight.
-func TestOverviewScroll(t *testing.T) {
-	m := pressKeys(t, started(t, newFake(t)), "enter")
+// TestOverviewPermissions checks the role is named, with its managed policies and what its
+// policy allows, each service named once, and a role that is not koldstart's says why there is
+// no more.
+func TestOverviewPermissions(t *testing.T) {
+	tests := []struct {
+		name    string
+		noRole  bool
+		want    []string
+		notWant []string
+	}{
+		{
+			name:    "koldstart's role",
+			want:    []string{"permissions", "role  api", "managed  AWSLambdaVPCAccessExecutionRole", "allows  dynamodb GetItem, PutItem on table/orders-dev +1"},
+			notWant: []string{"s3", "not koldstart's role"},
+		},
+		{
+			name:   "a role of its own",
+			noRole: true,
+			want:   []string{"role  api", "not koldstart's role: its policies are not shown"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := fdFull(t)
+			if tt.noRole {
+				delete(f.states[ordersDev].Resources, "role/api")
+			}
+			m := pressKeys(t, started(t, f), "enter")
+			m, _ = update(t, m, tea.WindowSizeMsg{Width: 100, Height: 80})
+			v := screen(m)
+			for _, want := range tt.want {
+				if !strings.Contains(v, want) {
+					t.Errorf("the overview has no %q:\n%s", want, v)
+				}
+			}
+			for _, not := range tt.notWant {
+				if strings.Contains(v, not) {
+					t.Errorf("the overview has %q:\n%s", not, v)
+				}
+			}
+		})
+	}
+}
+
+// TestOverviewCopy checks c copies the whole value of the row under the cursor, however it is
+// cut on screen, and the name of a variable whose value is hidden, so no secret reaches the
+// clipboard or the status line.
+func TestOverviewCopy(t *testing.T) {
+	tests := []struct {
+		row  string
+		want string
+	}{
+		{row: "arn", want: "arn:aws:lambda:eu-west-1:123456789012:function:orders-dev-api"},
+		{row: "code", want: strings.Repeat("ab", 32)},
+		{row: "log group", want: "/aws/lambda/orders-dev-api"},
+		{row: "subnets", want: "subnet-1, subnet-2"},
+		{row: "role", want: "arn:aws:iam::123456789012:role/api"},
+		{row: "allows", want: "dynamodb:GetItem, dynamodb:PutItem on arn:aws:dynamodb:eu-west-1:123456789012:table/orders-dev, arn:aws:dynamodb:eu-west-1:123456789012:table/orders-dev/index/*"},
+		{row: "url  https", want: "https://abc.lambda-url.eu-west-1.on.aws/"},
+		{row: "queue", want: "arn:aws:sqs:eu-west-1:123456789012:orders-dev-jobs"},
+		{row: "schedule", want: "rate(5 minutes)"},
+		{row: "TABLE", want: "orders"},
+		{row: "STRIPE_SECRET", want: "STRIPE_SECRET"},
+		{row: "DATABASE_URL", want: "postgres://app:" + hidden + "@db:5432/orders"},
+		{row: "KEY ", want: "ssm:/orders/key"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.row, func(t *testing.T) {
+			m := pressKeys(t, started(t, fdFull(t)), "enter")
+			m = fdCursorTo(t, m, tt.row)
+			if got := m.functionCopyValue(); got != tt.want {
+				t.Errorf("c on %q copies %q, want %q", fdRowText(m), got, tt.want)
+			}
+			m = pressKeys(t, m, "c")
+			if !strings.HasPrefix(m.status, "copied ") || strings.Contains(m.status, "sk_live") || strings.Contains(m.status, "hunter2") {
+				t.Errorf("the status after c is %q", m.status)
+			}
+		})
+	}
+}
+
+// TestOverviewOpen checks enter on a row opens what it names: the log group, the role and a
+// trigger on the resource page, which goes back to the overview as it was left, and the url in
+// the browser; on any other row it does nothing.
+func TestOverviewOpen(t *testing.T) {
+	tests := []struct {
+		row      string
+		resource string
+		url      string
+	}{
+		{row: "log group", resource: "loggroup/api"},
+		{row: "role", resource: "role/api"},
+		{row: "schedule", resource: "schedule/api/0"},
+		{row: "route", resource: "route/GET /orders"},
+		{row: "url  https", url: "https://abc.lambda-url.eu-west-1.on.aws/"},
+		{row: "arn"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.row, func(t *testing.T) {
+			fdOpened = nil
+			m := fdCursorTo(t, pressKeys(t, started(t, fdFull(t)), "enter"), tt.row)
+			left := navSnapshot(m)
+			opened := pressKeys(t, m, "enter")
+			switch {
+			case tt.resource != "":
+				if opened.page != resourcePage || opened.state.resource.res.id != tt.resource {
+					t.Fatalf("enter on %q: page %v, resource %q, want %q", tt.row, opened.page, opened.state.resource.res.id, tt.resource)
+				}
+				if top := navTop(opened); !strings.Contains(top, "api › overview › "+tt.resource) {
+					t.Errorf("the breadcrumb is %q", top)
+				}
+				back := pressKeys(t, opened, "q")
+				if got := navSnapshot(back); got != left {
+					t.Errorf("q went back to\n%s\nwant\n%s", got, left)
+				}
+			case tt.url != "":
+				if opened.page != functionPage || len(fdOpened) != 1 || fdOpened[0] != tt.url || !strings.HasPrefix(opened.status, "opened ") {
+					t.Errorf("enter on the url opened %q, page %v, status %q", fdOpened, opened.page, opened.status)
+				}
+			default:
+				if opened.page != functionPage || len(fdOpened) != 0 {
+					t.Errorf("enter on %q: page %v, opened %q", tt.row, opened.page, fdOpened)
+				}
+			}
+		})
+	}
+}
+
+// TestFunctionOverviewHints checks the footer offers enter only on a row that opens something,
+// and says what it opens.
+func TestFunctionOverviewHints(t *testing.T) {
+	tests := []struct {
+		row  string
+		want string
+	}{
+		{row: "arn", want: ""},
+		{row: "log group", want: "enter open"},
+		{row: "url  https", want: "enter open in the browser"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.row, func(t *testing.T) {
+			m := fdCursorTo(t, pressKeys(t, started(t, fdFull(t)), "enter"), tt.row)
+			got := ""
+			for _, h := range m.shortHelp() {
+				if h[0] == "enter" {
+					got = h[0] + " " + h[1]
+				}
+			}
+			if got != tt.want {
+				t.Errorf("the hint for enter is %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestOverviewCursor checks the cursor walks every row of the overview and keeps it in sight, the
+// end of the page in sight on the last, the frame saying which lines are, and moves back up one
+// row at a time.
+func TestOverviewCursor(t *testing.T) {
+	m := pressKeys(t, started(t, fdFull(t)), "enter")
 	m, _ = update(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
-	if v := screen(m); !strings.Contains(v, "lines 1–14 of ") || strings.Contains(v, "last update") {
+	if v := screen(m); !strings.Contains(v, "lines 1–") || strings.Contains(v, "invoked by") {
 		t.Fatalf("at 80×24 the overview should be cut, with a hint:\n%s", v)
 	}
-	for range 50 {
+	o := m.functionOverview()
+	for i := range o.rowCount() + 5 {
+		row := fdRowText(m)
+		if v := screen(m); row == "" || !strings.Contains(v, row) {
+			t.Fatalf("row %d, %q, is not in sight:\n%s", i, row, v)
+		}
 		m = pressKeys(t, m, "j")
 	}
-	end := m.functionOverview().maxScroll()
-	if m.state.function.scroll != end {
-		t.Fatalf("scroll %d after 50 lines down, want the end at %d", m.state.function.scroll, end)
+	if last := o.rowCount() - 1; m.state.function.cursor != last {
+		t.Fatalf("cursor %d after walking down, want the last row, %d", m.state.function.cursor, last)
 	}
-	total := max(len(m.functionOverview().left), len(m.functionOverview().right))
-	if v := screen(m); !strings.Contains(v, "–"+formatInt(total)+" of "+formatInt(total)) || !strings.Contains(v, "last update") {
-		t.Errorf("at the end the hint should point up, and what lambda says be in sight:\n%s", v)
+	total := formatInt(o.lines())
+	if foot := navFoot(m); !strings.Contains(foot, "–"+total+" of "+total) {
+		t.Errorf("at the last row the foot should show the end: %q", foot)
 	}
-	if m = pressKeys(t, m, "k"); m.state.function.scroll != end-1 {
-		t.Errorf("one line up: scroll %d, want %d", m.state.function.scroll, end-1)
+	if m = pressKeys(t, m, "k"); m.state.function.cursor != o.rowCount()-2 {
+		t.Errorf("one row up: cursor %d, want %d", m.state.function.cursor, o.rowCount()-2)
+	}
+	if m = pressKeys(t, m, "g"); m.state.function.cursor != 0 || !strings.Contains(navFoot(m), "lines 1–") {
+		t.Errorf("g: cursor %d, foot %q", m.state.function.cursor, navFoot(m))
 	}
 	m, _ = update(t, m, tea.WindowSizeMsg{Width: 200, Height: 60})
 	if v := screen(m); strings.Contains(v, "lines ") {
@@ -371,11 +601,204 @@ func TestOverviewScroll(t *testing.T) {
 	}
 }
 
+// TestOverviewColumns checks the overview is one column below overviewTwoColumns, its sections
+// from the configuration down to the permissions, and two from there, the last hour beside the
+// configuration.
+func TestOverviewColumns(t *testing.T) {
+	tests := []struct {
+		width int
+		cols  int
+	}{
+		{width: 80, cols: 1},
+		{width: overviewTwoColumns + chromeWidth - 1, cols: 1},
+		{width: overviewTwoColumns + chromeWidth, cols: 2},
+		{width: 200, cols: 2},
+	}
+	for _, tt := range tests {
+		t.Run(formatInt(tt.width), func(t *testing.T) {
+			m := pressKeys(t, started(t, fdFull(t)), "enter")
+			m, _ = update(t, m, tea.WindowSizeMsg{Width: tt.width, Height: 80})
+			o := m.functionOverview()
+			if len(o.cols) != tt.cols {
+				t.Fatalf("%d columns, want %d", len(o.cols), tt.cols)
+			}
+			first := ansi.Strip(strings.Join(o.cols[0].lines, "\n"))
+			order := []string{"configuration", "in lambda now", "last hour", "invoked by", "environment", "permissions"}
+			if tt.cols == 2 {
+				order = []string{"configuration", "in lambda now", "permissions"}
+				if right := ansi.Strip(o.cols[1].lines[0]); !strings.HasPrefix(right, "last hour") {
+					t.Errorf("the right column starts with %q", right)
+				}
+			}
+			at := -1
+			for _, section := range order {
+				i := strings.Index(first, section+" ")
+				if i <= at {
+					t.Errorf("%q is not after the section before it:\n%s", section, first)
+				}
+				at = i
+			}
+		})
+	}
+}
+
+// TestOverviewHead checks the head names the function and says the facts of it on one line, as
+// far as lambda's state is known, and that it is not deployed or no longer in the state.
+func TestOverviewHead(t *testing.T) {
+	tests := []struct {
+		name string
+		prep func(m model) model
+		want string
+	}{
+		{name: "deployed", prep: func(m model) model { return m }, want: "nodejs22.x · arm64 · 1,024 mb · 6s timeout · deployed 10m ago · ✓ active"},
+		{name: "reading lambda", prep: func(m model) model { m.state.function.live = nil; return m }, want: "nodejs22.x · arm64 · 1,024 mb · 6s timeout · deployed 10m ago\n"},
+		{name: "failed", prep: func(m model) model { m.state.function.live.State = "Failed"; return m }, want: "deployed 10m ago · ✗ failed"},
+		{name: "pending", prep: func(m model) model { m.state.function.live.State = "Pending"; return m }, want: "· ● pending"},
+		{name: "gone", prep: func(m model) model { m.state.function.gone = true; return m }, want: "▲ no longer in the stage's state"},
+		{name: "not deployed", prep: func(m model) model { m.state.function.lambdaName = ""; return m }, want: "not deployed yet · d plans a deploy of its code"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := tt.prep(pressKeys(t, started(t, fdFull(t)), "enter"))
+			var head []string
+			for _, l := range m.functionOverview().head {
+				head = append(head, strings.TrimSpace(ansi.Strip(l)))
+			}
+			v := strings.Join(head, "\n") + "\n" + screen(m)
+			if name := cmpOr(m.state.function.lambdaName, "api"); head[0] != name || !strings.Contains(v, tt.want) {
+				t.Errorf("the head is\n%s\nwant %q in it:\n%s", strings.Join(head, "\n"), tt.want, v)
+			}
+		})
+	}
+}
+
+// TestSparkLines checks each metric's sparkline lines up with the others, with what it comes to,
+// its range and its last point beside it as far as they fit, the hour under them, a metric of
+// zeros a dotted baseline, and one without points saying so.
+func TestSparkLines(t *testing.T) {
+	ramp := []float64{0, 0, 1, 2, 4, 8}
+	hour := make([]float64, 60)
+	hour[30], hour[59] = 3, 6
+	series := func(points ...[]float64) []metricSeries {
+		out := make([]metricSeries, len(points))
+		for i, p := range points {
+			out[i] = metricSeries{label: "m" + formatInt(i), points: p, tone: styles.ToneAccent, total: text("15", styles.ToneBody), format: func(v float64) string { return formatInt(int(v)) }, unit: "/min"}
+		}
+		return out
+	}
+	tests := []struct {
+		name   string
+		series []metricSeries
+		width  int
+		want   []string
+	}{
+		{name: "room for all of it", series: series(ramp), width: 60, want: []string{"m0  ··▁▂▄█  15  0–8/min  last 8"}},
+		{name: "no room for the last point", series: series(ramp), width: 36, want: []string{"m0  ··▁▂▄█  15  0–8/min"}},
+		{name: "no room for the figures", series: series(ramp), width: 30, want: []string{"m0  ··▁▂▄█  15"}},
+		{name: "an hour", series: series(hour), width: 120, want: []string{"m0  " + strings.Repeat("·", 30) + "▄" + strings.Repeat("·", 28) + "█  15  0–6/min  last 6", "1h ago now"}},
+		{name: "a sparse hour in less room", series: series(hour), width: 50, want: []string{"m0  ·······▄······█  15  0–6/min  last 6", "1h ago now"}},
+		{name: "a sparse hour in little room", series: series(hour), width: 27, want: []string{"m0  ····▄···█  15", "-1h now"}},
+		{name: "zeros", series: series(ramp, make([]float64, 6)), width: 60, want: []string{"m1  ······  15"}},
+		{name: "no points", series: series(ramp, nil), width: 60, want: []string{"m1  no data"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lines := sparkLines(tt.series, tt.width)
+			var got []string
+			for _, l := range lines {
+				if w := ansi.StringWidth(l); w > tt.width {
+					t.Errorf("%q is %d wide, more than %d", ansi.Strip(l), w, tt.width)
+				}
+				got = append(got, strings.Join(strings.Fields(ansi.Strip(l)), " "))
+			}
+			for _, want := range tt.want {
+				if !slices.Contains(got, strings.Join(strings.Fields(want), " ")) {
+					t.Errorf("no line %q in\n%s", want, strings.Join(got, "\n"))
+				}
+			}
+		})
+	}
+}
+
+// TestBetween checks a range writes a unit both ends share once.
+func TestBetween(t *testing.T) {
+	tests := []struct {
+		low, high, want string
+	}{
+		{low: "0", high: "60", want: "0–60"},
+		{low: "40ms", high: "240ms", want: "40–240ms"},
+		{low: "900ms", high: "1.2s", want: "900ms–1.2s"},
+		{low: "1.5s", high: "2.0s", want: "1.5–2.0s"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			if got := between(tt.low, tt.high); got != tt.want {
+				t.Errorf("between(%q, %q) = %q, want %q", tt.low, tt.high, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestInvokerOf checks each kind of trigger is named by what it is, and the rest of its id where
+// its inputs say nothing.
+func TestInvokerOf(t *testing.T) {
+	tests := []struct {
+		kind, rest string
+		in         map[string]any
+		want       invoker
+	}{
+		{kind: "schedule", rest: "0", in: map[string]any{"expression": "cron(0 3 * * ? *)"}, want: invoker{kind: "schedule", what: "cron(0 3 * * ? *)", copy: "cron(0 3 * * ? *)"}},
+		{kind: "schedule", rest: "0", want: invoker{kind: "schedule", what: "0", copy: "0"}},
+		{kind: "mapping", rest: "jobs", in: map[string]any{"source": "arn:aws:sqs:eu-west-1:1:jobs"}, want: invoker{kind: "queue", what: "jobs", copy: "arn:aws:sqs:eu-west-1:1:jobs"}},
+		{kind: "mapping", rest: "s", in: map[string]any{"source": "arn:aws:kinesis:eu-west-1:1:stream/clicks"}, want: invoker{kind: "stream", what: "clicks", copy: "arn:aws:kinesis:eu-west-1:1:stream/clicks"}},
+		{kind: "mapping", rest: "t", in: map[string]any{"source": "arn:aws:dynamodb:eu-west-1:1:table/orders/stream/2026"}, want: invoker{kind: "table stream", what: "2026", copy: "arn:aws:dynamodb:eu-west-1:1:table/orders/stream/2026"}},
+		{kind: "subscription", rest: "t", in: map[string]any{"topic": "arn:aws:sns:eu-west-1:1:orders"}, want: invoker{kind: "topic", what: "orders", copy: "arn:aws:sns:eu-west-1:1:orders"}},
+		{kind: "rule", rest: "0", in: map[string]any{"pattern": `{"source":["orders"]}`}, want: invoker{kind: "event rule", what: `{"source":["orders"]}`, copy: `{"source":["orders"]}`}},
+		{kind: "lbrule", rest: "0", in: map[string]any{"paths": []any{"/a", "/b"}}, want: invoker{kind: "alb", what: "/a, /b", copy: "/a, /b"}},
+		{kind: "wsroute", rest: "$connect", want: invoker{kind: "websocket", what: "$connect", copy: "$connect"}},
+		{kind: "notification", rest: "uploads", want: invoker{kind: "bucket", what: "uploads", copy: "uploads"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.want.kind+" "+tt.want.what, func(t *testing.T) {
+			got := invokerOf("id", tt.kind, tt.rest, tt.in)
+			tt.want.id = "id"
+			if got != tt.want {
+				t.Errorf("invokerOf = %+v, want %+v", got, tt.want)
+			}
+			if w := ansi.StringWidth(got.kind); w > labelWidth-2 {
+				t.Errorf("the kind %q is wider than a label", got.kind)
+			}
+		})
+	}
+}
+
+// TestActionsText checks actions are written with each service named once, in the order they
+// come.
+func TestActionsText(t *testing.T) {
+	tests := []struct {
+		actions []string
+		want    string
+	}{
+		{actions: []string{"sqs:SendMessage", "sqs:GetQueueUrl"}, want: "sqs SendMessage, GetQueueUrl"},
+		{actions: []string{"s3:GetObject", "dynamodb:Query", "s3:PutObject"}, want: "s3 GetObject, PutObject; dynamodb Query"},
+		{actions: []string{"*"}, want: "*"},
+		{actions: nil, want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			if got := actionsText(tt.actions); got != tt.want {
+				t.Errorf("actionsText = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 // TestOverviewLayout draws the overview with long values, a vpc, a drift notice and an error at
-// terminal sizes from the minimum up, and checks it stays inside the terminal.
+// terminal sizes from the minimum up, with the cursor on every row, and checks it stays inside
+// the terminal.
 func TestOverviewLayout(t *testing.T) {
 	long := strings.Repeat("very-long-value-", 10)
-	f := newFake(t)
+	f := fdFull(t)
 	st := f.states[ordersDev]
 	fn := st.Resources["function/api"]
 	var in map[string]any
@@ -384,15 +807,16 @@ func TestOverviewLayout(t *testing.T) {
 	}
 	in["environment"].(map[string]any)[long] = long + "日本語🚀"
 	in["role"] = "arn:aws:iam::123456789012:role/" + long
+	in["layers"] = []string{"arn:aws:lambda:eu-west-1:123456789012:layer:" + long + ":3"}
 	in["vpc"] = map[string]any{"subnetIds": []string{"subnet-" + long, "subnet-2"}, "securityGroupIds": []string{"sg-1"}}
 	fn.Inputs, _ = json.Marshal(in)
 	st.Resources["schedule/api/"+long] = &state.Resource{PhysicalID: "s"}
 	f.function = cli.FunctionState{State: "Failed", StateReason: long, CodeSHA256: "ff", Memory: 128, Timeout: 900, Runtime: long}
-	for _, size := range [][2]int{{78, 22}, {80, 24}, {100, 30}, {200, 60}} {
+	for _, size := range [][2]int{{78, 22}, {80, 24}, {100, 30}, {overviewTwoColumns + chromeWidth, 30}, {120, 40}, {200, 60}} {
 		w, h := size[0], size[1]
 		m := pressKeys(t, started(t, f), "enter")
 		m, _ = update(t, m, tea.WindowSizeMsg{Width: w, Height: h})
-		for _, k := range []string{"j", "G"} {
+		for range m.functionOverview().rowCount() + 1 {
 			lines := strings.Split(m.render(), "\n")
 			if len(lines) > h {
 				t.Errorf("%dx%d: %d lines", w, h, len(lines))
@@ -403,7 +827,7 @@ func TestOverviewLayout(t *testing.T) {
 					break
 				}
 			}
-			m = pressKeys(t, m, k)
+			m = pressKeys(t, m, "j")
 		}
 	}
 }

@@ -125,7 +125,7 @@ func TestFunctionOverview(t *testing.T) {
 	}
 	m = pressKeys(t, m, "enter")
 	v := screen(m)
-	for _, want := range []string{"last hour", "invocations", "▁", "active", "changed outside koldstart", "memory 1,024 → 2,048 mb", "4.0 mb"} {
+	for _, want := range []string{"last hour", "invocations", "█", "active", "changed outside koldstart", "memory 1,024 → 2,048 mb", "4.0 mb"} {
 		if !strings.Contains(v, want) {
 			t.Errorf("the overview has no %q:\n%s", want, v)
 		}
