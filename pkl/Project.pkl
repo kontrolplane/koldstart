@@ -256,7 +256,9 @@ class Throttling {
   burst: Int(isPositive)
 }
 
-class Resource {
+/// Another aws resource. `kdst.table()`, `kdst.queue()`, `kdst.bucket()` and `kdst.topic()` give
+/// one with its type and properties filled in, which amends as one written out does.
+open class Resource {
   /// The CloudFormation type name, such as `AWS::DynamoDB::Table`.
   type: String(matches(Regex(#"AWS::[A-Za-z0-9]+::[A-Za-z0-9]+"#)))
   /// The properties CloudFormation documents for the type.

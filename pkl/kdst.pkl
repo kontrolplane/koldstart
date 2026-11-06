@@ -1,5 +1,6 @@
 /// What a `koldstart.pkl` uses inside its functions and resources: `ref()`, the secrets, the
-/// stage, the events and the authorizers. Import it next to amending `Project.pkl`.
+/// stage, the events and their helpers, the resource shorthands and the authorizers. Import it
+/// next to amending `Project.pkl`.
 module koldstart.kdst
 
 import "Project.pkl"
@@ -63,6 +64,148 @@ local function relative(helper: String, absolute: String, prefix: String, name: 
 /// ```
 function stageOutput(appName: String, stageName: String, outputName: String): Project.StageOutput =
   new { app = appName; stage = stageName; output = outputName }
+
+/// A route of the stage's http api for GET requests to [path]: `kdst.get("/orders/{id}")`. The
+/// rest of an `HttpRoute` amends it: `(kdst.get("/orders")) { authorizer = "users" }`.
+function get(path: String): HttpRoute = route("GET", path)
+
+/// A route of the stage's http api for POST requests to [path]: `kdst.post("/orders")`.
+function post(path: String): HttpRoute = route("POST", path)
+
+/// A route of the stage's http api for PUT requests to [path].
+function put(path: String): HttpRoute = route("PUT", path)
+
+/// A route of the stage's http api for PATCH requests to [path].
+function patch(path: String): HttpRoute = route("PATCH", path)
+
+/// A route of the stage's http api for DELETE requests to [path]: `kdst.del("/orders/{id}")`.
+/// `delete` is a keyword of pkl.
+function del(path: String): HttpRoute = route("DELETE", path)
+
+/// A route of the stage's http api for HEAD requests to [path].
+function head(path: String): HttpRoute = route("HEAD", path)
+
+/// A route of the stage's http api for OPTIONS requests to [path].
+function options(path: String): HttpRoute = route("OPTIONS", path)
+
+/// A route of the stage's http api for requests of any method to [path]: `kdst.any("$default")`
+/// takes every request no other route does.
+function any(path: String): HttpRoute = route("ANY", path)
+
+/// A route of [routeMethod] requests to [routePath].
+local function route(routeMethod: String, routePath: String): HttpRoute =
+  new { method = routeMethod; path = routePath }
+
+/// An eventbridge scheduler schedule: `kdst.schedule("rate(1 hour)")`. The rest of a `Schedule`
+/// amends it: `(kdst.schedule("cron(0 9 ? * MON-FRI *)")) { timezone = "Europe/Amsterdam" }`.
+function schedule(scheduleExpression: String): Schedule = new { expression = scheduleExpression }
+
+/// An event source mapping from an sqs queue: a queue of this project by its name,
+/// `kdst.fromQueue("jobs")`, which is `kdst.ref("jobs", "Arn")`, or any queue by its arn. The rest
+/// of a `Queue` amends it: `(kdst.fromQueue("jobs")) { batchSize = 5 }`.
+function fromQueue(queueNameOrArn: Project.Value): Queue = new { queue = source(queueNameOrArn, "Arn") }
+
+/// An sns subscription: a topic of this project by its name, `kdst.fromTopic("alerts")`, which is
+/// `kdst.ref("alerts", "TopicArn")`, or any topic by its arn.
+function fromTopic(topicNameOrArn: Project.Value): Topic = new { topic = source(topicNameOrArn, "TopicArn") }
+
+/// An event source mapping from a kinesis stream: one of this project by its name,
+/// `kdst.fromStream("clicks")`, which is `kdst.ref("clicks", "Arn")`, or any stream by its arn.
+function fromStream(streamNameOrArn: Project.Value): Stream = new { stream = source(streamNameOrArn, "Arn") }
+
+/// An event source mapping from a dynamodb table's stream: a table of this project by its name,
+/// `kdst.fromTableStream("orders")`, which is `kdst.ref("orders", "StreamArn")`, or any table's
+/// stream by its arn. The table needs a `StreamSpecification`.
+function fromTableStream(tableNameOrStreamArn: Project.Value): Stream =
+  new { stream = source(tableNameOrStreamArn, "StreamArn") }
+
+/// An s3 bucket notification: a bucket of this project by its name, `kdst.fromBucket("uploads")`,
+/// which is `kdst.ref("uploads", "BucketName")`, or any bucket by its arn, `arn:aws:s3:::<name>`.
+/// The rest of a `Bucket` amends it: `(kdst.fromBucket("uploads")) { prefix = "incoming/" }`.
+function fromBucket(bucketNameOrArn: Project.Value): Bucket = new {
+  bucket =
+    if (bucketNameOrArn is String && bucketNameOrArn.startsWith("arn:"))
+      if (bucketNameOrArn.matches(Regex(#"arn:[a-z-]+:s3:::[^/]+"#)))
+        bucketNameOrArn.substring(bucketNameOrArn.indexOf(":::") + 3, bucketNameOrArn.length)
+      else throw("kdst.fromBucket(\"\(bucketNameOrArn)\"): not the arn of a bucket: give arn:aws:s3:::<name>, or the name of a bucket of this project")
+    else source(bucketNameOrArn, "BucketName")
+}
+
+/// An eventbridge rule on the default bus that sends the events matching [eventPattern], an
+/// object or json, to the function: `kdst.fromEventBridge(new Dynamic { source { "orders" } })`.
+/// Another bus amends it: `(kdst.fromEventBridge(pattern)) { bus = "orders" }`.
+function fromEventBridge(eventPattern: Dynamic|Mapping<String, Any>|String): EventRule =
+  new { pattern = eventPattern }
+
+/// A route of the stage's websocket api: `kdst.fromWebSocket("$connect")`.
+function fromWebSocket(routeKey: String): WebSocketRoute = new { route = routeKey }
+
+/// [nameOrArn] as it is when it is an arn or a value known only while deploying, else the
+/// attribute [attributeName] of the resource of this project it names.
+local function source(nameOrArn: Project.Value, attributeName: String): Project.Value =
+  if (nameOrArn is String && !nameOrArn.startsWith("arn:")) ref(nameOrArn, attributeName) else nameOrArn
+
+/// A dynamodb table of on-demand billing, with point-in-time recovery on, keyed by the attribute
+/// [partitionKeyName], a string: `kdst.table("id")`. A sort key, a key of another type and any
+/// other property amend it: `(kdst.table("customer")) { sortKey = "createdAt"; sortKeyType = "N" }`.
+function table(partitionKeyName: String): Table = new { partitionKey = partitionKeyName }
+
+/// An sqs queue that keeps a message for 14 days, the most sqs allows, rather than 4:
+/// `kdst.queue()`. sqs encrypts it with keys of its own, and hides a received message for 30
+/// seconds; a function with a longer timeout needs a longer one:
+/// `(kdst.queue()) { properties { VisibilityTimeout = 60 } }`.
+function queue(): Project.Resource = new {
+  type = "AWS::SQS::Queue"
+  properties { MessageRetentionPeriod = 1209600 }
+}
+
+/// An s3 bucket with all public access blocked and its objects encrypted with keys of s3:
+/// `kdst.bucket()`. Other properties amend it:
+/// `(kdst.bucket()) { properties { VersioningConfiguration { Status = "Enabled" } } }`.
+function bucket(): Project.Resource = new {
+  type = "AWS::S3::Bucket"
+  properties {
+    PublicAccessBlockConfiguration {
+      BlockPublicAcls = true
+      BlockPublicPolicy = true
+      IgnorePublicAcls = true
+      RestrictPublicBuckets = true
+    }
+    BucketEncryption {
+      ServerSideEncryptionConfiguration { new { ServerSideEncryptionByDefault { SSEAlgorithm = "AES256" } } }
+    }
+  }
+}
+
+/// An sns topic: `kdst.topic()`.
+function topic(): Project.Resource = new { type = "AWS::SNS::Topic" }
+
+/// The type of a key of a dynamodb table: `S` a string, `N` a number, `B` binary.
+typealias KeyType = "S"|"N"|"B"
+
+/// A dynamodb table, as `kdst.table()` gives it: on-demand billing and point-in-time recovery,
+/// with the keys below. Its properties amend it as any resource's do.
+class Table extends Project.Resource {
+  type = "AWS::DynamoDB::Table"
+  /// The attribute of the partition key.
+  hidden partitionKey: String(!isEmpty)
+  hidden partitionKeyType: KeyType = "S"
+  /// The attribute of the sort key, when the table has one.
+  hidden sortKey: String(!isEmpty)?
+  hidden sortKeyType: KeyType = "S"
+  properties {
+    BillingMode = "PAY_PER_REQUEST"
+    AttributeDefinitions {
+      new { AttributeName = partitionKey; AttributeType = partitionKeyType }
+      when (sortKey != null) { new { AttributeName = sortKey; AttributeType = sortKeyType } }
+    }
+    KeySchema {
+      new { AttributeName = partitionKey; KeyType = "HASH" }
+      when (sortKey != null) { new { AttributeName = sortKey; KeyType = "RANGE" } }
+    }
+    PointInTimeRecoverySpecification { PointInTimeRecoveryEnabled = true }
+  }
+}
 
 /// A route on the stage's http api.
 class HttpRoute extends Project.Event {
