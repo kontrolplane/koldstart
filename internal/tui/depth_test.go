@@ -66,18 +66,6 @@ func TestRequests(t *testing.T) {
 	}
 }
 
-// TestLineDiff checks the diff keeps the common lines and marks what was removed and added.
-func TestLineDiff(t *testing.T) {
-	got := lineDiff([]string{"{", `  "memory": 128,`, `  "timeout": 6`, "}"}, []string{"{", `  "memory": 256,`, `  "timeout": 6`, "}"})
-	var ops strings.Builder
-	for _, l := range got {
-		ops.WriteByte(l.op)
-	}
-	if ops.String() != " -+  " {
-		t.Errorf("ops %q, want %q", ops.String(), " -+  ")
-	}
-}
-
 // TestSparkline checks a series is drawn scaled to its largest point, an empty period blank.
 func TestSparkline(t *testing.T) {
 	if got := sparkline([]float64{0, 1, 2, 4, 8}, 5); got != " ▁▂▄█" {

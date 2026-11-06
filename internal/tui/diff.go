@@ -256,6 +256,7 @@ func (d *diffState) unfold() {
 	}
 	d.opened[l.rows[r].fold] = true
 	d.folds++
+	d.scroll = d.top(d.layout(diffTextWidth()))
 }
 
 // toggleFolds shows every line, or folds them again, keeping the change navigated to in sight.
@@ -264,6 +265,7 @@ func (d *diffState) toggleFolds() {
 	d.opened = map[int]bool{}
 	d.folds++
 	l := d.layout(diffTextWidth())
+	d.scroll = d.top(l)
 	if d.change >= 0 && d.change < len(l.changes) {
 		d.reveal(l, d.change)
 	}
@@ -604,7 +606,7 @@ func (m model) diffLines() lazyLines {
 func (m model) diffPosition() string {
 	d := m.state.diff
 	l := d.layout(diffTextWidth())
-	parts := []string{scrollCue(d.scroll, contentHeight, d.total(l))}
+	parts := []string{scrollCue(d.top(l), contentHeight, d.total(l))}
 	if d.change >= 0 && d.change < len(l.changes) {
 		parts = append(parts, "change "+formatInt(d.change+1)+" of "+formatInt(len(l.changes)))
 	}
