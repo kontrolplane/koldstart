@@ -414,7 +414,7 @@ func TestNavBreadcrumb(t *testing.T) {
 		{page: "stage", want: "stages › orders/dev › functions ─"},
 		{page: "function", want: "stages › orders/dev › functions › api › overview ─"},
 		{page: "logs", want: "stages › orders/dev › functions › api › logs ─"},
-		{page: "invocation", want: "stages › orders/dev › functions › api › invocations › 33333333-333 ─"},
+		{page: "invocation", want: "stages › orders/dev › functions › api › invocations › 33333333 ─"},
 		{page: "resource", want: "stages › orders/dev › resources › resource/table ─"},
 		{page: "plan", want: "stages › orders/dev › deploy ─"},
 		{page: "diff", want: "stages › orders/dev › deploy › function/api ─"},

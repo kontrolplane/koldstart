@@ -446,7 +446,7 @@ func TestPerfPages(t *testing.T) {
 // perfFresh is a page with every cache of what it drew emptied, so it draws everything anew.
 func perfFresh(m model) model {
 	m.state.function.logs.cache = newRowCache()
-	m.state.invocation.cache = newRowCache()
+	m.state.invocation.cache = &invocationCache{}
 	results := make(map[string]invocationResult, len(m.state.function.results))
 	for k, r := range m.state.function.results {
 		r.wrapped = &resultRows{}

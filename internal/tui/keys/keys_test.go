@@ -54,13 +54,21 @@ func TestHelp(t *testing.T) {
 	}
 }
 
-// TestKeysAreUnique checks no key is bound twice, so no binding shadows another.
+// shared are the keys two bindings share, each working on pages the other does nothing on: n
+// answers no on a dialog and steps to the next invocation on one, p pauses a page that refreshes
+// and steps to the previous invocation on one, which does not.
+var shared = map[string][2]string{"n": {"No", "Next"}, "p": {"Pause", "Previous"}}
+
+// TestKeysAreUnique checks no key is bound twice, but the ones shared, so no binding shadows
+// another.
 func TestKeysAreUnique(t *testing.T) {
 	seen := map[string]string{}
 	for name, b := range bindings() {
 		for _, k := range b.Keys() {
 			if other, ok := seen[k]; ok {
-				t.Errorf("%q is bound to %s and %s", k, other, name)
+				if pair := shared[k]; !slices.Contains(pair[:], name) || !slices.Contains(pair[:], other) {
+					t.Errorf("%q is bound to %s and %s", k, other, name)
+				}
 			}
 			seen[k] = name
 		}

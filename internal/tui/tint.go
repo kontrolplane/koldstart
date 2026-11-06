@@ -1,7 +1,10 @@
 package tui
 
 import (
+	"bytes"
+	"encoding/json"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -66,14 +69,23 @@ func isLevelKey(key string) bool {
 // valueLevelTone is the tone of a level written as a value of json or logfmt, a word or pino's
 // number: error and worse in danger, a warning in warning, the rest in the body ink.
 func valueLevelTone(level string) styles.Tone {
-	switch levelName(level) {
-	case "error", "fatal", "crit", "panic":
-		return styles.ToneDanger
-	case "warn":
-		return styles.ToneWarning
+	if tone := levelTone(levelName(level)); tone == styles.ToneDanger || tone == styles.ToneWarning {
+		return tone
 	}
 	return styles.ToneBody
 }
+
+// The levels levelName writes.
+const (
+	levelTrace = "trace"
+	levelDebug = "debug"
+	levelInfo  = "info"
+	levelWarn  = "warn"
+	levelError = "error"
+	levelFatal = "fatal"
+	levelCrit  = "crit"
+	levelPanic = "panic"
+)
 
 // levelName is a level as the invocation page writes it, lowercase and at most five wide: pino's
 // numbers by the names it gives them, 50 as error, and the names loggers spell differently as one,
@@ -82,31 +94,31 @@ func levelName(level string) string {
 	if n, err := strconv.Atoi(level); err == nil {
 		switch {
 		case n >= 60:
-			return "fatal"
+			return levelFatal
 		case n >= 50:
-			return "error"
+			return levelError
 		case n >= 40:
-			return "warn"
+			return levelWarn
 		case n >= 30:
-			return "info"
+			return levelInfo
 		case n >= 20:
-			return "debug"
+			return levelDebug
 		}
-		return "trace"
+		return levelTrace
 	}
 	switch l := strings.ToLower(level); l {
 	case "warning":
-		return "warn"
+		return levelWarn
 	case "err":
-		return "error"
+		return levelError
 	case "critical":
-		return "crit"
+		return levelCrit
 	case "dpanic":
-		return "panic"
+		return levelPanic
 	case "information":
-		return "info"
+		return levelInfo
 	default:
-		return truncateBytes(l, 5)
+		return truncateBytes(l, levelWidth)
 	}
 }
 
@@ -355,13 +367,13 @@ func tintNode(line string) (cell, bool) {
 // warning, info muted and debug and trace faint.
 func levelTone(name string) styles.Tone {
 	switch name {
-	case "error", "fatal", "crit", "panic":
+	case levelError, levelFatal, levelCrit, levelPanic:
 		return styles.ToneDanger
-	case "warn":
+	case levelWarn:
 		return styles.ToneWarning
-	case "info":
+	case levelInfo:
 		return styles.ToneMuted
-	case "debug", "trace":
+	case levelDebug, levelTrace:
 		return styles.ToneFaint
 	}
 	return styles.ToneBody
@@ -535,12 +547,7 @@ func goInternalCall(call string) bool {
 	if i := strings.IndexAny(first, "/.("); i >= 0 {
 		first = first[:i]
 	}
-	for _, std := range goStd {
-		if first == std {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(goStd, first)
 }
 
 // wrapCell breaks a cell into lines of at most width columns, keeping each span's tone. A line
@@ -676,4 +683,313 @@ func markedLogCells(message, mark string, width int) []cell {
 		out = append(out, wrapCell(highlight(c, mark), width)...)
 	}
 	return out
+}
+
+// jsonField is a field of a json object, in the order of the line.
+type jsonField struct {
+	key   string
+	value json.RawMessage
+}
+
+// jsonFields reads the fields of the json object s, in their order, and whether s is one.
+func jsonFields(s string) ([]jsonField, bool) {
+	dec := json.NewDecoder(strings.NewReader(s))
+	dec.UseNumber()
+	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
+		return nil, false
+	}
+	var out []jsonField
+	for dec.More() {
+		t, err := dec.Token()
+		key, ok := t.(string)
+		if err != nil || !ok {
+			return nil, false
+		}
+		var v json.RawMessage
+		if err := dec.Decode(&v); err != nil {
+			return nil, false
+		}
+		out = append(out, jsonField{key, v})
+	}
+	if t, err := dec.Token(); err != nil || t != json.Delim('}') {
+		return nil, false
+	}
+	return out, true
+}
+
+// text is a field's value as it reads: a string without its quotes, anything else as json writes
+// it, compact.
+func (f jsonField) text() string {
+	v := bytes.TrimSpace(f.value)
+	if len(v) > 0 && v[0] == '"' {
+		var s string
+		if json.Unmarshal(v, &s) == nil {
+			return s
+		}
+	}
+	var b bytes.Buffer
+	if len(v) > 0 && (v[0] == '{' || v[0] == '[') && json.Compact(&b, v) == nil {
+		return b.String()
+	}
+	return string(v)
+}
+
+// fieldOf is the first of fields named one of keys, ignoring case.
+func fieldOf(fields []jsonField, keys ...string) (jsonField, bool) {
+	for _, f := range fields {
+		if keyIn(f.key, keys...) {
+			return f, true
+		}
+	}
+	return jsonField{}, false
+}
+
+// keyIn reports whether key is one of keys, ignoring case.
+func keyIn(key string, keys ...string) bool {
+	for _, k := range keys {
+		if strings.EqualFold(key, k) {
+			return true
+		}
+	}
+	return false
+}
+
+var (
+	// timeKeys are the fields loggers write the time in, which the offset of a line shows.
+	timeKeys = []string{"time", "timestamp", "ts", "@timestamp", "datetime"}
+	// headKeys are the fields powertools adds to each line that the head of the page shows.
+	headKeys = []string{"cold_start", "function_name", "function_arn", "function_memory_size", "function_request_id"}
+	// requestKeys are the fields loggers write the request id in, dropped when they hold the one
+	// of the page.
+	requestKeys = []string{"requestId", "request_id", "aws_request_id", "awsRequestId", "reqId"}
+	// stackKeys are the fields loggers and the runtimes write a stack trace in.
+	stackKeys = []string{"stack", "stacktrace", "stack_trace", "stackTrace", "trace", "exception", "traceback"}
+)
+
+// fieldWidth is the widest the value of a field of json is shown on the invocation page; the logs
+// show it whole.
+const fieldWidth = 40
+
+// shownLine is a line of the log as the invocation page shows it: the level it was logged at,
+// what it says on one line, and the lines under it, of a stack trace or the rest of the message.
+type shownLine struct {
+	level string
+	body  cell
+	more  []string
+	// block says more is a stack trace from a field of json.
+	block bool
+	// frame is what the line is in a stack trace, as each line of go's panic is an event of its
+	// own.
+	frame stackLine
+}
+
+// readLogLine reads a raw line of the log of request id as the invocation page shows it, without
+// the time and request id the page shows already. A line of json is its level, its message, and
+// its other fields as faint key=value pairs, each value cut to fieldWidth, with the stack trace
+// it holds under it.
+func readLogLine(raw, id string) shownLine {
+	lines := messageLines(colours.ReplaceAllString(raw, ""))
+	var l shownLine
+	first, rest := l.dropPrefix(lines[0], id), lines[1:]
+	if obj := strings.TrimSpace(first); strings.HasPrefix(obj, "{") {
+		if fields, ok := jsonFields(strings.Join(append([]string{obj}, rest...), "\n")); ok {
+			l.fromJSON("", fields, id)
+			return l
+		}
+	}
+	if i := strings.Index(first, `{"`); i > 0 && len(rest) == 0 {
+		if fields, ok := jsonFields(first[i:]); ok {
+			l.fromJSON(strings.TrimSpace(first[:i]), fields, id)
+			return l
+		}
+	}
+	if len(rest) == 0 && first == lines[0] {
+		if l.frame = stackLines(lines, false)[0]; l.frame.kind != notFrame {
+			l.body = text(strings.TrimLeft(first, " \t"), l.frame.tone())
+			return l
+		}
+	}
+	l.body = tint(styles.Clean(first))
+	if strings.HasPrefix(first, "Error: Runtime exited") {
+		l.body = cell{styles.S(first, styles.ToneDanger)}
+	}
+	l.more = rest
+	return l
+}
+
+// dropPrefix takes off what a runtime writes in front of a message: the time and request id of a
+// node or python line, keeping the level it names, a leading time, and the request id after it.
+func (l *shownLine) dropPrefix(line, id string) string {
+	if parts := strings.SplitN(line, "\t", 4); len(parts) == 4 {
+		if _, ok := levelTones[parts[2]]; ok && leadingTimestamp(parts[0]+" ") > 0 {
+			l.level = levelName(parts[2])
+			return parts[3]
+		}
+		if level := pythonLevel(parts[0]); level != "" && leadingTimestamp(parts[1]+" ") > 0 {
+			l.level = level
+			return parts[3]
+		}
+	}
+	if word, rest, ok := strings.Cut(line, " "); ok {
+		if level := pythonLevel(word); level != "" {
+			l.level = level
+			return rest
+		}
+	}
+	if rest, ok := strings.CutPrefix(line, "RequestId: "+id+" "); ok && id != "" {
+		return rest
+	}
+	if n := leadingTimestamp(line); n > 0 && n < len(line) {
+		line = line[n:]
+		if rest, ok := strings.CutPrefix(line, id+" "); ok && id != "" {
+			line = rest
+		}
+	}
+	return line
+}
+
+// fromJSON reads the fields of a line of json, after prefix, the words a runtime writes before
+// it, as Invoke Error. The level and the message come first, then an error, then the rest in the
+// order of the line, without those the page shows already: the time, the request id, and what
+// powertools says of the function.
+func (l *shownLine) fromJSON(prefix string, fields []jsonField, id string) {
+	var message, kind, errMessage string
+	var errs, rest cell
+	for _, f := range fields {
+		switch {
+		case isLevelKey(f.key):
+			l.level = levelName(f.text())
+		case message == "" && keyIn(f.key, "msg", "message"):
+			message = f.text()
+		case keyIn(f.key, "errorType"):
+			kind = f.text()
+		case keyIn(f.key, "errorMessage"):
+			errMessage = f.text()
+		case keyIn(f.key, timeKeys...), keyIn(f.key, headKeys...), keyIn(f.key, requestKeys...) && f.text() == id:
+		case keyIn(f.key, stackKeys...) && l.more == nil && len(stackOf(f.value)) > 0:
+			l.more, l.block = stackOf(f.value), true
+		case keyIn(f.key, "err", "error"):
+			errs = append(errs, l.errorField(f)...)
+		default:
+			rest = append(rest, fieldSpans(f.key, f.text(), styles.ToneMuted)...)
+		}
+	}
+	headline := message
+	if lambda := joinNonEmpty(kind, errMessage); lambda != "" {
+		headline = joinNonEmpty(headline, lambda)
+		l.dropRepeat(lambda)
+	}
+	if first, more, ok := strings.Cut(headline, "\n"); ok && l.more == nil {
+		headline, l.more = first, messageLines(more)
+	}
+	var body cell
+	if prefix != "" {
+		body = append(body, styles.S(prefix, styles.ToneMuted), sep())
+	}
+	if headline != "" {
+		body = append(body, styles.S(headline, styles.ToneText))
+	}
+	for _, s := range append(errs, rest...) {
+		if s.Text == "  " && (len(body) == 0 || body[len(body)-1] == sep()) {
+			continue
+		}
+		body = append(body, s)
+	}
+	l.body = body
+}
+
+// errorField is a field of json that holds an error: a string, or an object of its type, its
+// message and its stack trace, as pino writes one, which goes under the line.
+func (l *shownLine) errorField(f jsonField) cell {
+	nested, ok := jsonFields(string(f.value))
+	if !ok {
+		return fieldSpans(f.key, f.text(), styles.ToneBody)
+	}
+	var kind, message string
+	if t, ok := fieldOf(nested, "type", "name"); ok {
+		kind = t.text()
+	}
+	if m, ok := fieldOf(nested, "message"); ok {
+		message = m.text()
+	}
+	if s, ok := fieldOf(nested, stackKeys...); ok && l.more == nil {
+		l.more, l.block = stackOf(s.value), true
+		l.dropRepeat(joinNonEmpty(kind, message))
+	}
+	if kind == "" && message == "" {
+		return fieldSpans(f.key, f.text(), styles.ToneBody)
+	}
+	return fieldSpans(f.key, joinNonEmpty(kind, message), styles.ToneBody)
+}
+
+// dropRepeat drops the first line of a stack trace when it says again what the line does, as the
+// stack of node's errors starts with their type and message.
+func (l *shownLine) dropRepeat(said string) {
+	if len(l.more) > 0 && said != "" && strings.TrimSpace(l.more[0]) == said {
+		l.more = l.more[1:]
+	}
+}
+
+// fieldSpans are the spans of a field of json beside the message: two spaces, its key and = faint,
+// and its value in tone, cut to fieldWidth, and quoted when it is empty or holds a space.
+func fieldSpans(key, value string, tone styles.Tone) cell {
+	value = truncate(styles.Clean(value), fieldWidth)
+	if value == "" || strings.ContainsAny(value, " =") {
+		value = `"` + value + `"`
+	}
+	return cell{styles.S("  ", styles.ToneFaint), styles.S(key+"=", styles.ToneFaint), styles.S(value, tone)}
+}
+
+// stackOf is the lines of the stack trace a field of json holds: a string of more than one line,
+// an array of them, or an array of frames, as aws-lambda-go writes, of a label, a path and a line.
+func stackOf(v json.RawMessage) []string {
+	v = bytes.TrimSpace(v)
+	if len(v) == 0 {
+		return nil
+	}
+	switch v[0] {
+	case '"':
+		var s string
+		if json.Unmarshal(v, &s) != nil {
+			return nil
+		}
+		if lines := messageLines(s); len(lines) > 1 {
+			return lines
+		}
+		return nil
+	case '[':
+		var items []json.RawMessage
+		if json.Unmarshal(v, &items) != nil {
+			return nil
+		}
+		var out []string
+		for _, item := range items {
+			var frame struct {
+				Label string      `json:"label"`
+				Path  string      `json:"path"`
+				Line  json.Number `json:"line"`
+			}
+			var s string
+			switch {
+			case json.Unmarshal(item, &s) == nil:
+				out = append(out, messageLines(s)...)
+			case json.Unmarshal(item, &frame) == nil && frame.Path != "":
+				out = append(out, frame.Label+"()", "\t"+frame.Path+":"+frame.Line.String())
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// joinNonEmpty joins a and b as an error and what it says, TypeError: boom, or is the one of
+// them that is not empty.
+func joinNonEmpty(a, b string) string {
+	switch {
+	case a == "":
+		return b
+	case b == "":
+		return a
+	}
+	return a + ": " + b
 }

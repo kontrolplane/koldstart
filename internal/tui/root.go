@@ -517,7 +517,7 @@ func (m model) trail(p page) []string {
 		}
 		return append(m.trail(from), m.state.diff.title)
 	case invocationPage:
-		return append(m.trail(functionPage), shortSHA(m.state.invocation.req.id))
+		return append(m.trail(functionPage), shortRequest(m.state.invocation.req.id))
 	case outputPage:
 		return []string{crumbStages, ref, stageTabs[outputsTab], m.state.output.name}
 	}
@@ -839,7 +839,7 @@ func (m model) shortHelp() [][2]string {
 	case diffPage:
 		return m.diffHints()
 	case invocationPage:
-		return [][2]string{scrollHint, hint(k.Copy, "copy id"), hint(k.Help), hint(k.Quit)}
+		return [][2]string{scrollHint, {k.Next.Help().Key + "/" + k.Previous.Help().Key, "next/previous"}, hint(k.Copy, "copy id"), hint(k.Help), hint(k.Quit)}
 	case outputPage:
 		return [][2]string{scrollHint, hint(k.Copy, "copy the value"), hint(k.Refresh), hint(k.Help), hint(k.Quit)}
 	case planPage:
@@ -939,7 +939,7 @@ func helpSections(k keys.KeyMap) []helpSection {
 		{"function", [][2]string{
 			{name(k.Invoke), "invoke in aws"}, {name(k.RunLocal), "run on this machine"}, {name(k.EditEvent), "edit the event"},
 			{name(k.Deploy), "plan its code"}, {name(k.Follow), "follow the logs"}, {name(k.Filter), "filter the logs"},
-			{"↑ at top", "older logs"}, {name(k.View), "open the row"},
+			{"↑ at top", "older logs"}, {name(k.View), "open the row"}, {name(k.Next) + " " + name(k.Previous), "step invocations"},
 		}},
 		{"diff", [][2]string{
 			{name(k.NextDiff) + " " + name(k.PrevDiff), "next / previous change"}, {name(k.View), "unfold the lines in sight"},

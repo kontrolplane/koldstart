@@ -192,6 +192,6 @@ func (m model) resize() model {
 	}
 	f := &m.state.function
 	f.events.setSize(eventsWidth(), functionBodyHeight()-tableHeaderRows)
-	f.invocations.setSize(tableWidth(), functionBodyHeight()-tableHeaderRows)
+	f.invocations.setSize(tableWidth(), invocationsTableHeight())
 	return m
 }

@@ -94,7 +94,7 @@ func (m model) openFunction(name string) (model, tea.Cmd) {
 			logs:        newLogState(),
 		}
 		f.events.setSize(eventsWidth(), functionBodyHeight()-tableHeaderRows)
-		f.invocations.setSize(tableWidth(), functionBodyHeight()-tableHeaderRows)
+		f.invocations.setSize(tableWidth(), invocationsTableHeight())
 	}
 	m = m.switchPage(functionPage).syncFunction()
 	m = m.readEventFiles()

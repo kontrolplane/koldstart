@@ -32,6 +32,14 @@ func TestFailure(t *testing.T) {
 		{name: "report of an error", line: "REPORT RequestId: 1\tDuration: 2.00 ms\tStatus: error\tError Type: Runtime.Unknown", failed: true},
 		{name: "timeout", line: "2026-11-05T10:00:06.000Z 1 Task timed out after 6.00 seconds", failed: true, timedOut: true},
 		{name: "report of a timeout", line: "REPORT RequestId: 1\tDuration: 6000.00 ms\tStatus: timeout", failed: true, timedOut: true},
+		{name: "a python crash", line: "[ERROR] KeyError: 'id'\rTraceback (most recent call last):", failed: true},
+		{name: "python's logging at error", line: "[ERROR]\t2026-11-05T10:00:00.001Z\t1\tcould not store", failed: true},
+		{name: "python's logging at info", line: "[INFO]\t2026-11-05T10:00:00.001Z\t1\terrors none", failed: false},
+		{name: "pino's error", line: `{"level":50,"msg":"could not store"}`, failed: true},
+		{name: "pino's fatal", line: `{"level": 60, "msg":"down"}`, failed: true},
+		{name: "pino's info", line: `{"level":30,"msg":"stored"}`, failed: false},
+		{name: "a go panic", line: "panic: assignment to entry in nil map", failed: true},
+		{name: "a message about a panic", line: "no panic: all good", failed: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -88,7 +96,7 @@ func TestInvocationTakesItsReport(t *testing.T) {
 	f.logs.lines = append(f.logs.lines, cli.LogEvent{Time: at.Add(2 * time.Millisecond), Stream: "a",
 		Message: "REPORT RequestId: " + id + "\tDuration: 2.00 ms\tBilled Duration: 2 ms\tMemory Size: 128 MB\tMax Memory Used: 60 MB"})
 	m = m.updateRequests()
-	if v := screen(m); !strings.Contains(v, "✓ ok") || !strings.Contains(v, "duration 2ms") || !strings.Contains(v, "REPORT") {
+	if v := screen(m); !strings.Contains(v, "✓ ok") || !strings.Contains(v, "2ms · billed 2ms") || strings.Contains(v, "REPORT") {
 		t.Errorf("the invocation once reported:\n%s", v)
 	}
 }

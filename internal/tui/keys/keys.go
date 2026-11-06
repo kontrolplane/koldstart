@@ -31,6 +31,10 @@ type KeyMap struct {
 	NextDiff  key.Binding
 	PrevDiff  key.Binding
 	Unfold    key.Binding
+	// Next and Previous step through the invocations from one of them, a page with no dialog to
+	// answer and nothing to pause, so they share n and p with No and Pause.
+	Next      key.Binding
+	Previous  key.Binding
 	Refresh   key.Binding
 	Pause     key.Binding
 	Yes       key.Binding
@@ -69,6 +73,8 @@ var Keys = KeyMap{
 	NextDiff:  key.NewBinding(key.WithKeys("]"), key.WithHelp("]", "next change")),
 	PrevDiff:  key.NewBinding(key.WithKeys("["), key.WithHelp("[", "previous change")),
 	Unfold:    key.NewBinding(key.WithKeys("z"), key.WithHelp("z", "unfold all")),
+	Next:      key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "next")),
+	Previous:  key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "previous")),
 	Refresh:   key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 	Pause:     key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "pause")),
 	Yes:       key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "yes")),
