@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -24,7 +23,12 @@ func outputsCommand(name string, opts *Options) *cobra.Command {
 		Short: "print the stage's outputs, such as the http api url",
 		Long: `outputs prints the outputs the last deploy of the stage recorded: those of the configuration,
 httpApiUrl, webSocketUrl and a <function>Url for each function url. -o json prints them as one
-json object, {} when there are none.`,
+json object of strings, its keys sorted, and {} when there are none:
+
+  {
+    "apiUrl": "https://abc123.lambda-url.eu-west-1.on.aws/",
+    "httpApiUrl": "https://abc123.execute-api.eu-west-1.amazonaws.com"
+  }`,
 		Example: fmt.Sprintf(`  %[1]s outputs
   %[1]s outputs --stage prod
   %[1]s outputs -o json | jq -r .httpApiUrl`, name),
@@ -152,8 +156,5 @@ func writeOutputsJSON(w io.Writer, outputs map[string]string) error {
 	if outputs == nil {
 		outputs = map[string]string{}
 	}
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	enc.SetEscapeHTML(false)
-	return enc.Encode(outputs)
+	return writeJSON(w, outputs)
 }

@@ -3,7 +3,6 @@ package cli
 
 import (
 	"cmp"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -176,7 +175,16 @@ func versionCommand(name string) *cobra.Command {
 		Use:   "version",
 		Short: "print the version",
 		Long: `version prints the version of this binary. -o json prints it with the commit, the build date,
-the version of go and the platform it was built for.`,
+the version of go and the platform it was built for, as one json object with its keys sorted:
+
+  {
+    "commit": "0123456789abcdef0123456789abcdef01234567",
+    "date": "2026-11-04T00:00:00Z",
+    "go": "go1.26.0",
+    "modified": false,
+    "platform": "linux/amd64",
+    "version": "v0.1.0"
+  }`,
 		Example: fmt.Sprintf(`  %[1]s version
   %[1]s version -o json
   %[1]s version -o json | jq -r .commit`, name),
@@ -212,9 +220,7 @@ func printVersion(w io.Writer, output string, info version.Info) error {
 		_, err := fmt.Fprintln(w, info)
 		return err
 	case outputJSON:
-		enc := json.NewEncoder(w)
-		enc.SetIndent("", "  ")
-		return enc.Encode(info)
+		return writeJSON(w, info)
 	default:
 		return fmt.Errorf("-o %q: want text or json", output)
 	}
