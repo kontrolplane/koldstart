@@ -36,6 +36,12 @@ The state keeps the inputs every node was last applied with, so a plan shows wha
 
 `kdst plan --refresh` does read them. It reads every resource of the state as it is in aws. One that is gone, because something outside koldstart deleted it, is created again, marked `(deleted outside koldstart)`, and what refers to it is updated. Some types say which inputs were changed outside koldstart: functions, through lambda, and resources, through cloud control, where what aws adds and the order of lists don't count. Such a resource is updated from how it is now, so the change is set back, under a line such as `changed outside koldstart: memory, timeout`. For the other types, the plan only says whether they are still there. With nothing to do, it says `no changes: what is in aws matches the configuration`. `kdst deploy --refresh` applies such a plan, and the ui's `r` on a plan makes one.
 
+`kdst plan -o json` prints the same plan as one json object on stdout, its keys sorted, for a script to read. It has the `app`, `stage`, `region`, `account` and whether it was `refreshed`; `counts` of the changes by action, `{}` with none; and `changes`, `[]` with none, in the order the text plan lists them. A change has its `action`, one of `create`, `update`, `replace`, `delete`, `keep` and `adopt`, its `id` and its `type`. An update, replace or adopt has `fields`, each input it changes as `field`, `before` and `after`, a resource's properties one by one as `properties.<name>`, or `secretChanged` when only a secret or another stage's output changed. `drift`, `resume` and `gone` are there when the text plan marks a change so. A secret is shown by what it stands for, `ssm:/orders/api-key`, and a value not known yet as `known after apply`:
+
+```bash
+kdst plan --stage prod -o json | jq -e '[.changes[] | select(.action == "replace" or .action == "delete")] | length == 0'
+```
+
 ## applying
 
 `kdst deploy` prints the plan, asks, `apply this plan? [y/N]`, or goes on with `--yes`, and applies it in dependency order, eight nodes at a time where they do not depend on each other. A plan with no changes is not asked about. Deletes come last and go the other way, so nothing is removed while something still points at it. A plan made against a state that has changed since is refused.
@@ -70,6 +76,28 @@ wait for it to finish, or, when it is gone, release the lock with kdst unlock --
 The lock is removed when the deploy ends, whether it succeeded or not, also when it was stopped with ctrl+c or a SIGTERM. `plan` and `outputs` take no lock.
 
 A lock outlives its deploy only when the process was killed. `kdst unlock` removes it, after showing who took it and when and asking, or without asking with `--yes`; the ui's `ctrl+x` does the same. Every write of the state is also conditional, on the version the deploy last read, so a deploy that went on after its lock was released stops at its next write instead of overwriting another's.
+
+## output
+
+What a command is asked for goes to stdout, and what it says along the way, progress, notes and errors, to stderr, so stdout can be piped. `-o json` on `version`, `outputs`, `plan` and `logs` prints json for a script: sorted keys, nothing escaped for html, a newline at the end, and nothing else on stdout. `version`, `outputs` and `plan` print one object, indented by two spaces; `outputs` prints `{}` when there are none.
+
+`kdst logs -o json` prints one object a line, with the event's `timestamp` in utc to the millisecond, its log `stream`, its `message` as the function wrote it, and, when the message is a json object, its `fields`:
+
+```json
+{"fields":{"level":"ERROR","message":"payment failed","orderId":42},"message":"{\"level\":\"ERROR\",\"message\":\"payment failed\",\"orderId\":42}","stream":"2026/11/06/[$LATEST]0123abcd","timestamp":"2026-11-06T10:00:00.123Z"}
+```
+
+Without `-o json`, on a terminal, a line of json a structured logger wrote, such as powertools, pino, zap or python's logging, is shown with its level, tinted, and its message first, and its other fields faint after them: `ERROR  payment failed  orderId=42`. Piped, every line is as the function wrote it.
+
+`kdst invoke` prints what the function returned on stdout. Piped, it is byte for byte what lambda returned, so `kdst invoke -f api | jq` reads it as the function wrote it; on a terminal, json is indented and its keys, strings and numbers coloured. A function that fails prints nothing on stdout: the type and message of its error go to stderr, with its stack trace indented under them, and invoke exits with 1:
+
+```text
+error: api failed: TypeError: Cannot read properties of undefined (reading 'id')
+    at handler (file:///var/task/index.mjs:4:22)
+see its logs with kdst logs -f api --stage dev
+```
+
+Colour is off when the output is not a terminal, `NO_COLOR` is set or `TERM` is `dumb`.
 
 ## failures
 

@@ -119,7 +119,7 @@ kdst plan
 kdst deploy
 ```
 
-`plan` prints a line for each change, `+` to create, `~` to update, `-/+` to replace and `-` to delete, and counts them: `7 to create`. `deploy` prints the same plan and asks before applying it. While it applies, a line on stderr says what was done to each resource and how long it took, `✓ function/api  created in 1.2s`, and it ends with what it did, `deployed orders/dev in 9.8s: 7 created`.
+`plan` prints a line for each change, `+` to create, `~` to update, `-/+` to replace and `-` to delete, and counts them: `7 to create`. `deploy` prints the same plan and asks before applying it. While it applies, a line on stderr says what was done to each resource and how long it took, `✓ function/api  created in 1.2s`, and it ends with what it did, `deployed orders/dev in 9.8s: 7 created`. `plan -o json` prints the plan as one json object, for a script to check before a deploy.
 
 The first deploy in an account and region also creates the state bucket. When it finishes, it prints the outputs, the url of the http api, `httpApiUrl`, among them. `outputs` prints them again, and `-o json` prints them as one json object for a script:
 
@@ -133,6 +133,12 @@ Invoke a function with an event from a file or inline, and follow its logs:
 ```bash
 kdst invoke -f api --path events/get-order.json
 kdst logs -f api --tail
+```
+
+On a terminal, `invoke` indents and colours the json the function returned, and piped it prints it byte for byte, so `kdst invoke -f api | jq` works. A function that fails prints its error and stack trace on stderr and exits with 1. `logs` shows a line of json from a structured logger, such as powertools, pino or zap, with its level and message first, and `-o json` prints each event as one json object a line:
+
+```bash
+kdst logs -f api --since 1h -o json | jq -r 'select(.fields.level == "ERROR") | .message'
 ```
 
 After changing only a function's code, deploy just that function. It replaces the code in place without asking, and refuses when the function's configuration changed too:
@@ -304,7 +310,7 @@ A few more environment variables change what koldstart does:
 | ------------------------------------ | ---------------------------------------------------------------------------- |
 | `KOLDSTART_PKL`                      | the pkl binary to evaluate configuration with                                |
 | `AWS_ENDPOINT_URL`                   | an endpoint for every aws api, such as an emulator; `endpoint_url` in a profile does the same, as in [hack/floci/aws-config](./hack/floci/aws-config) |
-| `NO_COLOR`                           | no colour in the output of `plan`, `deploy` and `remove`                     |
+| `NO_COLOR`                           | no colour in the output of `plan`, `deploy`, `remove`, `invoke` and `logs`   |
 | `VISUAL`, `EDITOR`                   | the editor `ui` edits events in, `vi` without either                         |
 
 A command that fails exits with 1, and a command line that is refused, such as an unknown flag, with 2. One that ctrl+c or SIGTERM stops before it is done, such as a deploy, exits with 130; `logs --tail` and `offline`, which run until they are stopped, exit with 0.
@@ -312,7 +318,7 @@ A command that fails exits with 1, and a command line that is refused, such as a
 ## documentation
 
 - [configuration](./docs/configuration.md): the pkl schema, functions, events, resources, references, stages and secrets
-- [how it works](./docs/how-it-works.md): planning, applying, state, locking and what happens when a deploy fails
+- [how it works](./docs/how-it-works.md): planning, applying, the output for scripts, state, locking and what happens when a deploy fails
 - [terminal interface](./docs/ui.md): the views and keys of `kdst ui`
 - [migrating from the serverless framework](./docs/migrating.md): what `kdst migrate` converts and what it leaves to you
 
