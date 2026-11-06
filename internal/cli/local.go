@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -222,10 +223,14 @@ func invokeCommand(name string, opts *Options) *cobra.Command {
 		Use:   "invoke",
 		Short: "invoke a function with an event, in aws or with --local on this machine",
 		Long: `invoke runs a function with the event from --data or --path, {} without either, and prints what it
-returns on stdout; the end of its log, or with --local its output, goes to stderr. With --local, it
-is built and run here against an emulator of the lambda runtime api, with the variables the stage
-deployed and your credentials, so it reads and writes what the stage deployed;
-.koldstart/local.<stage>.pkl overrides variables, and prod asks first.`,
+returns on stdout: indented and coloured on a terminal, and byte for byte as lambda returned it
+when piped, so jq reads it. The end of its log, or with --local its output, goes to stderr. A
+function that fails prints nothing on stdout: the type and message of its error go to stderr,
+with its stack trace under them, and invoke exits with 1.
+
+With --local, it is built and run here against an emulator of the lambda runtime api, with the
+variables the stage deployed and your credentials, so it reads and writes what the stage
+deployed; .koldstart/local.<stage>.pkl overrides variables, and prod asks first.`,
 		Example: fmt.Sprintf(`  %[1]s invoke -f api --path events/get-order.json
   %[1]s invoke -f api --local --path event.json
   %[1]s invoke -f worker --local --data '{"job": 1}'
@@ -266,7 +271,7 @@ deployed and your credentials, so it reads and writes what the stage deployed;
 }
 
 // invokeRemote invokes the deployed function, printing the end of its log on stderr and what it
-// returned on stdout.
+// returned on stdout. A function that failed prints nothing on stdout: its error is returned.
 func (s *stage) invokeRemote(ctx context.Context, cmd *cobra.Command, function string, payload []byte) error {
 	out, err := s.sess.Lambda.Invoke(ctx, &lambda.InvokeInput{
 		FunctionName: aws.String(desired.FunctionName(s.Project, function)), Payload: payload, LogType: lambdatypes.LogTypeTail,
@@ -280,31 +285,129 @@ func (s *stage) invokeRemote(ctx context.Context, cmd *cobra.Command, function s
 		}
 		_, _ = cmd.ErrOrStderr().Write(logs)
 	}
-	_, _ = fmt.Fprintln(cmd.OutOrStdout(), string(out.Payload))
 	if out.FunctionError != nil {
 		return fmt.Errorf("%s failed: %s\nsee its logs with %s logs -f %s --stage %s", function, functionError(out.Payload, aws.ToString(out.FunctionError)), cmd.Root().Name(), function, s.Stage)
 	}
-	return nil
+	return writePayload(cmd.OutOrStdout(), out.Payload)
+}
+
+// writePayload writes what a function returned: byte for byte where w is not a terminal, so a
+// script or jq reads it as lambda returned it, and on a terminal indented and coloured, when it
+// is json, with a newline after.
+func writePayload(w io.Writer, payload []byte) error {
+	f, ok := w.(*os.File)
+	return printPayload(w, payload, ok && isTerminal(f), paletteFor(w))
+}
+
+// printPayload writes a payload as writePayload does, to a terminal or not.
+func printPayload(w io.Writer, payload []byte, terminal bool, colour palette) error {
+	if !terminal {
+		_, err := w.Write(payload)
+		return err
+	}
+	if len(payload) == 0 || prettyJSON(w, payload, colour) {
+		return nil
+	}
+	if !bytes.HasSuffix(payload, []byte("\n")) {
+		payload = append(slices.Clip(payload), '\n')
+	}
+	_, err := w.Write(payload)
+	return err
+}
+
+// failure is the error a function returned, as its runtime writes it: its type, its message and
+// its stack trace, as lines in node and python and as frames in go.
+type failure struct {
+	Type    string            `json:"errorType"`
+	Message string            `json:"errorMessage"`
+	Trace   []json.RawMessage `json:"stackTrace"`
 }
 
 // functionError says what a function that failed in aws returned: the type and message of its
-// error, as invoke --local says them, or what lambda calls the failure, such as Unhandled.
+// error, as invoke --local says them, with its stack trace indented under them; or what lambda
+// calls the failure, such as Unhandled, with what the function returned when it was not empty.
 func functionError(payload []byte, kind string) string {
-	var e struct {
-		Type    string `json:"errorType"`
-		Message string `json:"errorMessage"`
+	var f failure
+	if json.Unmarshal(payload, &f) != nil || f.Message == "" {
+		var b bytes.Buffer
+		if len(bytes.TrimSpace(payload)) == 0 || !prettyJSON(&b, payload, palette{}) {
+			return kind
+		}
+		return kind + ", returning\n" + indentLines(strings.TrimRight(b.String(), "\n"))
 	}
-	if json.Unmarshal(payload, &e) != nil || e.Message == "" {
-		return kind
+	var trace []string
+	for _, frame := range f.Trace {
+		trace = append(trace, traceLine(frame))
 	}
-	if e.Type == "" {
-		return e.Message
+	return describeFailure(f.Type, f.Message, trace)
+}
+
+// traceLine is one frame of a stack trace: a line of node or python as it is, and a frame of go
+// as its function and where it is.
+func traceLine(frame json.RawMessage) string {
+	var line string
+	if json.Unmarshal(frame, &line) == nil {
+		return line
 	}
-	return e.Type + ": " + e.Message
+	var g struct {
+		Path  string `json:"path"`
+		Line  int    `json:"line"`
+		Label string `json:"label"`
+	}
+	if json.Unmarshal(frame, &g) == nil && g.Path != "" {
+		return fmt.Sprintf("%s (%s:%d)", g.Label, g.Path, g.Line)
+	}
+	return string(frame)
+}
+
+// describeFailure says what a function failed with: the type and message of its error, the type
+// left out when there is none, and its stack trace under them, indented. The trace's first line
+// is left out when it only says the type and message again, as node's does.
+func describeFailure(typ, message string, trace []string) string {
+	head := message
+	if typ != "" {
+		head = typ + ": " + message
+	}
+	var lines []string
+	for _, frame := range trace {
+		for line := range strings.SplitSeq(strings.TrimRight(frame, "\n"), "\n") {
+			if strings.TrimSpace(line) != "" {
+				lines = append(lines, strings.TrimRight(line, " \t\r"))
+			}
+		}
+	}
+	if len(lines) > 0 && strings.TrimSpace(lines[0]) == head {
+		lines = lines[1:]
+	}
+	if len(lines) == 0 {
+		return head
+	}
+	return head + "\n" + indentLines(dedent(lines))
+}
+
+// dedent takes the indentation every line has off them all, so a trace keeps only its own.
+func dedent(lines []string) string {
+	common := -1
+	for _, line := range lines {
+		n := len(line) - len(strings.TrimLeft(line, " \t"))
+		if common < 0 || n < common {
+			common = n
+		}
+	}
+	out := make([]string, len(lines))
+	for i, line := range lines {
+		out[i] = line[common:]
+	}
+	return strings.Join(out, "\n")
+}
+
+// indentLines indents every line of s by four spaces, under the line of an error.
+func indentLines(s string) string {
+	return "    " + strings.ReplaceAll(s, "\n", "\n    ")
 }
 
 // invokeLocal runs the function once on this machine, its output on stderr and what it returned
-// on stdout.
+// on stdout. A function that failed prints nothing on stdout: its error is returned.
 func (s *stage) invokeLocal(ctx context.Context, cmd *cobra.Command, function string, payload []byte) error {
 	f, err := s.localFunction(ctx, function, cmd.ErrOrStderr())
 	if err != nil {
@@ -316,11 +419,11 @@ func (s *stage) invokeLocal(ctx context.Context, cmd *cobra.Command, function st
 	}
 	defer func() { _ = r.Close() }()
 	result, err := r.Invoke(ctx, payload)
-	if len(result) > 0 {
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), string(result))
+	if failed, ok := errors.AsType[*local.FunctionError](err); ok {
+		return fmt.Errorf("%s failed: %s", function, describeFailure(failed.Type, failed.Message, failed.Trace))
 	}
 	if err != nil {
 		return fmt.Errorf("%s failed: %w", function, err)
 	}
-	return nil
+	return writePayload(cmd.OutOrStdout(), result)
 }
