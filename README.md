@@ -6,6 +6,8 @@
 
 `koldstart` deploys serverless applications to `AWS Lambda`. You describe your functions, the events that trigger them and the resources they use in a [pkl](https://pkl-lang.org/) file, and koldstart builds, packages and deploys them into your own AWS account. It is free to use without limits: no license key, no hosted dashboard, no telemetry and nothing running outside your account. `kdst` is the short name for the same binary.
 
+<img width="1500" alt="kdst ui demo" src="./assets/cassette.gif">
+
 ---
 
 > [!NOTE]
@@ -339,14 +341,16 @@ A command that fails exits with 1, and a command line that is refused, such as a
 - [pkl](https://pkl-lang.org/), for the schema tests, which skip without it
 - [node](https://nodejs.org/) 22+, only for `invoke --local` and `offline` with javascript functions
 - [docker](https://www.docker.com/), for the tests that run against [floci](https://github.com/floci-io/floci), a local aws emulator
+- [vhs](https://github.com/charmbracelet/vhs) with `ffmpeg` and `ttyd`, only to record the readme gif and screenshots
 
 ```bash
 make test
 make emulator test-emulator
 make check
+make vhs
 ```
 
-`make test` runs the unit tests, against fakes and an in-memory state, with no aws account. `make emulator test-emulator` runs the tests that talk to aws against floci, and `make emulator-down` stops it. `make check` runs what CI runs. `go test -tags e2e ./test/e2e/...` deploys [examples/full-featured](./examples/full-featured) to a real account, with the credentials you have, and removes it again. [CONTRIBUTING.md](./CONTRIBUTING.md) and [AGENTS.md](./AGENTS.md) have the rest.
+`make test` runs the unit tests, against fakes and an in-memory state, with no aws account. `make emulator test-emulator` runs the tests that talk to aws against floci, and `make emulator-down` stops it. `make check` runs what CI runs. `make vhs` records the gif above and a screenshot of each page in `assets/pages/`, against [vhs/shop](./vhs/shop) deployed to a floci of its own on 127.0.0.1:4567. `go test -tags e2e ./test/e2e/...` deploys [examples/full-featured](./examples/full-featured) to a real account, with the credentials you have, and removes it again. [CONTRIBUTING.md](./CONTRIBUTING.md) and [AGENTS.md](./AGENTS.md) have the rest.
 
 ## license
 

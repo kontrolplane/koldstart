@@ -25,6 +25,7 @@ hack/pkl/                   downloads the pinned pkl for a platform, for the ima
 hack/floci/                 an aws profile for floci, for running kdst against it by hand
 examples/                   example projects, each a go module of its own; examples_test.go checks they evaluate
 test/e2e/                   deploys examples/full-featured to a real account, behind the e2e build tag
+vhs/                        make vhs: the tape that records kdst ui for the README, and the shop it deploys to a floci of its own
 internal/version/           the build's version, stamped by the linker, in route's shape
 docs/                       the user documentation; it describes the design in #1 until it is built
 ```
