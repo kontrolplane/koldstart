@@ -49,7 +49,7 @@ The header shows the aws profile, `default` without one, the account, the region
   - long values wrap under their key, with the `+` or `-` on every line; secrets, refs and outputs show in parentheses by what they stand for, as `(secret ssm:/orders/key)`
   - the change navigated to is marked `▌`, and the frame's foot says which it is, as `change 2 of 5`
 
-The stages, a stage and a function are read again every five seconds, and `p` pauses that; the other pages are read once, and `r` reads them again. The live data, metrics, lambda's own view of a function, a queue's depth and a resource's properties in aws, needs the permissions to read them; where metrics, lambda, cloud control or a queue's depth cannot be read, as on an emulator, the page says so, as `could not read the metrics: <error> · r tries again`, and shows the rest. When a read fails after one that worked, what that one read stays on screen, marked `as of 10:04:05, could not read again`.
+The stages, a stage and a function are read again every five seconds, and `p` pauses that; a resource and an output are read once, and `r` reads them again, and the other pages show what the page they were opened from read. The live data, metrics, lambda's own view of a function, a queue's depth and a resource's properties in aws, needs the permissions to read them; where metrics, lambda, cloud control or a queue's depth cannot be read, as on an emulator, the page says so, as `could not read the metrics: <error> · r tries again`, and shows the rest. When a read fails after one that worked, what that one read stays on screen, marked `as of 10:04:05, could not read again`.
 
 ## keybindings
 
@@ -65,9 +65,9 @@ The stages, a stage and a function are read again every five seconds, and `p` pa
 - `]`, `[`: on a diff, go to the next or the previous change
 - `z`: on a diff, show every line, or fold them again; in json, unfold everything, or fold it all again
 - `space`: on the resources of a stage, fold the group under the cursor or open it, and on a kind's heading every group of the kind; on a plan, fold the group of the change under the cursor or open it; in json, fold or unfold the object or array under the cursor, or the one the value under it is in
-- `o`: on a plan, group the changes by action, or by kind again
+- `o`: on a plan, group the changes by action, or by kind again; on a line of the logs, open the invocation it is of
 - `/`: filter the stages, the tabs of a stage, or the lines of the logs; search json
-- `n`, `shift+n`: the next and previous match of the search in json
+- `n`, `shift+n`: the next and previous match of the search in json, while it holds text
 - `d`: plan a deploy of the project's stage, or on a function of its code
 - `ctrl+s`: apply the plan on screen
 - `r` on a plan of a deploy of the stage: plan again with every resource read as it is in aws, to find what was deleted or changed outside koldstart
@@ -80,13 +80,12 @@ The stages, a stage and a function are read again every five seconds, and `p` pa
 - `s`: on the logs, show the lines from info, warn or error, or every line again
 - `b`: on the logs, group the lines of each request together, or not
 - `t`: on the logs, show the time of each line, how long ago it was, or nothing
-- `o`: on a line of the logs, open the invocation it is of
 - `y`, `n`: answer the dialog to release a lock or to run against prod
-- `n`, `p` on an invocation: the next and the previous one, as the invocations list them; on a line of the logs, the next and the previous line the logs tab shows
+- `n`, `p`: on an invocation, the next and the previous one, as the invocations list them; on a line of the logs, the next and the previous line the logs tab shows
 - `c`: copy what is under the cursor: an app and stage, a function's arn, the whole value of a row of its overview, the value of a line of json, or a resource's id in aws on a tab without json, an output's value as it is, a version, a request id, a line of the logs as it was logged, or on the invoke tab the payload or the result shown
 - `shift+c`: copy the path of the line of json under the cursor; on the invoke tab, from the events, the request id of the result
-- `r`: read the page again
-- `p`: pause or resume reading the page again
+- `r`: read the page again, on the stages, a stage, a function, a resource and an output
+- `p`: on the stages, a stage and a function, pause or resume reading the page again
 - `?`: help; any key closes it
 
 While a filter, a search, or the stage's name to remove it, has focus, letters, `?`, `p` and `q` included, are typed into it.

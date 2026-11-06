@@ -191,7 +191,7 @@ func TestLogLineJSON(t *testing.T) {
 		shown  string
 	}{
 		{name: "in order", line: 12, want: []string{"\"level\": \"warn\",", "\"ts\": 1762423200.012,", "\"caller\": \"orders/main.go:20\","}, path: ".", page: logLinePage},
-		{name: "the top copies the line", line: 12, keys: []string{"c"}, status: "copied all of it", path: ".", page: logLinePage},
+		{name: "the top copies the line", line: 12, keys: []string{"c"}, status: "copied the line as it was logged", path: ".", page: logLinePage},
 		{name: "a value", line: 12, keys: []string{"j", "j", "j", "c"}, status: "copied the value of .caller", path: ".caller", page: logLinePage},
 		{name: "a path", line: 11, keys: []string{"j", "j", "j", "shift+c"}, status: "copied the path .pid", path: ".pid", page: logLinePage},
 		{name: "fold", line: 10, keys: []string{"space"}, want: []string{"{ … 5 keys }"}, page: logLinePage},

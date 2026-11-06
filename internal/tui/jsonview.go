@@ -99,9 +99,11 @@ type jsonView struct {
 	query   string
 	// from is the node the cursor was on when the search was opened.
 	from int32
-	// source is the document as it was given in bytes, which c on its top copies as it is.
-	source string
-	cache  *jsonCache
+	// source is the document as it was given in bytes, which c on its top copies as it is, and
+	// sourceName what the footer says was copied then, "all of it" when it is empty.
+	source     string
+	sourceName string
+	cache      *jsonCache
 }
 
 // jsonFolds are the objects and arrays folded otherwise than by default, by all and then set; a
@@ -1153,7 +1155,7 @@ func (v *jsonView) update(msg tea.KeyPressMsg, k keys.KeyMap, width, height int)
 		i, _ := v.node(v.at())
 		res.copy, res.copied = v.valueOf(i), "the value of "+cmpOr(v.pathOf(i), "the line")
 		if v.pathOf(i) == "." {
-			res.copied = "all of it"
+			res.copied = cmpOr(v.sourceName, "all of it")
 		}
 	case key.Matches(msg, k.CopyPath):
 		i, _ := v.node(v.at())

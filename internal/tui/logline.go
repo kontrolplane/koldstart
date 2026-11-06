@@ -44,7 +44,7 @@ func newLogLine(e cli.LogEvent, drawn *logLineDrawn) logLineState {
 	s := logLineState{e: e, drawn: drawn}
 	if doc := splitLogLine(e.Message).json; doc != "" {
 		s.json = newJSONViewBytes([]byte(doc))
-		s.json.source = e.Message
+		s.json.source, s.json.sourceName = e.Message, "the line as it was logged"
 	}
 	return s
 }
