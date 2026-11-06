@@ -64,7 +64,7 @@ func datum(function, metric string, t time.Time, value float64, unit cwtypes.Sta
 // minute is the metrics of f for minute m, at t.
 func minute(f traffic, m int, t time.Time) []cwtypes.MetricDatum {
 	calls := wave(f.low, f.high, m)
-	if f.high == 0 && m == 0 {
+	if f.high == 0 && m == 45 {
 		calls = 1
 	}
 	if calls == 0 {

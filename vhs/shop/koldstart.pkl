@@ -15,8 +15,6 @@ tags {
 
 functions {
   ["api"] {
-    runtime = "nodejs22.x"
-    handler = "src/api.handler"
     memory = if (kdst.stage == "prod") 1024 else 256
     timeout = 10.s
     environment {
@@ -30,8 +28,6 @@ functions {
     }
   }
   ["worker"] {
-    runtime = "nodejs22.x"
-    handler = "src/worker.handler"
     timeout = 30.s
     environment {
       ["ORDERS_TABLE"] = kdst.ref("orders", "TableName")
@@ -41,8 +37,6 @@ functions {
     }
   }
   ["report"] {
-    runtime = "nodejs22.x"
-    handler = "src/report.handler"
     memory = 512
     timeout = 1.min
     events {
