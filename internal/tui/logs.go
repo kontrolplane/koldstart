@@ -383,8 +383,10 @@ func (m model) logsUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 		}
 		return m, nil
 	case key.Matches(msg, m.keys.Level, m.keys.Group, m.keys.Stamps):
-		m = m.pinCursor()
-		l = &m.state.function.logs
+		if !l.pinned {
+			m = m.pinCursor()
+			l = &m.state.function.logs
+		}
 		switch {
 		case key.Matches(msg, m.keys.Level):
 			l.least = l.least.next()
