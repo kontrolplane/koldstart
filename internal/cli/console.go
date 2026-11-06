@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -347,13 +348,15 @@ func (c *Console) InvokeLocal(ctx context.Context, ref StageRef, function string
 	return inv, nil
 }
 
-// stage opens a stage of the project here, in the region its state is in.
+// stage opens a stage of the project here, in the region its state is in, with no note on
+// stderr, under the terminal interface, when it resolves the PklProject.
 func (c *Console) stage(ctx context.Context, ref StageRef, create bool) (*stage, error) {
 	if !c.Local(ref) {
 		return nil, fmt.Errorf("%s is not the app of the %s here: run %s ui in its directory", ref.App, c.opts.Config, c.name)
 	}
 	opts := *c.opts
 	opts.Stage, opts.Region = ref.Stage, ref.Region
+	opts.notes = io.Discard
 	return openStage(ctx, &opts, create)
 }
 

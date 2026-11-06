@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -53,7 +54,11 @@ func loadProject(ctx context.Context, opts *Options) (*project, error) {
 	if err != nil {
 		return nil, fmt.Errorf("finding pkl: %w", err)
 	}
-	p, err := config.Load(ctx, pkl.Evaluator{Binary: binary, Notes: os.Stderr, Name: opts.binary()}, relative(path), opts.Stage)
+	var notes io.Writer = os.Stderr
+	if opts.notes != nil {
+		notes = opts.notes
+	}
+	p, err := config.Load(ctx, pkl.Evaluator{Binary: binary, Notes: notes, Name: opts.binary()}, relative(path), opts.Stage)
 	if err != nil {
 		return nil, err
 	}

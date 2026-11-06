@@ -47,6 +47,9 @@ type Options struct {
 	Debug   bool
 	// name is the name the binary was run as, for errors that say what to run.
 	name string
+	// notes is where loading the configuration says it resolves its PklProject first; stderr
+	// when nil.
+	notes io.Writer
 }
 
 // binary is the name the binary was run as, koldstart when it is not known.
