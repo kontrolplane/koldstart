@@ -304,7 +304,7 @@ func perfSettle(m model, cmd tea.Cmd) model {
 // perfRun runs a command and the commands of a batch, as run does, waiting up to wait for each:
 // an invocation that returns 2 mb takes longer than run waits under the race detector.
 func perfRun(cmd tea.Cmd, wait time.Duration) []tea.Msg {
-	if cmd == nil {
+	if cmd == nil || crTimer(cmd) {
 		return nil
 	}
 	done := make(chan tea.Msg, 1)

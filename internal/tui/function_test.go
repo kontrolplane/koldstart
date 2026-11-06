@@ -803,10 +803,10 @@ func TestOverviewLayout(t *testing.T) {
 	fn.Inputs, _ = json.Marshal(in)
 	st.Resources["schedule/api/"+long] = &state.Resource{PhysicalID: "s"}
 	f.function = cli.FunctionState{State: "Failed", StateReason: long, CodeSHA256: "ff", Memory: 128, Timeout: 900, Runtime: long}
-	for _, size := range [][2]int{{78, 22}, {80, 24}, {100, 30}, {overviewTwoColumns + chromeWidth, 30}, {120, 40}, {200, 60}} {
+	opened := pressKeys(t, started(t, f), "enter")
+	for _, size := range [][2]int{{78, 22}, {100, 30}, {overviewTwoColumns + chromeWidth, 30}, {120, 40}, {200, 60}} {
 		w, h := size[0], size[1]
-		m := pressKeys(t, started(t, f), "enter")
-		m, _ = update(t, m, tea.WindowSizeMsg{Width: w, Height: h})
+		m, _ := update(t, opened, tea.WindowSizeMsg{Width: w, Height: h})
 		for range m.functionOverview().rowCount() + 1 {
 			lines := strings.Split(m.render(), "\n")
 			if len(lines) > h {

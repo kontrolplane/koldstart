@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -414,12 +415,14 @@ func TestInvokeLayout(t *testing.T) {
 		"not json":  {Payload: []byte("plain \x1b[2J words")},
 	}
 	events := map[string]string{"big.json": string(big), "broken.json": "{\n\x1b[2J" + strings.Repeat("x", 300), "small.json": `{"id":1}`}
-	for _, size := range [][2]int{{78, 22}, {120, 40}, {200, 60}} {
-		w, h := size[0], size[1]
-		for name, inv := range results {
-			f := newFake(t)
-			f.result = inv
-			m := invokeTabWith(t, f, events)
+	for name, inv := range results {
+		f := newFake(t)
+		f.result = inv
+		opened := invokeTabWith(t, f, events)
+		for _, size := range [][2]int{{78, 22}, {120, 40}, {200, 60}} {
+			w, h := size[0], size[1]
+			m := opened
+			m.state.function.results = maps.Clone(opened.state.function.results)
 			m, _ = update(t, m, tea.WindowSizeMsg{Width: w, Height: h})
 			m = pressKeys(t, m, "j", "j")
 			for _, step := range []string{"payload", "i", "enter", "z", "esc", "v", "k", "k", "enter"} {

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -377,9 +379,9 @@ func settle(t *testing.T, m model, cmd tea.Cmd) model {
 }
 
 // run runs a command and the commands of a batch, returning their messages. A command that
-// does not answer at once is a timer, and is dropped.
+// does not answer at once is a timer, and is dropped, one crTimer knows without waiting.
 func run(cmd tea.Cmd) []tea.Msg {
-	if cmd == nil {
+	if cmd == nil || crTimer(cmd) {
 		return nil
 	}
 	done := make(chan tea.Msg, 1)
@@ -408,9 +410,20 @@ func screen(m model) string {
 	return ansi.Strip(m.render())
 }
 
+// crTimers are the functions of the commands that wait for a timer: a tick of bubbletea, the
+// refresh's, the status's and the spinner's, and the blink of a text input's cursor. Each waits
+// longer than run does, so run and quits drop them at once rather than wait to drop them.
+var crTimers = []string{"charm.land/bubbletea/v2.Tick.", "charm.land/bubbletea/v2.Every.", "charm.land/bubbles/v2/cursor.(*Model).Blink."}
+
+// crTimer reports whether cmd waits for a timer, by the name of its function.
+func crTimer(cmd tea.Cmd) bool {
+	name := runtime.FuncForPC(reflect.ValueOf(cmd).Pointer()).Name()
+	return slices.ContainsFunc(crTimers, func(prefix string) bool { return strings.HasPrefix(name, prefix) })
+}
+
 // quits reports whether a command quits the program.
 func quits(cmd tea.Cmd) bool {
-	if cmd == nil {
+	if cmd == nil || crTimer(cmd) {
 		return false
 	}
 	done := make(chan tea.Msg, 1)

@@ -33,8 +33,9 @@ func numbered(n int) []tableRow {
 }
 
 // TestTableFitsWidth sizes every table of the pages to widths from far too narrow to very wide,
-// and checks the rule and the selected row are as wide as the table, which is as wide as it was
-// given while its columns fit at one column each, and no line is wider.
+// each up to 200, where every table shows all its columns, and every tenth above, and checks the
+// rule and the selected row are as wide as the table, which is as wide as it was given while its
+// columns fit at one column each, and no line is wider.
 func TestTableFitsWidth(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -52,7 +53,7 @@ func TestTableFitsWidth(t *testing.T) {
 	long := strings.Repeat("日本語🚀 very-long-value ", 20)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			for width := 4; width <= 320; width++ {
+			for width := 4; width <= 320; width += 1 + width/200*9 {
 				tbl := newTable(tt.columns, "")
 				row := make(tableRow, len(tt.columns))
 				for i := range row {

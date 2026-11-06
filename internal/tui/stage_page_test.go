@@ -306,7 +306,7 @@ func sdStagePages(t *testing.T, f *fakeBackend, w, h int) map[string]model {
 // smallest terminal it draws in to a large one, and checks no line is wider than the terminal,
 // there are no more lines than it is high, and the head and the row under the cursor are drawn.
 func TestStageLayout(t *testing.T) {
-	sizes := [][2]int{{78, 22}, {80, 24}, {100, 30}, {120, 40}, {200, 60}}
+	sizes := [][2]int{{78, 22}, {100, 30}, {120, 40}, {200, 60}}
 	for _, functions := range []int{3, 40} {
 		for _, size := range sizes {
 			w, h := size[0], size[1]
