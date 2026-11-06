@@ -12,12 +12,12 @@ functions {
       ["LOG_LEVEL"] = "debug"
     }
     events {
-      new kdst.HttpRoute { method = "GET"; path = "/products/{id}" }
+      kdst.get("/products/{id}")
     }
   }
   ["worker"] {
     events = new {
-      new kdst.Queue { queue = "arn:aws:sqs:eu-west-1:000000000000:shop-\(kdst.stage)-jobs"; batchSize = 25 }
+      (kdst.fromQueue("arn:aws:sqs:eu-west-1:000000000000:shop-\(kdst.stage)-jobs")) { batchSize = 25 }
     }
   }
 }

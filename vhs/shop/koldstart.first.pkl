@@ -8,8 +8,8 @@ functions {
   ["api"] {
     memory = 128
     events = new {
-      new kdst.HttpRoute { method = "GET"; path = "/products" }
-      new kdst.HttpRoute { method = "GET"; path = "/orders/{id}" }
+      kdst.get("/products")
+      kdst.get("/orders/{id}")
     }
   }
 }

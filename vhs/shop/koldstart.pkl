@@ -22,9 +22,9 @@ functions {
       ["CURRENCY"] = "EUR"
     }
     events {
-      new kdst.HttpRoute { method = "GET"; path = "/products" }
-      new kdst.HttpRoute { method = "GET"; path = "/orders/{id}" }
-      new kdst.HttpRoute { method = "POST"; path = "/orders" }
+      kdst.get("/products")
+      kdst.get("/orders/{id}")
+      kdst.post("/orders")
     }
   }
   ["worker"] {
@@ -33,30 +33,25 @@ functions {
       ["ORDERS_TABLE"] = kdst.ref("orders", "TableName")
     }
     events {
-      new kdst.Queue { queue = "arn:aws:sqs:eu-west-1:000000000000:shop-\(kdst.stage)-jobs"; batchSize = 10 }
+      kdst.fromQueue("arn:aws:sqs:eu-west-1:000000000000:shop-\(kdst.stage)-jobs")
     }
   }
   ["report"] {
     memory = 512
     timeout = 1.min
     events {
-      new kdst.Schedule { expression = "cron(0 7 * * ? *)"; enabled = kdst.stage == "prod" }
+      (kdst.schedule("cron(0 7 * * ? *)")) { enabled = kdst.stage == "prod" }
     }
   }
 }
 
 resources {
-  ["orders"] {
-    type = "AWS::DynamoDB::Table"
+  ["orders"] = (kdst.table("id")) {
     properties {
       TableName = "shop-\(kdst.stage)-orders"
-      BillingMode = "PAY_PER_REQUEST"
-      AttributeDefinitions { new { AttributeName = "id"; AttributeType = "S" } }
-      KeySchema { new { AttributeName = "id"; KeyType = "HASH" } }
     }
   }
-  ["jobs"] {
-    type = "AWS::SQS::Queue"
+  ["jobs"] = (kdst.queue()) {
     properties {
       QueueName = "shop-\(kdst.stage)-jobs"
       VisibilityTimeout = 60
