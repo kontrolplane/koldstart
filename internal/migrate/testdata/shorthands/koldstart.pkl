@@ -1,9 +1,9 @@
 // Converted from serverless.yml by kdst migrate.
 // A TODO comment marks each thing it could not convert, or converted differently.
 
-amends "package://github.com/kontrolplane/koldstart/releases/download/v0.1.0/koldstart@0.1.0#/Project.pkl"
+amends "@koldstart/Project.pkl"
 
-import "package://github.com/kontrolplane/koldstart/releases/download/v0.1.0/koldstart@0.1.0#/kdst.pkl"
+import "@koldstart/kdst.pkl"
 
 app = "ledger"
 region = "eu-west-1"

@@ -306,7 +306,7 @@ func TestShorthandsExact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	path, cleanup, err := schema.Local(src, "0.1.0")
+	path, cleanup, err := schema.Local(src)
 	if err != nil {
 		t.Fatal(err)
 	}
