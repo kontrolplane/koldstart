@@ -2,7 +2,7 @@
 // deploy before the one koldstart.pkl makes.
 amends "koldstart.pkl"
 
-import "../../pkl/kdst.pkl"
+import "@koldstart/kdst.pkl"
 
 functions {
   ["api"] {

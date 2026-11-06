@@ -1,14 +1,20 @@
 #!/bin/sh
-# Deploys the shop in vhs/shop to the floci of vhs/docker-compose.yaml, dev twice and prod and
-# pr-128 once, invokes its functions with the events kept for them, a few of which fail, and
-# writes what cloudwatch would hold of them and floci does not, so kdst ui has a history, logs,
-# invocations and metrics to show. make vhs runs it after building bin/kdst.
+# Deploys the shop in hack/demo/shop to floci, dev twice and prod and pr-128 once, invokes its
+# functions with the events kept for them, a few of which fail, and writes what cloudwatch would
+# hold of them and floci does not, so kdst ui has a history, logs, invocations and metrics to
+# show. make local runs it against the floci of make emulator, with the local profile of
+# hack/floci/aws-config, and make vhs against its own, with KOLDSTART_DEMO_CONFIG and
+# KOLDSTART_DEMO_PROFILE set, both after building bin/kdst. The aws settings of the shell are
+# never used, so it cannot deploy to a real account: the profile names floci, and the variables
+# that would take precedence over it, or over the shop's region, configuration and stages, are
+# unset.
 set -eu
 
 cd "$(dirname "$0")/shop"
-export AWS_CONFIG_FILE=../aws-config
-export AWS_PROFILE=vhs
-kdst=../../bin/kdst
+export AWS_CONFIG_FILE="${KOLDSTART_DEMO_CONFIG:-$(cd ../../floci && pwd)/aws-config}"
+export AWS_PROFILE="${KOLDSTART_DEMO_PROFILE:-local}"
+unset AWS_DEFAULT_PROFILE AWS_ENDPOINT_URL AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SHARED_CREDENTIALS_FILE AWS_REGION AWS_DEFAULT_REGION KOLDSTART_CONFIG KOLDSTART_STAGE
+kdst=../../../bin/kdst
 
 # invoke sends an event n times, and goes on when the function fails.
 invoke() {

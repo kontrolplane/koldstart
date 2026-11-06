@@ -346,11 +346,12 @@ A command that fails exits with 1, and a command line that is refused, such as a
 ```bash
 make test
 make emulator test-emulator
+make local local-ui
 make check
 make vhs
 ```
 
-`make test` runs the unit tests, against fakes and an in-memory state, with no aws account. `make emulator test-emulator` runs the tests that talk to aws against floci, and `make emulator-down` stops it. `make check` runs what CI runs. `make vhs` records the gif above and a screenshot of each page in `assets/pages/`, against [vhs/shop](./vhs/shop) deployed to a floci of its own on 127.0.0.1:4567. `go test -tags e2e ./test/e2e/...` deploys [examples/full-featured](./examples/full-featured) to a real account, with the credentials you have, and removes it again. [CONTRIBUTING.md](./CONTRIBUTING.md) and [AGENTS.md](./AGENTS.md) have the rest.
+`make test` runs the unit tests, against fakes and an in-memory state, with no aws account. `make emulator test-emulator` runs the tests that talk to aws against floci, and `make emulator-down` stops it. `make local` deploys the shop in [hack/demo/shop](./hack/demo/shop) to that floci, with three stages, invocations, failures and an hour of metrics, and `make local-ui` opens `kdst ui` on it through the `local` profile of [hack/floci/aws-config](./hack/floci/aws-config). `make check` runs what CI runs. `make vhs` records the gif above and a screenshot of each page in `assets/pages/`, against the same shop deployed to a floci of its own on 127.0.0.1:4567. `go test -tags e2e ./test/e2e/...` deploys [examples/full-featured](./examples/full-featured) to a real account, with the credentials you have, and removes it again. [CONTRIBUTING.md](./CONTRIBUTING.md) and [AGENTS.md](./AGENTS.md) have the rest.
 
 ## license
 

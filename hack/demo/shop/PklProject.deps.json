@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "resolvedDependencies": {
+    "package://github.com/kontrolplane/koldstart/releases/download/v0.0.0/koldstart@0": {
+      "type": "local",
+      "uri": "projectpackage://github.com/kontrolplane/koldstart/releases/download/v0.0.0/koldstart@0.0.0",
+      "path": "../../../pkl"
+    }
+  }
+}

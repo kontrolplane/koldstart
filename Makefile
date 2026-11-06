@@ -12,7 +12,7 @@ govulncheck   := go run golang.org/x/vuln/cmd/govulncheck@v1.9.0
 actionlint    := go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 goreleaser    := go run github.com/goreleaser/goreleaser/v2@v2.20.0
 
-.PHONY: check test lint vuln build image snapshot schema emulator emulator-down test-emulator vhs
+.PHONY: check test lint vuln build image snapshot schema emulator emulator-down test-emulator local local-ui vhs
 
 # Everything ci checks.
 check: lint vuln test
@@ -64,11 +64,23 @@ emulator-down:
 test-emulator:
 	KOLDSTART_TEST_ENDPOINT=http://127.0.0.1:4566 go test -race -count=1 -run Emulator ./...
 
+# Floci with the shop in hack/demo/shop deployed to dev, prod and pr-128, invoked, and given an
+# hour of metrics, for kdst ui to look at. It takes a minute and a half, and again after floci
+# restarts, as floci keeps nothing. make local-ui opens kdst ui on it.
+local: build emulator
+	hack/demo/seed.sh
+
+# kdst ui on the shop make local deployed, through the local profile of hack/floci/aws-config,
+# whatever aws settings the shell has.
+local-ui: build
+	cd hack/demo/shop && env -u AWS_ENDPOINT_URL -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN -u AWS_SHARED_CREDENTIALS_FILE -u AWS_REGION -u AWS_DEFAULT_REGION -u KOLDSTART_CONFIG -u KOLDSTART_STAGE AWS_CONFIG_FILE=../../floci/aws-config ../../../bin/kdst ui --profile local
+
 # The recording of kdst ui in the README, assets/cassette.gif and the screenshots in
-# assets/pages/, made with vhs, ffmpeg and ttyd. It deploys the shop in vhs/shop to a floci of its
-# own on 127.0.0.1:4567, which it starts afresh and removes again, so make emulator's is left alone.
+# assets/pages/, made with vhs, ffmpeg and ttyd. It deploys the shop in hack/demo/shop to a floci
+# of its own on 127.0.0.1:4567, which it starts afresh and removes again, so make emulator's is
+# left alone.
 vhs: build
 	docker compose -f vhs/docker-compose.yaml down
 	docker compose -f vhs/docker-compose.yaml up --detach --wait
-	vhs/seed.sh
+	KOLDSTART_DEMO_CONFIG=$(CURDIR)/vhs/aws-config KOLDSTART_DEMO_PROFILE=vhs hack/demo/seed.sh
 	vhs vhs/cassette.tape; status=$$?; docker compose -f vhs/docker-compose.yaml down; exit $$status
