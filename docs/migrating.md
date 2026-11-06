@@ -10,17 +10,25 @@ kdst migrate path/to/serverless.yml --out koldstart.pkl
 Without a path, it reads `./serverless.yml`. It does not write over a `koldstart.pkl` that is there, unless you pass `--force`, and `--out` writes it elsewhere. It ends with the `plan` to run next, with the `--stage` that `provider.stage` names:
 
 ```text
-wrote koldstart.pkl; left to you:
+wrote PklProject, with the schema of koldstart 0.1.0
+resolved it into PklProject.deps.json
+wrote koldstart.pkl, with 6 things left to you
 
-  provider.stage: koldstart deploys to dev by default: pass --stage prod, or set KOLDSTART_STAGE
-  functions.api.permissions: the statements of provider.iam are on every function: narrow them
+works differently, to check:
+  provider.stage: deploy with --stage prod, or set KOLDSTART_STAGE=prod: koldstart deploys to dev by default
+  provider.runtime: runs on nodejs22.x now, as koldstart does not build nodejs20.x: test it there
+  provider.iam.role.statements: every function got these statements: keep in each what it needs, or use link
+
+not needed in koldstart:
+  custom: each ${self:custom...} got its value where it was used: tableName
+  plugins.serverless-esbuild: koldstart bundles typescript with esbuild itself
   plugins.serverless-offline: kdst offline serves the http routes on this machine
-
-the TODO comments in koldstart.pkl say where each one belongs
 
 next:
   kdst plan --stage prod
 ```
+
+The `koldstart.pkl` imports the schema as `@koldstart/`, and the `PklProject` beside it names the schema package of the koldstart you run, as `kdst init` writes it, resolved into `PklProject.deps.json`; commit both. A `PklProject` that is there already is kept, with the koldstart dependency added when it has none. When it cannot be resolved, offline for one, migrate says so and keeps the files, and the `plan` resolves it first. [configuration](./configuration.md#pklproject) has the rest.
 
 koldstart does not read `serverless.yml` itself, and does not run serverless framework plugins. The conversion is done once, and the pkl file is what you keep.
 

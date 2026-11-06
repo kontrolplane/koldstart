@@ -3,9 +3,9 @@
 A koldstart project is one [pkl](https://pkl-lang.org/) file, `koldstart.pkl` by default. It amends `Project.pkl`, the shape of the configuration, and imports `kdst.pkl`, which holds what goes inside functions and resources: the stage, `ref()`, the secrets, the events and the authorizers.
 
 ```pkl
-amends "package://github.com/kontrolplane/koldstart/releases/download/v0.1.0/koldstart@0.1.0#/Project.pkl"
+amends "@koldstart/Project.pkl"
 
-import "package://github.com/kontrolplane/koldstart/releases/download/v0.1.0/koldstart@0.1.0#/kdst.pkl"
+import "@koldstart/kdst.pkl"
 
 app = "orders"
 region = "eu-west-1"
@@ -13,7 +13,39 @@ region = "eu-west-1"
 
 Amending it gives you type checking, defaults and completion in any editor with a pkl plugin. A mistake, such as a misspelled property or a memory size lambda does not offer, is reported with its line when the file is evaluated, before anything is built.
 
-The package is released with koldstart, under the same version. Its schema has a version of its own: a koldstart refuses a file written against a newer schema than it reads, and says to upgrade.
+## PklProject
+
+`@koldstart/` is the koldstart dependency of the pkl project the file is in: the `PklProject` beside it, or the nearest one above it, as in a repository with one project for several services. `kdst init` and `kdst migrate` write it:
+
+```pkl
+amends "pkl:Project"
+
+dependencies {
+  ["koldstart"] { uri = "package://github.com/kontrolplane/koldstart/releases/download/v0.1.0/koldstart@0.1.0" }
+}
+```
+
+The schema package is released with koldstart, under the same version, on its GitHub release: the metadata at the package uri, and the zip it names. pkl resolves the `PklProject` into `PklProject.deps.json`, which pins the package by its checksum and is committed with it. koldstart resolves it before it evaluates the file when the lock file is missing or older than the `PklProject`, and says so on stderr; that downloads the package's metadata, and evaluating downloads the package, into pkl's cache, `~/.pkl/cache`.
+
+A version that is not released, or a machine that is offline, stops there with an error that says which. `kdst upgrade` sets the dependency to the version of the koldstart you run, and resolves it again: see [upgrading](../README.md#upgrading).
+
+### local and released schema
+
+A release of koldstart writes the package uri of its own version. A build from source, `go install` or `make build` without a release tag, has no release to point at, so it writes a local dependency on the schema built into it instead:
+
+```pkl
+dependencies {
+  ["koldstart"] = import("/home/you/.cache/koldstart/schema/9bd5ddef938b4d34/PklProject")
+}
+```
+
+It extracts `Project.pkl`, `kdst.pkl` and their `PklProject` into `$XDG_CACHE_HOME/koldstart/schema/`, or `~/.cache/koldstart/schema/`, under a hash of the files, so a build with another schema gets a directory of its own. Resolving it downloads nothing. The path is of this machine: a project to share depends on a release.
+
+A file without a `PklProject` that amends the full uri, `package://github.com/kontrolplane/koldstart/releases/download/v0.1.0/koldstart@0.1.0#/Project.pkl`, still evaluates, with no project. `@koldstart/` without a `PklProject`, or with one that has no koldstart dependency, is refused, and the error says to run `kdst upgrade`, which writes or completes it.
+
+### schema version
+
+The schema has a version of its own, `schemaVersion`, which `Project.pkl` renders: a koldstart refuses a file written against a newer schema than it reads, and says to upgrade. It goes up only when what the schema renders changes in a way an older koldstart cannot read, such as a new field it must act on; something an older one may ignore leaves it as it is.
 
 ## project
 

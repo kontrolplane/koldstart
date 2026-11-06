@@ -18,6 +18,8 @@ koldstart.pkl ──► pkl eval ──► build + zip ──► desired graph
                                   state written before and after every step
 ```
 
+The configuration is evaluated in its pkl project, the `PklProject` beside it or above it. When `PklProject.deps.json` is missing or older than the `PklProject`, koldstart runs `pkl project resolve` first, which downloads the metadata of the schema package from its GitHub release; a local dependency on the schema of a dev build downloads nothing. [configuration](./configuration.md#pklproject) has the rest.
+
 ## planning
 
 The resource types are looked up in the cloudformation registry first: a type cloud control cannot create, or properties its schema does not allow, stop the plan before anything else is read. The configuration then becomes a graph. Every function, event and resource is a node, together with the role, log group and permissions that come with it. Every `kdst.ref()` and every implicit dependency, such as a route needing its api, is an edge. Each node's inputs are resolved as far as they can be, secrets and outputs of other stages read, and the result is compared with the node's entry in the state:

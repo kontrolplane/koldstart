@@ -4,10 +4,10 @@
 
 ```
 cmd/koldstart/              the binary; main calls internal/cli. kdst is a link to it
-pkl/                        the schema package: Project.pkl, the shape of koldstart.pkl, and kdst.pkl, its helpers and events; embedded in the binary by schema.go
+pkl/                        the schema package: Project.pkl, the shape of koldstart.pkl, kdst.pkl, its helpers and events, and PklProject; schema.go embeds it and writes the koldstart dependency of a project
 internal/cli/               the cobra commands, the global flags and the aws session; Console, what kdst ui works with
 internal/tui/               kdst ui, with styles/ for relay's palette and keys/ for the key map
-internal/pkl/               finds or downloads pkl, and evaluates configuration to json
+internal/pkl/               finds or downloads pkl, and evaluates configuration to json in its pkl project, resolving it first
 internal/config/            decodes what pkl renders, and checks what the schema cannot
 internal/build/             node bundled with esbuild, go cross-compiled; deterministic zips
 internal/desired/           turns a configuration into nodes: names, policies, link, events, resources
@@ -18,9 +18,9 @@ internal/provider/cloudcontrol/  everything in resources, through cloud control
 internal/resolve/           reads secrets from ssm and secrets manager, and outputs of other stages
 internal/local/             runs functions here against an emulator of the lambda runtime api; offline
 internal/migrate/           converts a serverless.yml into a koldstart.pkl
-internal/scaffold/          kdst init's templates: a koldstart.pkl, a handler in typescript or go, the .gitignore entries
+internal/scaffold/          kdst init's templates: a koldstart.pkl, a handler in typescript, go or python, the .gitignore entries, and the PklProject beside them
 internal/awstest/           connects tests to the emulator
-hack/schema/                packages the schema in pkl/ with the pkl koldstart pins, for releases
+hack/schema/                packages the schema in pkl/ with the pkl koldstart pins, for releases: the metadata at koldstart@<v> and the zip
 hack/pkl/                   downloads the pinned pkl for a platform, for the image
 hack/floci/                 an aws profile for floci, for running kdst against it by hand
 examples/                   example projects, each a go module of its own; examples_test.go checks they evaluate
@@ -44,7 +44,9 @@ The packages still to come, and the milestones they land in, are in [#1](https:/
   - unit: `make test`. aws calls go behind small interfaces, so the engine, providers and tui are tested against fakes. no network, no docker.
   - emulator: `make emulator test-emulator`, then `make emulator-down`, against Floci (`docker-compose.yaml`), which runs lambda in the real runtime images and so mounts the docker socket. a test that talks to aws has `Emulator` in its name and gets its config from `awstest.Emulator(t)`, which skips without `KOLDSTART_TEST_ENDPOINT`. Floci ignores `ExpectedBucketOwner`, has no `DescribeType`, its cloud control has no `UpdateResource`, and an http api answers on 127.0.0.1:4566 with the api's host name in the `Host` header (`awstest.Get`). it has no `DeleteRouteSettings`, and a load balancer's listener cannot be reached, only its api. test what it does not do against fakes that behave as aws does.
   - e2e: `go test -tags e2e ./test/e2e/...`, against a real sandbox account, for what no emulator gets right. each run deploys its own stage, `e2e-<run>`, with an amending `e2e.pkl` that deletes what holds data, and removes it; the `E2E` workflow runs it once `KOLDSTART_E2E_ROLE_ARN` is set. `make lint` lints it with the tag.
-- an example amends the schema package of the first release, and is evaluated against `pkl/` in this tree with `schema.Local`, as `migrate` and `init` are. an example's go module pins its `toolchain`, so its zips are the same everywhere.
+- a `koldstart.pkl` imports the schema as `@koldstart/Project.pkl` and `@koldstart/kdst.pkl`, from the koldstart dependency of the `PklProject` beside it or above it. `PklProject.deps.json` is its lock file and is committed, never ignored. a release writes its own version's package uri; a dev build, which has no release, writes a local dependency on the schema it embeds, extracted into the cache under a hash of its files. `schema.Current` is the one place that chooses.
+- an example's `PklProject` names the package of the first release, and the example is evaluated against `pkl/` in this tree with `schema.Local`, as `migrate`'s check is, so it needs neither the package nor its lock file, which cannot exist before that release is published. testdata depends on `pkl/` as a local dependency, `import("…/pkl/PklProject")`, and commits its lock file. an example's go module pins its `toolchain`, so its zips are the same everywhere.
+- `schemaVersion` in `pkl/Project.pkl` and `config.SchemaVersion` go up together whenever what Project.pkl renders changes in a way an older koldstart cannot read: a new field it must act on, or a changed shape. adding something an older one may safely ignore does not count. nothing was released before 0.1.0, so it is 1 there.
 - `internal/migrate` is tested with golden files: a `serverless.yml` under `testdata/<case>/`, and the `koldstart.pkl` and `todos.txt` it converts to. after changing the conversion, run `go test ./internal/migrate -update`, read the diff, and commit it. every golden file must evaluate with pkl and pass a deploy's checks.
 - logs: `log/slog`. `--debug` writes them to `debug.log`, otherwise nothing is logged.
 - errors wrap with what was being done (`fmt.Errorf("reading the state of %s: %w", stage, err)`). an error a person reads says what to do.

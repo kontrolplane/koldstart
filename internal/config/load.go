@@ -14,7 +14,8 @@ import (
 )
 
 // SchemaVersion is the newest schema this binary reads. Project.pkl renders the version it was
-// published with, and a newer one is refused instead of half read.
+// published with, and a newer one is refused instead of half read. It goes up with Project.pkl's
+// schemaVersion, as AGENTS.md says when.
 const SchemaVersion = 1
 
 // Evaluator renders a pkl module as json.
