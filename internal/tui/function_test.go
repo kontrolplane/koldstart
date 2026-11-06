@@ -831,3 +831,42 @@ func TestOverviewLayout(t *testing.T) {
 		}
 	}
 }
+
+// TestOverviewStale checks a read of lambda or of the metrics that fails after one that worked
+// keeps what that one read on screen, under a note of when it was.
+func TestOverviewStale(t *testing.T) {
+	tests := []struct {
+		name string
+		fail func(t *testing.T, m model) model
+		want []string
+	}{
+		{
+			name: "lambda",
+			fail: func(t *testing.T, m model) model {
+				m, _ = update(t, m, functionLiveMsg{gen: m.state.function.liveGen, err: errAWS})
+				return m
+			},
+			want: []string{"as of ", "could not read again: aws said no", "state  ✓ active"},
+		},
+		{
+			name: "metrics",
+			fail: func(t *testing.T, m model) model {
+				m, _ = update(t, m, metricsLoadedMsg{gen: m.state.stage.metricsGen, err: errAWS})
+				return m
+			},
+			want: []string{"as of ", "could not read again: aws said no", "1,740"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := pressKeys(t, started(t, fdFull(t)), "enter")
+			m, _ = update(t, m, tea.WindowSizeMsg{Width: 100, Height: 80})
+			v := screen(tt.fail(t, m))
+			for _, want := range tt.want {
+				if !strings.Contains(v, want) {
+					t.Errorf("the overview has no %q:\n%s", want, v)
+				}
+			}
+		})
+	}
+}
