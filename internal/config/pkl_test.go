@@ -156,6 +156,78 @@ functions {
 	}
 }
 
+// TestLoadInfers checks functions that set neither runtime nor handler evaluate, and load with
+// what the files beside the configuration, or in the root LoadIn is given, say.
+func TestLoadInfers(t *testing.T) {
+	ev := evaluator(t)
+	schema, err := filepath.Abs(filepath.Join("..", "..", "pkl", "Project.pkl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := `amends "` + schema + `"
+
+app = "shop"
+
+functions {
+  ["api"] { memory = 256 }
+  ["worker"] {}
+  ["report"] { runtime = "nodejs24.x" }
+}
+`
+	root := t.TempDir()
+	files := map[string]string{
+		"koldstart.pkl":      body,
+		"src/api.ts":         "export const handler = async () => 1\n",
+		"src/report.ts":      "export const handler = async () => 1\n",
+		"cmd/worker/main.go": "package main\n",
+	}
+	for name, content := range files {
+		file := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(file), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(file, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	elsewhere := filepath.Join(t.TempDir(), "koldstart.pkl")
+	if err := os.WriteFile(elsewhere, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string][2]string{
+		"api":    {config.RuntimeNode22, "src/api.handler"},
+		"worker": {config.RuntimeGo, "./cmd/worker"},
+		"report": {config.RuntimeNode24, "src/report.handler"},
+	}
+	tests := []struct {
+		name string
+		load func() (*config.Project, error)
+	}{
+		{name: "beside", load: func() (*config.Project, error) {
+			return config.Load(context.Background(), ev, filepath.Join(root, "koldstart.pkl"), "dev")
+		}},
+		{name: "in root", load: func() (*config.Project, error) {
+			return config.LoadIn(context.Background(), ev, elsewhere, root, "dev")
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, err := tt.load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			for name, w := range want {
+				if fn := p.Functions[name]; fn.Runtime != w[0] || fn.Handler != w[1] {
+					t.Errorf("%s: runtime %q, handler %q, want %q, %q", name, fn.Runtime, fn.Handler, w[0], w[1])
+				}
+			}
+		})
+	}
+	if _, err := config.Load(context.Background(), ev, elsewhere, "dev"); err == nil || !strings.Contains(err.Error(), "function api: no src/api.ts, src/api.py or cmd/api/ here") {
+		t.Errorf("Load without the files = %v, want an error that says what is looked for", err)
+	}
+}
+
 // TestSchemaRefuses checks the schema reports mistakes, pointing at the line.
 func TestSchemaRefuses(t *testing.T) {
 	ev := evaluator(t)

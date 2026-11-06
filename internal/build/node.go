@@ -20,9 +20,6 @@ import (
 	"github.com/kontrolplane/koldstart/internal/config"
 )
 
-// entryExtensions are tried in order to find the file a handler names.
-var entryExtensions = []string{".ts", ".mts", ".cts", ".tsx", ".js", ".mjs", ".cjs", ".jsx"}
-
 // SplitHandler splits a node handler, src/api.handler, into the module, src/api, and the export,
 // handler.
 func SplitHandler(handler string) (module, export string, err error) {
@@ -39,13 +36,13 @@ func Entry(root, handler string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	for _, ext := range entryExtensions {
+	for _, ext := range config.NodeExtensions {
 		file := filepath.Join(root, filepath.FromSlash(module)+ext)
 		if _, err := os.Stat(file); err == nil {
 			return file, nil
 		}
 	}
-	return "", fmt.Errorf("handler %q: no %s with any of %s", handler, module, strings.Join(entryExtensions, ", "))
+	return "", fmt.Errorf("handler %q: no %s with any of %s", handler, module, strings.Join(config.NodeExtensions, ", "))
 }
 
 // npmCPU is the architecture lambda runs a function on, as npm's --cpu names it.

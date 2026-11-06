@@ -104,10 +104,17 @@ class StageOutput {
 class Function {
   /// `nodejs22.x` or `nodejs24.x` for javascript and typescript, `provided.al2023` for go,
   /// `python3.12` or `python3.13` for python. A function with an `image` has none.
+  ///
+  /// Null infers it from the function's name, for `["api"]`: `nodejs22.x` for `src/api.ts` or
+  /// another javascript or typescript file, `python3.13` for `src/api.py`, `provided.al2023` for
+  /// go files in `cmd/api/`; or from what `handler` names.
   runtime: ("nodejs22.x"|"nodejs24.x"|"provided.al2023"|"python3.12"|"python3.13")?
 
   /// For node and python, the file and its function, `src/api.handler`. For go, the package to
   /// build, `./cmd/worker`. A function with an `image` has none.
+  ///
+  /// Null infers it from the function's name and runtime: `src/<name>.handler` for node and
+  /// python, `./cmd/<name>` for go.
   handler: String(!isEmpty)?
 
   /// A container image to build and run instead of a runtime: its dockerfile and the directory
