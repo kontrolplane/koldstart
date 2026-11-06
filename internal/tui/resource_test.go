@@ -219,7 +219,7 @@ func TestResourceLayout(t *testing.T) {
 		"applied searched": {"/", "s", "q", "s", "enter", "n"},
 		"in aws":           {"tab"},
 		"in aws moved":     {"tab", "G", "pgup"},
-		"in aws unfolded":  {"tab", "z", "z"},
+		"in aws unfolded":  {"tab", "z"},
 	}
 	defer setLayout(120+chromeWidth, 30+chromeHeight)
 	for _, size := range sizes {

@@ -18,11 +18,12 @@ import (
 	"github.com/kontrolplane/koldstart/internal/tui/styles"
 )
 
-// The tones of json by role, as the styles package names them: keys qualify their values, strings
-// are values, numbers and booleans are a payload's numbers, null an empty value, and a ref, secret
-// or output stands for something koldstart resolves.
+// The tones of json by role, as the styles package names them: keys are field labels, as on the
+// logs and the diff, strings are values, numbers and booleans are a payload's numbers, null an
+// empty value, and a ref, secret or output stands for something koldstart resolves. json written
+// out of a string follows embeddedTag, faint, as the diff writes it.
 const (
-	jsonKeyTone    = styles.ToneMuted
+	jsonKeyTone    = styles.ToneFaint
 	jsonStringTone = styles.ToneBody
 	jsonNumberTone = styles.ToneWarm
 	jsonBoolTone   = styles.ToneWarm
@@ -45,9 +46,6 @@ const (
 // jsonGutter is the columns left of every line of a jsonView: the cursor's marker, or a drifted
 // line's ▲, and a space.
 const jsonGutter = 2
-
-// jsonEmbedNote marks an object or array that was a string of json.
-const jsonEmbedNote = "json in a string"
 
 // jsonKind is what a node of a jsonView holds.
 type jsonKind uint8
@@ -541,6 +539,9 @@ func (v *jsonView) rowCell(dst cell, r jsonRow) cell {
 	if markRoot {
 		dst = append(dst, styles.Span{Text: styles.Clean(was), Tone: styles.ToneBody}, styles.Span{Text: " → ", Tone: styles.ToneFaint})
 	}
+	if n.embedded {
+		add(embeddedTag, jsonNoteTone)
+	}
 	switch {
 	case n.kind == jsonText:
 		add(styles.Clean(n.text), styles.ToneBody)
@@ -561,9 +562,6 @@ func (v *jsonView) rowCell(dst cell, r jsonRow) cell {
 	default:
 		add(styles.Clean(n.text), scalarTone(n.kind))
 		comma()
-	}
-	if n.embedded {
-		add("  "+jsonEmbedNote, jsonNoteTone)
 	}
 	return dst
 }
@@ -1219,10 +1217,10 @@ func (m model) jsonDone(res jsonResult) (model, tea.Cmd) {
 	return m, tea.Batch(append(cmds, res.cmd)...)
 }
 
-// jsonLineCell tints a line of indented json, as jsonLines and prettyJSON write it, by role as a
-// jsonView colours it: keys muted, strings in the body ink, numbers and booleans warm, null and
-// punctuation faint, and a ref, secret or output, which jsonLines writes in parentheses, in info.
-// Every span is cleaned.
+// jsonLineCell tints a line of indented json, as jsonLines, docLines and prettyJSON write it, by
+// role as a jsonView colours it: strings in the body ink, numbers and booleans warm, keys, null,
+// punctuation and the (json) before json written out of a string faint, and a ref, secret or
+// output, which jsonLines writes in parentheses, in info. Every span is cleaned.
 func jsonLineCell(line string) cell {
 	var c cell
 	add := func(s string, t styles.Tone) {
@@ -1257,6 +1255,9 @@ func jsonLineCell(line string) cell {
 			}
 		case strings.IndexByte("{}[],:", ch) >= 0:
 			add(line[i:j], jsonPunctTone)
+		case strings.HasPrefix(line[i:], embeddedTag):
+			j = i + len(embeddedTag)
+			add(line[i:j], jsonNoteTone)
 		case ch == '(' && strings.LastIndexByte(line, ')') > i:
 			j = strings.LastIndexByte(line, ')') + 1
 			add(line[i:j], jsonRefTone)

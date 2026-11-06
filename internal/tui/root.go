@@ -981,7 +981,7 @@ func helpSections(k keys.KeyMap) []helpSection {
 			{name(k.Unfold), "unfold or fold all"},
 		}},
 		{"json", [][2]string{
-			{name(k.View) + " " + name(k.Fold), "fold / unfold"}, {name(k.Unfold), "unfold or fold all"},
+			{name(k.Fold), "fold / unfold"}, {name(k.Unfold), "unfold or fold all"},
 			{name(k.Filter), "search"}, {name(k.NextMatch) + " " + name(k.PrevMatch), "next / previous match"},
 			{name(k.Copy), "copy the value"}, {name(k.CopyPath), "copy its path"},
 		}},

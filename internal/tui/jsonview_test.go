@@ -74,7 +74,7 @@ func TestJSONViewRender(t *testing.T) {
 		{
 			name: "a string of json",
 			view: newJSONViewBytes([]byte(`{"body":"{\"id\":1,\"tags\":[\"a\"]}","note":"[INFO] not json"}`)),
-			want: []string{"  {", `    "body": {  json in a string`, `      "id": 1,`, `      "tags": [`, `        "a"`, "      ]", "    },", `    "note": "[INFO] not json"`, "  }"},
+			want: []string{"  {", `    "body": (json) {`, `      "id": 1,`, `      "tags": [`, `        "a"`, "      ]", "    },", `    "note": "[INFO] not json"`, "  }"},
 		},
 		{
 			name: "refs, secrets and outputs",
@@ -135,7 +135,7 @@ func TestJSONViewTones(t *testing.T) {
 		text string
 		want styles.Tone
 	}{
-		{name: "a key", text: `"a"`, want: styles.ToneMuted},
+		{name: "a key", text: `"a"`, want: styles.ToneFaint},
 		{name: "a string", text: `"x"`, want: styles.ToneBody},
 		{name: "a number", text: "2", want: styles.ToneWarm},
 		{name: "a boolean", text: "true", want: styles.ToneWarm},
@@ -162,7 +162,7 @@ func TestJSONViewTones(t *testing.T) {
 		})
 	}
 	for _, s := range drawn {
-		if strings.Contains(s.Text, jsonEmbedNote) && s.Tone != styles.ToneFaint {
+		if strings.Contains(s.Text, strings.TrimSpace(embeddedTag)) && s.Tone != styles.ToneFaint {
 			t.Errorf("the note on a string of json is in tone %d", s.Tone)
 		}
 	}
@@ -176,11 +176,12 @@ func TestJSONLineCell(t *testing.T) {
 		line string
 		want []string
 	}{
-		{name: "a key and a string", line: `  "a": "b c",`, want: []string{"  ", `"a"`, ": ", `"b c"`, ","}},
-		{name: "a number", line: `    "n": 12.5`, want: []string{"    ", `"n"`, ": ", "12.5"}},
-		{name: "a placeholder", line: `  "k": (secret ssm:/a, b),`, want: []string{"  ", `"k"`, ": ", "(secret ssm:/a, b)", ","}},
+		{name: "a key and a string", line: `  "a": "b c",`, want: []string{`  "a": `, `"b c"`, ","}},
+		{name: "a number", line: `    "n": 12.5`, want: []string{`    "n": `, "12.5"}},
+		{name: "a placeholder", line: `  "k": (secret ssm:/a, b),`, want: []string{`  "k": `, "(secret ssm:/a, b)", ","}},
+		{name: "json in a string", line: `  "policy": (json) {`, want: []string{`  "policy": (json) {`}},
 		{name: "a bracket", line: "  ],", want: []string{"  ],"}},
-		{name: "escapes", line: "\"\x1b[2J\": 1", want: []string{`"\x1b[2J"`, ": ", "1"}},
+		{name: "escapes", line: "\"\x1b[2J\": 1", want: []string{`"\x1b[2J": `, "1"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -248,8 +249,8 @@ func TestJSONViewWrap(t *testing.T) {
 }
 
 // TestJSONViewFolds checks what starts folded, that enter and space fold and unfold what the
-// cursor is on, and the object a value is in, that z folds all and then unfolds all, and that the
-// cursor stays on what it was on.
+// cursor is on, and the object a value is in, that z unfolds all, as on the diff, and then folds
+// all, and that the cursor stays on what it was on.
 func TestJSONViewFolds(t *testing.T) {
 	many := make([]any, 60)
 	for i := range many {
@@ -274,8 +275,8 @@ func TestJSONViewFolds(t *testing.T) {
 		{name: "space on a value", keys: []string{"j", "j", "space"}, want: []string{`"a": { … 2 keys },`}, path: ".a"},
 		{name: "a closing bracket", keys: []string{"j", "j", "j", "j", "enter"}, want: []string{`"a": { … 2 keys },`}, path: ".a"},
 		{name: "an array folded by default", keys: []string{"G", "k", "enter"}, want: []string{`"many": [`, "59"}, path: ".many"},
-		{name: "z folds all", keys: []string{"j", "j", "z"}, want: []string{`"a": { … 2 keys },`, `"few": [ … 2 items ],`, `"deep": { … 1 key },`}, not: []string{`"b"`}, path: ".a"},
-		{name: "z again unfolds all", keys: []string{"z", "z"}, want: []string{`"many": [`, `"d": "bottom"`, "59"}, path: "."},
+		{name: "z unfolds all", keys: []string{"z"}, want: []string{`"many": [`, `"d": "bottom"`, "59"}, path: "."},
+		{name: "z again folds all", keys: []string{"j", "j", "z", "z"}, want: []string{`"a": { … 2 keys },`, `"few": [ … 2 items ],`, `"deep": { … 1 key },`}, not: []string{`"b"`}, path: ".a"},
 		{name: "the top", keys: []string{"enter"}, want: []string{"{ … 4 keys }"}, path: ".", ofLines: 1},
 	}
 	for _, tt := range tests {

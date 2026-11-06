@@ -17,12 +17,13 @@
 //     and the words of a log line or a payload.
 //   - muted: what qualifies a value: a region, who did something, a type, an id in aws in a table,
 //     a reason, a billed duration, what a plan changes in a field, a note on a row (kept, imported,
-//     retained), the tabs that are not open, what a key does, the keys of json, and what a page or a
-//     table says while it loads or holds nothing.
-//   - faint: metadata and punctuation: column headings and field labels, units and counts beside a
-//     name or a tab, hashes and request and version ids, the time stamped on a log line,
-//     separators, empty values such as "-", "none", "free" and json's null, json's punctuation and
-//     what a fold of it hides, hints, and notes on what cannot be shown and why.
+//     retained), the tabs that are not open, what a key does, and what a page or a table says while
+//     it loads or holds nothing.
+//   - faint: metadata and punctuation: column headings and field labels, the keys of json, units
+//     and counts beside a name or a tab, hashes and request and version ids, the time stamped on a
+//     log line, separators, empty values such as "-", "none", "free" and json's null, json's
+//     punctuation, what a fold of it hides and the (json) before json written out of a string,
+//     hints, and notes on what cannot be shown and why.
 //   - accent: where the cursor is and what runs now: the open tab, the cursor's marker, the
 //     spinner, something in flight (● running, a function lambda is updating), the project's app
 //     (●), the current version, the matches of a filter or a search and the titles in the help.

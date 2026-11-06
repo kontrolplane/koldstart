@@ -629,16 +629,13 @@ func BenchmarkJSONView(b *testing.B) {
 			})
 		}
 		b.Run(name+"/unfold all", func(b *testing.B) {
-			shut := v
-			shut.update(perfPress("z"), keys.Keys, 200, 60)
 			for b.Loop() {
-				open := shut
+				open := v
 				open.update(perfPress("z"), keys.Keys, 200, 60)
 				_ = open.view(200, 60)
 			}
 		})
 		open := v
-		open.update(perfPress("z"), keys.Keys, 200, 60)
 		open.update(perfPress("z"), keys.Keys, 200, 60)
 		_ = open.view(200, 60)
 		b.Run(name+"/unfolded frame", func(b *testing.B) {
