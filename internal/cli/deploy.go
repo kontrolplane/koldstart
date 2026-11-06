@@ -167,7 +167,7 @@ function is not deployed yet or its configuration changed too: run deploy for th
 			}
 			out := cmd.OutOrStdout()
 			if !plan.HasChanges() {
-				_, err := fmt.Fprintf(out, "%s is up to date: its code is the code deployed to %s/%s\n", function, s.App, s.Stage)
+				_, err := fmt.Fprintln(out, UpToDate(function, s.App, s.Stage))
 				return err
 			}
 			_, _ = fmt.Fprintf(out, "deploying the code of %s to %s/%s in %s, account %s\n", function, s.App, s.Stage, s.Region, s.sess.Account)

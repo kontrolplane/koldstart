@@ -334,17 +334,36 @@ func TestLeavePlanning(t *testing.T) {
 	}
 }
 
-// TestNothingToDeploy checks a plan with no changes says so and offers nothing to apply.
+// TestNothingToDeploy checks a plan with no changes says what it compared, as the commands say,
+// offers to compare with aws when it did not, and offers nothing to apply.
 func TestNothingToDeploy(t *testing.T) {
-	f := newFake(t)
-	f.plan = &engine.Plan{Changes: []engine.Change{{ID: "role/api", Action: engine.NoOp}}}
-	m := pressKeys(t, started(t, f), "d")
-	v := screen(m)
-	if !strings.Contains(v, "there is nothing to deploy") || strings.Contains(v, "ctrl+s") {
-		t.Errorf("a plan without changes:\n%s", v)
+	tests := []struct {
+		name      string
+		keys      []string
+		refreshed bool
+		want      string
+		offer     bool
+	}{
+		{name: "the stage", keys: []string{"d"}, want: "no changes: what the state says is deployed matches the configuration", offer: true},
+		{name: "read from aws", keys: []string{"d"}, refreshed: true, want: "no changes: what is in aws matches the configuration"},
+		{name: "a function's code", keys: []string{"enter", "d"}, want: "api is up to date: its code is the code deployed to orders/dev"},
 	}
-	if m = pressKeys(t, m, "ctrl+s"); len(f.deploys) != 0 || !strings.Contains(m.status, "no changes") {
-		t.Errorf("ctrl+s: %d deploys, status %q", len(f.deploys), m.status)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFake(t)
+			f.plan = &engine.Plan{Refreshed: tt.refreshed, Changes: []engine.Change{{ID: "role/api", Action: engine.NoOp}}}
+			m := pressKeys(t, started(t, f), tt.keys...)
+			v := screen(m)
+			if !strings.Contains(v, tt.want) || strings.Contains(v, "ctrl+s") {
+				t.Errorf("a plan without changes does not say %q:\n%s", tt.want, v)
+			}
+			if offers := strings.Contains(v, "r reads every resource"); offers != tt.offer {
+				t.Errorf("offers to read aws %v, want %v:\n%s", offers, tt.offer, v)
+			}
+			if m = pressKeys(t, m, "ctrl+s"); len(f.deploys) != 0 || !strings.Contains(m.status, "no changes") {
+				t.Errorf("ctrl+s: %d deploys, status %q", len(f.deploys), m.status)
+			}
+		})
 	}
 }
 
@@ -369,8 +388,7 @@ func TestPlanHeadStays(t *testing.T) {
 
 // TestKeepDiff checks the diff of a resource left in place shows its inputs kept, not removed.
 func TestKeepDiff(t *testing.T) {
-	m := planned(t)
-	m = pressKeys(t, m, "G", "enter")
+	m := pressKeys(t, pdChoose(t, planned(t), "resource/bucket"), "enter")
 	if m.page != diffPage || m.state.diff.title != "resource/bucket" {
 		t.Fatalf("page %v on %q, want the diff of resource/bucket", m.page, m.state.diff.title)
 	}

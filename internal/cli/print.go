@@ -128,11 +128,7 @@ func printPlanTo(w io.Writer, app, stage, region, account string, plan *engine.P
 	colour := paletteFor(w)
 	_, _ = fmt.Fprintf(w, "plan for %s/%s in %s, account %s\n\n", app, stage, region, account)
 	if !plan.HasChanges() {
-		if plan.Refreshed {
-			_, _ = fmt.Fprintln(w, "  no changes: what is in aws matches the configuration")
-			return
-		}
-		_, _ = fmt.Fprintln(w, "  no changes: what the state says is deployed matches the configuration")
+		_, _ = fmt.Fprintln(w, "  "+NoChanges(plan))
 		return
 	}
 	width := 0
@@ -183,6 +179,20 @@ func printPlanTo(w io.Writer, app, stage, region, account string, plan *engine.P
 		}
 		_, _ = fmt.Fprintf(w, "only code changes: %s code is replaced in place\n", whose)
 	}
+}
+
+// NoChanges says a plan has nothing to do, and what it compared the configuration with: what
+// the state says is deployed, or with refresh what is in aws.
+func NoChanges(plan *engine.Plan) string {
+	if plan.Refreshed {
+		return "no changes: what is in aws matches the configuration"
+	}
+	return "no changes: what the state says is deployed matches the configuration"
+}
+
+// UpToDate says a deploy of a function's code has nothing to do.
+func UpToDate(function, app, stage string) string {
+	return fmt.Sprintf("%s is up to date: its code is the code deployed to %s/%s", function, app, stage)
 }
 
 // planCounts counts the changes of a plan, as 2 to create, 1 to update.
@@ -411,14 +421,24 @@ func describeChange(before, after any) string {
 	return b + " → " + a
 }
 
+// How a field changes when its values are not shown: added, removed, to a secret, to a value
+// known only after apply, or otherwise changed.
+const (
+	HowAdded   = "added"
+	HowRemoved = "removed"
+	HowSecret  = "(a secret)"
+	HowUnknown = "known after apply"
+	HowChanged = "changed"
+)
+
 // describeValues writes an input before and after short, when both are, and says how it changes
 // otherwise. code is set for a function's code, written as the start of each sha256.
 func describeValues(before, after any) (b, a, how string, code bool) {
 	switch {
 	case engine.IsUnknown(after):
-		return "", "", "known after apply", false
+		return "", "", HowUnknown, false
 	case engine.IsSecret(after):
-		return "", "", "(a secret)", false
+		return "", "", HowSecret, false
 	}
 	if b, a := codeHash(before), codeHash(after); b != "" && a != "" {
 		return b, a, "", true
@@ -428,11 +448,11 @@ func describeValues(before, after any) (b, a, how string, code bool) {
 	}
 	switch {
 	case before == nil:
-		how = "added"
+		how = HowAdded
 	case after == nil:
-		how = "removed"
+		how = HowRemoved
 	default:
-		how = "changed"
+		how = HowChanged
 	}
 	return "", "", how, false
 }

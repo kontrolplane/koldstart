@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
@@ -33,12 +32,44 @@ type planState struct {
 	startedAt  time.Time
 	finishedAt time.Time
 	scroll     int
-	cursor     int
+	// cursor is the row chosen among planRows: the heading of a group, or a change.
+	cursor int
 	// refresh plans with every resource read as it is in aws.
 	refresh bool
 	// earlier is the plan on screen when r planned again, which esc goes back to while that runs
 	// and a failure shows again.
 	earlier *engine.Plan
+	// madeAt is when the plan on screen was made.
+	madeAt time.Time
+	// byAction groups the changes by what they do, rather than by the kind of node.
+	byAction bool
+	// folded are the groups folded, by planGroup.key.
+	folded map[string]bool
+	// cache keeps what the page works out of the plan on screen, so a frame does not again.
+	cache *planCache
+}
+
+// planCache holds the facts of the plan last worked out.
+type planCache struct {
+	facts *planFacts
+}
+
+// facts are what the page works out of the plan on screen, kept for the frames after.
+func (p planState) facts() *planFacts {
+	if p.cache != nil && p.cache.facts != nil && p.cache.facts.plan == p.plan {
+		return p.cache.facts
+	}
+	f := newPlanFacts(p.plan)
+	if p.cache != nil {
+		p.cache.facts = f
+	}
+	return f
+}
+
+// show puts plan on screen, made now, with the cursor on its first change.
+func (p *planState) show(plan *engine.Plan) {
+	p.plan, p.madeAt, p.scroll = plan, time.Now(), 0
+	p.cursor = firstChangeRow(*p)
 }
 
 // nodeProgress is how far applying a node got, from the first event about it. action is what the
@@ -58,7 +89,7 @@ func (m model) planDeploy(ref cli.StageRef, function string) (model, tea.Cmd) {
 	if !m.b.Local(ref) {
 		return m.setStatus("only the project here can be deployed: run "+binary+" ui in its directory", styles.ToneWarning)
 	}
-	m.state.plan = planState{ref: ref, function: function, from: m.page}
+	m.state.plan = planState{ref: ref, function: function, from: m.page, byAction: m.state.plan.byAction, cache: &planCache{}}
 	m = m.switchPage(planPage)
 	m.loading, m.loadingMsg = true, "building and planning "+ref.String()+"…"
 	if function != "" {
@@ -69,7 +100,7 @@ func (m model) planDeploy(ref cli.StageRef, function string) (model, tea.Cmd) {
 
 // planRemove plans removing a stage, then asks to type its name over the plan.
 func (m model) planRemove(ref cli.StageRef) (model, tea.Cmd) {
-	m.state.plan = planState{ref: ref, remove: true, from: m.page}
+	m.state.plan = planState{ref: ref, remove: true, from: m.page, byAction: m.state.plan.byAction, cache: &planCache{}}
 	m = m.switchPage(planPage)
 	m.loading, m.loadingMsg = true, "planning the remove of "+ref.String()+"…"
 	return m.loadPlan()
@@ -83,14 +114,17 @@ func (m model) applyPlanLoaded(msg planLoadedMsg) (model, tea.Cmd) {
 	m.loading, p.cancel = false, nil
 	if msg.err != nil && p.earlier != nil {
 		m.error = "could not plan again with every resource read from aws: " + msg.err.Error()
-		p.plan, p.refresh, p.earlier = p.earlier, false, nil
+		p.refresh = false
+		p.show(p.earlier)
+		p.earlier = nil
 		return m, nil
 	}
 	if msg.err != nil {
 		m.error = "could not plan: " + msg.err.Error()
 		return m.switchPage(p.from), nil
 	}
-	p.plan, p.earlier = msg.plan, nil
+	p.show(msg.plan)
+	p.earlier = nil
 	switch {
 	case !p.plan.HasChanges() && p.remove:
 		m = m.switchPage(p.from)
@@ -137,7 +171,8 @@ func (m model) applied(msg appliedMsg) (model, tea.Cmd) {
 		m.error = "the " + m.planWhat() + " of " + p.ref.String() + " failed: " + why
 		return m, nil
 	case !msg.applied:
-		p.plan, p.progress = msg.plan, nil
+		p.progress = nil
+		p.show(msg.plan)
 		text := "the configuration or the state changed since: this is the plan now, ctrl+s applies it"
 		if p.remove {
 			m, cmd := m.askRemove()
@@ -210,9 +245,18 @@ func (m model) planUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 		p.refresh, p.earlier, p.plan, p.cursor, p.scroll = true, p.plan, nil, 0, 0
 		m.loading, m.loadingMsg = true, "reading every resource of "+p.ref.String()+" as it is in aws…"
 		return m.loadPlan()
+	case key.Matches(msg, m.keys.GroupBy):
+		return m.regroupPlan(), nil
+	case key.Matches(msg, m.keys.Fold):
+		return m.togglePlanFold(), nil
 	case key.Matches(msg, m.keys.View):
-		if changes := m.planChanges(); p.cursor < len(changes) {
-			c := changes[p.cursor]
+		row, ok := m.planRow()
+		switch {
+		case !ok:
+		case row.change < 0:
+			return m.togglePlanFold(), nil
+		default:
+			c := p.facts().changes[row.change]
 			after := c.After
 			if c.Action == engine.Keep {
 				after = c.Before
@@ -230,19 +274,60 @@ func (m model) planUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 	return m, nil
 }
 
-// planChanges are the changes of the plan that do something, as the page lists them.
-func (m model) planChanges() []engine.Change {
-	p := m.state.plan
-	if p.plan == nil {
-		return nil
-	}
-	var out []engine.Change
-	for _, c := range p.plan.Changes {
-		if c.Action != engine.NoOp {
-			out = append(out, c)
+// regroupPlan groups the changes by action when they are grouped by kind, and by kind when by
+// action, keeping the cursor on the change it was on, or on the first change when it was on a
+// heading or that change's group is folded.
+func (m model) regroupPlan() model {
+	p := &m.state.plan
+	row, ok := m.planRow()
+	p.byAction = !p.byAction
+	_, _, rows := planRows(*p)
+	p.cursor = firstChangeRow(*p)
+	for i, r := range rows {
+		if ok && row.change >= 0 && r.change == row.change {
+			p.cursor = i
+			break
 		}
 	}
-	return out
+	return m
+}
+
+// togglePlanFold folds the group under the cursor, or opens it, with the cursor on its heading.
+func (m model) togglePlanFold() model {
+	p := &m.state.plan
+	row, ok := m.planRow()
+	if !ok {
+		return m
+	}
+	_, groups, _ := planRows(*p)
+	k := groups[row.group].key
+	p.folded = cloned(p.folded)
+	p.folded[k] = !p.folded[k]
+	_, _, rows := planRows(*p)
+	for i, r := range rows {
+		if r.group == row.group && r.change < 0 {
+			p.cursor = i
+			break
+		}
+	}
+	return m
+}
+
+// planRow is the row under the cursor, and whether there is one.
+func (m model) planRow() (planRow, bool) {
+	_, _, rows := planRows(m.state.plan)
+	if c := m.state.plan.cursor; c >= 0 && c < len(rows) {
+		return rows[c], true
+	}
+	return planRow{}, false
+}
+
+// planChanges are the changes of the plan that do something, in the plan's order.
+func (m model) planChanges() []engine.Change {
+	if m.state.plan.plan == nil {
+		return nil
+	}
+	return m.state.plan.facts().changes
 }
 
 // The two kinds of plan.
@@ -270,7 +355,9 @@ func (m model) cancelPlan() (model, tea.Cmd) {
 		p.cancel()
 	}
 	p.gen = m.next()
-	p.plan, p.earlier, p.refresh, p.cancel = p.earlier, nil, false, nil
+	p.refresh, p.cancel = false, nil
+	p.show(p.earlier)
+	p.earlier = nil
 	m.loading = false
 	return m.setStatus("stopped reading every resource from aws: this is the plan before", styles.ToneWarning)
 }
@@ -317,27 +404,21 @@ var actionTones = map[engine.Action]styles.Tone{
 	engine.Adopt:   styles.ToneInfo,
 }
 
-// planStatusWidth is the room on the right of each change for its progress.
-const planStatusWidth = 24
-
-// maxErrorLines bounds the lines of a node's error under it in the plan.
-const maxErrorLines = 3
-
-// planLines are the lines of the plan: the head, which stays in place, and the body of changes,
-// each of which can be chosen.
-func (m model) planLines() ([]string, pickList) {
-	p := m.state.plan
-	width := contentWidth - 5
-	if p.plan == nil {
-		return nil, pickList{}
-	}
-	title := "deploy of " + p.ref.String()
+// planTitle names the plan: a deploy of the stage, of the code of one function, or a remove.
+func (p planState) planTitle() string {
 	switch {
 	case p.remove:
-		title = "remove of " + p.ref.String()
+		return "remove of " + p.ref.String() + " in " + p.ref.Region
 	case p.function != "":
-		title = "deploy of the code of " + p.function
+		return "deploy of the code of " + p.function + " to " + p.ref.String() + " in " + p.ref.Region
 	}
+	return "deploy of " + p.ref.String() + " in " + p.ref.Region
+}
+
+// planHead is the lines above the changes, which stay in place: what the plan is of, its counts,
+// with what it compared and when it was made, and how the apply goes.
+func (m model) planHead(width int) []string {
+	p := m.state.plan
 	summary := planSummary(p.plan)
 	if p.plan.OnlyCode() {
 		summary = append(summary, styles.S(": only code, replaced in place", styles.ToneMuted))
@@ -345,58 +426,36 @@ func (m model) planLines() ([]string, pickList) {
 	if p.plan.Refreshed {
 		summary = append(summary, styles.S(", with every resource read as it is in aws", styles.ToneMuted))
 	}
+	title := styles.SectionHeader(p.planTitle(), width)
+	if !p.madeAt.IsZero() {
+		made := "planned at " + p.madeAt.Local().Format(time.TimeOnly)
+		title = styles.SectionHeader(p.planTitle(), width-len(made)-1) + " " + styles.Faint(made)
+	}
 	head := make([]string, 0, 5)
-	head = append(head,
-		styles.SectionHeader(title+" in "+p.ref.Region, width),
-		" "+renderCell(summary, column{width: width - 1}, nil),
-	)
+	head = append(head, title, " "+renderCell(summary, column{width: width - 1}, nil))
 	head = append(head, m.applyLines(width)...)
-	head = append(head, "")
-	var body pickList
-	cols := []column{{width: width - planStatusWidth - 1}, {width: 1}, {width: planStatusWidth, right: true}}
-	for _, c := range m.planChanges() {
-		line := func() cell { return changeCell(c) }
-		body.addDrawn(func() string {
-			return renderCell(line(), cols[0], nil) + " " + renderCell(m.progressCell(c), cols[2], nil)
-		}, func() string { return litRow(cols, line(), nil, m.progressCell(c)) })
-		if len(c.Drift) > 0 {
-			body.lines.addDrawn(1, func(int) string {
-				return renderCell(text("        ▲ changed outside koldstart: "+strings.Join(c.Drift, ", "), styles.ToneWarning), column{width: width}, nil)
-			})
-		}
-		if c.Action == engine.Update || c.Action == engine.Replace || c.Action == engine.Adopt {
-			fields := cli.FieldChanges(c)
-			body.lines.addDrawn(len(fields), func(i int) string {
-				return renderCell(text("        "+fields[i], styles.ToneMuted), column{width: width}, nil)
-			})
-		}
-		if pr := p.progress[c.ID]; pr.err != nil {
-			for _, l := range errorLines(c.ID, pr.err, width-8) {
-				body.lines.add("        " + l)
-			}
-		}
-	}
-	if len(body.rows) == 0 {
-		body.lines.add(" " + styles.Faint(styles.Clean(p.ref.String())+" is as the configuration says: there is nothing to "+m.planWhat()))
-	}
-	return head, body
+	return append(head, "")
 }
 
-// changeCell is the line of a change of the plan: its action and its id, and what is special
-// about it.
-func changeCell(c engine.Change) cell {
-	line := cell{
-		styles.S(fmt.Sprintf(" %-4s", cli.Symbol(c.Action)), actionTones[c.Action]),
-		styles.S(c.ID, styles.ToneText),
+// noChanges are the lines of a plan with nothing to do: what it compared, as the commands say,
+// and with what else it could compare.
+func (p planState) noChanges(width int) []string {
+	say := cli.NoChanges(p.plan)
+	if p.function != "" {
+		say = cli.UpToDate(p.function, p.ref.App, p.ref.Stage)
 	}
-	switch {
-	case c.Resume:
-		line = append(line, styles.S("  "+cli.ResumeNote(c.Action), styles.ToneFaint))
-	case c.Gone:
-		line = append(line, styles.S("  deleted outside koldstart", styles.ToneWarning))
+	lines := []string{" " + renderCell(text(say, styles.ToneMuted), column{width: width - 1}, nil)}
+	if !p.remove && p.function == "" && !p.plan.Refreshed {
+		lines = append(lines, " "+renderCell(text("r reads every resource as it is in aws, to find what was changed outside koldstart", styles.ToneFaint), column{width: width - 1}, nil))
 	}
-	return line
+	return lines
 }
+
+// planStatusWidth is the room on the right of each change for its progress.
+const planStatusWidth = 24
+
+// maxErrorLines bounds the lines of a node's error under it in the plan.
+const maxErrorLines = 3
 
 // errorLines are a node's error wrapped to width, without the node's id the engine puts first,
 // at most maxErrorLines of them.
@@ -430,9 +489,9 @@ func (m model) applyLines(width int) []string {
 		for _, n := range finished {
 			done += n
 		}
-		counts := fmt.Sprintf("%d of %d done", done, len(m.planChanges()))
+		counts := formatInt(done) + " of " + formatInt(len(m.planChanges())) + " done"
 		if failed > 0 {
-			counts += fmt.Sprintf(", %d failed", failed)
+			counts += ", " + formatInt(failed) + " failed"
 		}
 		line = cell{styles.S(m.spinner.View()+" ", styles.ToneAccent), styles.S(applyingWord(p.remove)+" · "+counts, styles.ToneBody),
 			styles.S(" · "+cli.Elapsed(time.Since(p.startedAt)), styles.ToneFaint)}
@@ -499,19 +558,50 @@ func (m model) planView() string {
 	return "  " + strings.Join(head, "\n  ") + "\n" + view
 }
 
+// planPosition is the change under the cursor among the changes, as 12 of 240, or on a heading
+// how many changes the plan has.
+func (m model) planPosition() string {
+	p := m.state.plan
+	if p.plan == nil {
+		return ""
+	}
+	f, groups, _ := planRows(p)
+	row, ok := m.planRow()
+	switch {
+	case !ok:
+		return ""
+	case row.change < 0:
+		return plural(len(f.changes), "change")
+	}
+	at := 0
+	for g := range row.group {
+		at += len(groups[g].members)
+	}
+	for i, c := range groups[row.group].members {
+		if c == row.change {
+			return ofCount(at+i, len(f.changes))
+		}
+	}
+	return ""
+}
+
 // planHints are the footer's hints on the plan page.
 func (m model) planHints() [][2]string {
 	k := m.keys
 	p := m.state.plan
+	other := "by action"
+	if p.byAction {
+		other = "by kind"
+	}
 	switch {
 	case m.loading:
 		return [][2]string{hint(k.Help), hint(k.Back, "cancel")}
 	case p.applying:
-		return [][2]string{hint(k.View, "diff"), chooseHint, hint(k.ForceQuit, "stop and quit")}
+		return [][2]string{hint(k.View, "diff"), chooseHint, hint(k.Fold), hint(k.ForceQuit, "stop and quit")}
 	case p.plan == nil:
 		return [][2]string{hint(k.Help), hint(k.Quit)}
 	case p.done:
-		return [][2]string{hint(k.View, "diff"), chooseHint, hint(k.Help), hint(k.Quit)}
+		return [][2]string{hint(k.View, "diff"), chooseHint, hint(k.Fold), hint(k.GroupBy, other), hint(k.Help), hint(k.Quit)}
 	}
 	var h [][2]string
 	if p.plan.HasChanges() {
@@ -521,7 +611,7 @@ func (m model) planHints() [][2]string {
 		h = append(h, hint(k.Refresh, "read aws"))
 	}
 	if p.plan.HasChanges() {
-		h = append(h, chooseHint)
+		h = append(h, chooseHint, hint(k.Fold), hint(k.GroupBy, other))
 	}
 	return append(h, hint(k.Help), hint(k.Quit))
 }

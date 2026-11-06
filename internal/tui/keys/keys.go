@@ -31,6 +31,7 @@ type KeyMap struct {
 	NextDiff  key.Binding
 	PrevDiff  key.Binding
 	Unfold    key.Binding
+	GroupBy   key.Binding
 	// Pane switches the invoke tab between an event's payload and what it returned.
 	Pane key.Binding
 	// Next and Previous step through the invocations from one of them, a page with no dialog to
@@ -78,6 +79,7 @@ var Keys = KeyMap{
 	NextDiff:  key.NewBinding(key.WithKeys("]"), key.WithHelp("]", "next change")),
 	PrevDiff:  key.NewBinding(key.WithKeys("["), key.WithHelp("[", "previous change")),
 	Unfold:    key.NewBinding(key.WithKeys("z"), key.WithHelp("z", "unfold all")),
+	GroupBy:   key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "group by")),
 	Pane:      key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "payload / result")),
 	Next:      key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "next")),
 	Previous:  key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "previous")),

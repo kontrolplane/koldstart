@@ -620,8 +620,7 @@ func (m model) position() string {
 		}
 		return l.position(v.cursor)
 	case planPage:
-		_, body := m.planLines()
-		return body.position(m.state.plan.cursor)
+		return m.planPosition()
 	case diffPage:
 		return m.diffPosition()
 	case invocationPage:
@@ -977,7 +976,8 @@ func helpSections(k keys.KeyMap) []helpSection {
 		{"stage", [][2]string{
 			{name(k.Deploy), "plan a deploy"}, {name(k.Apply), "apply the plan"}, {name(k.Refresh) + " on a plan", "plan again from aws"},
 			{name(k.View), "a change's diff"}, {name(k.Remove), "remove the stage"}, {name(k.Unlock), "release a lock"},
-			{name(k.Yes) + " " + name(k.No), "answer a dialog"}, {name(k.Filter), "filter a table"}, {name(k.Fold), "fold resources"}, {name(k.Copy), "copy"},
+			{name(k.Yes) + " " + name(k.No), "answer a dialog"}, {name(k.Filter), "filter a table"}, {name(k.Fold), "fold a group"},
+			{name(k.GroupBy) + " on a plan", "by kind / action"}, {name(k.Copy), "copy"},
 			{name(k.Refresh) + " " + name(k.Pause), "refresh / pause"},
 		}},
 		{"function", [][2]string{

@@ -194,7 +194,7 @@ func TestInvocations(t *testing.T) {
 }
 
 // TestPlanDiff checks enter on a change of a plan shows its full diff, and q goes back to the
-// plan.
+// plan, where the second change is past the heading of its group.
 func TestPlanDiff(t *testing.T) {
 	m := pressKeys(t, started(t, newFake(t)), "d", "enter")
 	v := screen(m)
@@ -204,7 +204,7 @@ func TestPlanDiff(t *testing.T) {
 	if m = pressKeys(t, m, "q"); m.page != planPage {
 		t.Errorf("q goes back to the plan, not %v", m.page)
 	}
-	m = pressKeys(t, m, "j", "enter")
+	m = pressKeys(t, m, "j", "j", "enter")
 	if !strings.Contains(screen(m), "resource/table") {
 		t.Errorf("the second change:\n%s", screen(m))
 	}

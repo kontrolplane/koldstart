@@ -89,7 +89,7 @@ func TestNavBack(t *testing.T) {
 		{name: "function overview from its log group", reach: []string{"enter"}, prep: slices.Repeat([]string{"j"}, 6), into: []string{"enter"}, inside: resourcePage},
 		{name: "history from a version", prep: []string{"shift+tab", "j"}, into: []string{"enter"}, inside: versionPage},
 		{name: "version from a diff", reach: []string{"shift+tab", "j", "enter"}, prep: []string{"j", "j"}, into: []string{"enter"}, inside: diffPage},
-		{name: "plan from a diff", reach: []string{"d"}, prep: []string{"j"}, into: []string{"enter"}, inside: diffPage},
+		{name: "plan from a diff", reach: []string{"d"}, prep: []string{"j", "j"}, into: []string{"enter"}, inside: diffPage},
 		{name: "stage from a plan", prep: []string{"tab", "j"}, into: []string{"d"}, inside: planPage},
 		{name: "overview from a plan", reach: []string{"q"}, prep: []string{"j", "k"}, into: []string{"d"}, inside: planPage},
 		{name: "stage from the unlock dialog", prep: []string{"tab", "j"}, into: []string{"ctrl+x"}, inside: unlockPage},
@@ -366,15 +366,17 @@ func navGround() string {
 }
 
 // TestNavPickHighlight checks the chosen change of a plan and of a deploy is painted as a table
-// paints the row under its cursor, the others not, and moves with the cursor.
+// paints the row under its cursor, the others not, and moves with the cursor, past the heading of
+// a plan's group.
 func TestNavPickHighlight(t *testing.T) {
 	tests := []struct {
 		name          string
 		reach         []string
+		next          []string
 		first, second string
 	}{
-		{name: "plan", reach: []string{"d"}, first: "function/api", second: "resource/table"},
-		{name: "version", reach: []string{"shift+tab", "j", "enter"}, first: "function/api", second: "loggroup/api"},
+		{name: "plan", reach: []string{"d"}, next: []string{"j", "j"}, first: "function/api", second: "resource/table"},
+		{name: "version", reach: []string{"shift+tab", "j", "enter"}, next: []string{"j"}, first: "function/api", second: "loggroup/api"},
 	}
 	ground := navGround()
 	lineWith := func(m model, id string) string {
@@ -391,9 +393,9 @@ func TestNavPickHighlight(t *testing.T) {
 			if a, b := lineWith(m, tt.first), lineWith(m, tt.second); !strings.Contains(a, ground) || strings.Contains(b, ground) {
 				t.Fatalf("the first change is not the one painted:\n%q\n%q", a, b)
 			}
-			m = pressKeys(t, m, "j")
+			m = pressKeys(t, m, tt.next...)
 			if a, b := lineWith(m, tt.first), lineWith(m, tt.second); strings.Contains(a, ground) || !strings.Contains(b, ground) {
-				t.Errorf("after j the second change is not the one painted:\n%q\n%q", a, b)
+				t.Errorf("after %v the second change is not the one painted:\n%q\n%q", tt.next, a, b)
 			}
 			if !strings.Contains(navFoot(m), "2 of ") {
 				t.Errorf("the foot does not say which change is chosen: %q", navFoot(m))
