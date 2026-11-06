@@ -35,6 +35,72 @@ func requestLogs(at time.Time) []cli.LogEvent {
 	}
 }
 
+// TestLineIDs checks the request a line starts, reports or names is read from lambda's START and
+// REPORT and a line of node, and nothing from a line like them that is not one.
+func TestLineIDs(t *testing.T) {
+	const id = "11111111-1111-1111-1111-111111111111"
+	tests := []struct {
+		name                string
+		line                string
+		start, report, node string
+	}{
+		{name: "start", line: "START RequestId: " + id + " Version: $LATEST", start: id},
+		{name: "report", line: "REPORT RequestId: " + id + "\tDuration: 1.00 ms", report: id},
+		{name: "node", line: "2026-11-05T10:00:00.001Z\t" + id + "\tINFO\thi", node: id},
+		{name: "start without an id", line: "START RequestId:  x"},
+		{name: "node without a tab after the id", line: "2026-11-05T10:00:00.001Z\t" + id + " INFO hi"},
+		{name: "node with a short id", line: "2026-11-05T10:00:00.001Z\t1111\tINFO\thi"},
+		{name: "node with words before the tab", line: "a b\t" + id + "\tINFO\thi"},
+		{name: "node with an id of capitals", line: "t\t" + strings.ToUpper("aaaaaaaa-1111-1111-1111-111111111111") + "\tINFO\thi"},
+		{name: "plain", line: "order placed"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			start, report, node := lineIDs(tt.line)
+			if start != tt.start || report != tt.report || node != tt.node {
+				t.Errorf("lineIDs = %q %q %q, want %q %q %q", start, report, node, tt.start, tt.report, tt.node)
+			}
+		})
+	}
+}
+
+// TestReportItems checks the numbers of a REPORT and an INIT_REPORT line are read by their label,
+// whether tabs or spaces separate them.
+func TestReportItems(t *testing.T) {
+	tests := []struct {
+		name string
+		line string
+		want map[string]float64
+	}{
+		{
+			name: "tabs",
+			line: "REPORT RequestId: r\tDuration: 12.50 ms\tBilled Duration: 13 ms\tMemory Size: 256 MB\tMax Memory Used: 70 MB\tInit Duration: 150.20 ms\tStatus: timeout",
+			want: map[string]float64{"Duration": 12.5, "Billed Duration": 13, "Memory Size": 256, "Max Memory Used": 70, "Init Duration": 150.2},
+		},
+		{
+			name: "spaces",
+			line: "REPORT RequestId: r Duration: 12.50 ms Billed Duration: 13 ms Memory Size: 256 MB Max Memory Used: 70 MB",
+			want: map[string]float64{"Duration": 12.5, "Billed Duration": 13, "Memory Size": 256, "Max Memory Used": 70},
+		},
+		{
+			name: "init report",
+			line: "INIT_REPORT Init Duration: 10005.31 ms\tPhase: init\tStatus: timeout",
+			want: map[string]float64{"Init Duration": 10005.31},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := map[string]float64{}
+			for label, v := range reportItems(tt.line) {
+				got[label] = v
+			}
+			if fmt.Sprint(got) != fmt.Sprint(tt.want) {
+				t.Errorf("reportItems = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 // TestRequests checks the invocations are read out of the log, newest first, each with its
 // lines, how long it took, whether it was a cold start, and whether it failed.
 func TestRequests(t *testing.T) {

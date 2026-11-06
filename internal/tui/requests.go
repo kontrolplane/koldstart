@@ -2,6 +2,7 @@ package tui
 
 import (
 	"encoding/json"
+	"iter"
 	"regexp"
 	"slices"
 	"strconv"
@@ -47,10 +48,7 @@ type cause struct {
 }
 
 var (
-	startLine  = regexp.MustCompile(`^START RequestId: (\S+)`)
-	reportLine = regexp.MustCompile(`^REPORT RequestId: (\S+)`)
 	reportItem = regexp.MustCompile(`(Billed Duration|Init Duration|Duration|Max Memory Used|Memory Size): ([\d.]+)`)
-	nodeLine   = regexp.MustCompile(`^\S+\t([0-9a-f-]{36})\t`)
 	// errorLevel is a line of json or logfmt logged at the error level or worse.
 	errorLevel = regexp.MustCompile(`(?i)"(level|lvl|severity)"\s*:\s*"(error|err|fatal|critical|panic)"|(^|\s)(level|lvl|severity)="?(error|err|fatal|critical|panic)\b`)
 	// errorName is a message that starts with the type of an error: TypeError: boom.
@@ -218,23 +216,39 @@ func fieldAfter(line, label string) string {
 }
 
 // lineIDs are the request a line starts, the one it reports, and the one a node line names, each
-// "" when it is not that line. An expression runs only on a line that starts as it would match.
+// "" when it is not that line.
 func lineIDs(line string) (start, report, node string) {
-	switch {
-	case strings.HasPrefix(line, "START RequestId:"):
-		if m := startLine.FindStringSubmatch(line); m != nil {
-			return m[1], "", ""
-		}
-	case strings.HasPrefix(line, "REPORT RequestId:"):
-		if m := reportLine.FindStringSubmatch(line); m != nil {
-			return "", m[1], ""
-		}
-	case strings.IndexByte(line, '\t') > 0:
-		if m := nodeLine.FindStringSubmatch(line); m != nil {
-			return "", "", m[1]
+	if rest, ok := strings.CutPrefix(line, "START RequestId: "); ok {
+		return firstWord(rest), "", ""
+	}
+	if rest, ok := strings.CutPrefix(line, "REPORT RequestId: "); ok {
+		return "", firstWord(rest), ""
+	}
+	return "", "", nodeID(line)
+}
+
+// firstWord is s up to its first space or tab.
+func firstWord(s string) string {
+	if i := strings.IndexAny(s, " \t\n\r"); i >= 0 {
+		return s[:i]
+	}
+	return s
+}
+
+// nodeID is the request id a line of node names after its time, as 2026-11-06T10:00:00.000Z, a
+// tab, the 36 characters of the id and a tab, or "".
+func nodeID(line string) string {
+	i := strings.IndexByte(line, '\t')
+	if i <= 0 || strings.ContainsAny(line[:i], " \n\r\v\f") || len(line) < i+38 || line[i+37] != '\t' {
+		return ""
+	}
+	id := line[i+1 : i+37]
+	for k := range len(id) {
+		if c := id[k]; !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c == '-') {
+			return ""
 		}
 	}
-	return "", "", ""
+	return id
 }
 
 // initLine reports whether lambda wrote the line as an instance starts, before its first request.
@@ -254,9 +268,8 @@ func (r *request) read(e cli.LogEvent) {
 	switch {
 	case strings.HasPrefix(line, "REPORT RequestId:"), strings.HasPrefix(line, "INIT_REPORT "):
 		r.reported = r.reported || strings.HasPrefix(line, "REPORT")
-		for _, m := range reportItem.FindAllStringSubmatch(line, -1) {
-			v, _ := strconv.ParseFloat(m[2], 64)
-			switch m[1] {
+		for label, v := range reportItems(line) {
+			switch label {
 			case "Duration":
 				r.duration = v
 			case "Billed Duration":
@@ -289,6 +302,38 @@ func (r *request) read(e cli.LogEvent) {
 	}
 	if c := causeOf(line, r.id); c.rank > r.cause.rank {
 		r.cause = c
+	}
+}
+
+// reportItems are the numbers of a REPORT or INIT_REPORT line by their label, as Duration and
+// 12.5 of Duration: 12.50 ms. Lambda separates them by tabs, which are split rather than matched;
+// a line whose tabs became spaces, as one pasted, is matched.
+func reportItems(line string) iter.Seq2[string, float64] {
+	return func(yield func(string, float64) bool) {
+		if strings.IndexByte(line, '\t') < 0 {
+			for _, m := range reportItem.FindAllStringSubmatch(line, -1) {
+				v, _ := strconv.ParseFloat(m[2], 64)
+				if !yield(m[1], v) {
+					return
+				}
+			}
+			return
+		}
+		for item := range strings.SplitSeq(line, "\t") {
+			label, value, ok := strings.Cut(item, ": ")
+			if !ok {
+				continue
+			}
+			label = strings.TrimPrefix(label, "INIT_REPORT ")
+			value, _, _ = strings.Cut(strings.TrimSpace(value), " ")
+			v, err := strconv.ParseFloat(value, 64)
+			if err != nil {
+				continue
+			}
+			if !yield(label, v) {
+				return
+			}
+		}
 	}
 }
 
