@@ -1,0 +1,25 @@
+amends "@koldstart/Project.pkl"
+
+import "@koldstart/kdst.pkl"
+
+app = "chat"
+region = "eu-west-1"
+
+functions {
+  ["chat"] {
+    memory = 256
+    link {
+      ["connections"] = "readwrite"
+    }
+    events {
+      kdst.fromWebSocket("$connect")
+      kdst.fromWebSocket("$disconnect")
+      kdst.fromWebSocket("send")
+    }
+  }
+}
+
+resources {
+  // a stage that is removed leaves no one connected
+  ["connections"] = (kdst.table("id")) { deletionPolicy = "delete" }
+}
