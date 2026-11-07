@@ -1022,7 +1022,7 @@ func (m model) shortHelp() [][2]string {
 		case overviewTab:
 			h = append(h, m.functionOverviewHints()...)
 		case logsTab:
-			h = append(h, hint(k.View, "open line"), hint(k.Follow), hint(k.Filter), hint(k.Level), hint(k.Group), hint(k.Stamps), [2]string{"↑ at top", "older"})
+			h = append(h, m.logsHints()...)
 		case invocationsTab:
 			h = append(h, hint(k.View, "open"))
 		case invokeTab:

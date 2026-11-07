@@ -11,7 +11,7 @@ import (
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/kontrolplane/koldstart/internal/cli"
 	"github.com/kontrolplane/koldstart/internal/tui/styles"
@@ -28,15 +28,18 @@ const (
 // ones the newest.
 const maxLogLines = 5000
 
-// stampWidth is the width of the time in front of a line of the logs, with the gap after it, and
-// agoWidth the width of how long ago it was.
+// stampWidth is the width of the time in front of a line of the logs, with the gap after it,
+// agoWidth the width of how long ago it was, and hangWidth how far the rows after a line's first
+// are indented without either, so a line wrapped or of many is told from the next.
 const (
 	stampWidth = 14
 	agoWidth   = 10
+	hangWidth  = 2
 )
 
 // stampMode is what the column in front of the lines of the logs shows: the time of each, how
-// long ago it was, or nothing, leaving its room to the lines.
+// long ago it was, or nothing, leaving its room to the lines but the indent of the rows after a
+// line's first.
 type stampMode int
 
 const (
@@ -46,7 +49,8 @@ const (
 	stampModes
 )
 
-// width is the room the column of times takes, with the gap after it.
+// width is the room the column of times takes, with the gap after it, or the indent of the rows
+// after a line's first without it.
 func (s stampMode) width() int {
 	switch s {
 	case stampClock:
@@ -54,7 +58,7 @@ func (s stampMode) width() int {
 	case stampAgo:
 		return agoWidth
 	}
-	return 0
+	return hangWidth
 }
 
 // logRank orders the levels a line is logged at, for the level the logs show from. A line that
@@ -823,6 +827,7 @@ func (r logRow) paint(width int) string { return r.paintIn(width, stampClock) }
 
 // paintIn draws a row in width columns with the column of times as s says: the time of its
 // line, how long ago it was, or nothing, and the indent under it on the rows after the first.
+// Without a time the first row starts at the column's edge and the rows after it hangWidth in.
 func (r logRow) paintIn(width int, s stampMode) string {
 	w := s.width()
 	stamp := strings.Repeat(" ", w)
@@ -832,6 +837,8 @@ func (r logRow) paintIn(width int, s stampMode) string {
 			stamp = styles.Faint(r.at.Local().Format("15:04:05.000")) + "  "
 		case stampAgo:
 			stamp = styles.Faint(fmt.Sprintf("%*s", agoWidth-2, truncate(formatAgo(r.at), agoWidth-2))) + "  "
+		default:
+			stamp, w = "", 0
 		}
 	}
 	return stamp + renderCell(r.c, column{width: width - w}, nil)
@@ -901,30 +908,44 @@ func (c *rowCache) drawn(e cli.LogEvent, mark string, room int) []logRow {
 	return rows
 }
 
-// logsHead says how far back the logs go, how many lines the filter and the level keep, whether
-// they are grouped, and what reads the lines before.
-func (m model) logsHead() string {
+// logsHead says, in width, how far back the logs go, how many lines the filter and the level
+// keep, whether they are grouped, and what reads the lines before: ↑ at the top, or ↑ alone while
+// no line is shown. Where that does not fit it says ↑ older, as the footer does.
+func (m model) logsHead(width int) string {
 	l := &m.state.function.logs
+	shown := m.logList().lines
 	var parts []string
-	if l.filter.text != "" || l.least != rankAll {
-		parts = append(parts, fmt.Sprintf("%s of %s lines", formatInt(m.logList().lines), formatInt(len(l.lines))))
+	if len(l.lines) > 0 && (l.filter.text != "" || l.least != rankAll) {
+		parts = append(parts, fmt.Sprintf("%s of %s lines", formatInt(shown), formatInt(len(l.lines))))
 	}
 	if l.grouped {
 		parts = append(parts, "grouped by request")
 	}
+	up, short := "↑ at the top reads the hour before", "↑ older"
+	if shown == 0 {
+		up = "↑ reads the hour before"
+	}
 	switch {
 	case l.loadingOlder:
-		parts = append(parts, readingNote("the hour before "+formatTime(l.from)))
+		parts, up = append(parts, readingNote("the hour before "+formatTime(l.from))), ""
 	case l.emptyOlder > 0:
-		parts = append(parts, "nothing logged in "+hoursBefore(l.emptyOlder)+" "+formatTime(l.from.Add(time.Duration(l.emptyOlder)*olderStep)), "↑ reads further back")
+		parts, up = append(parts, "nothing logged in "+hoursBefore(l.emptyOlder)+" "+formatTime(l.from.Add(time.Duration(l.emptyOlder)*olderStep))), "↑ reads further back"
 	default:
-		parts = append(parts, "from "+formatTime(l.from), "↑ at the top reads the hour before")
+		parts = append(parts, "from "+formatTime(l.from))
 	}
-	head := styles.Faint(strings.Join(parts, " · "))
+	lead := ""
 	if l.loadingOlder {
-		head = styles.Accent(m.spinner.View()) + " " + head
+		lead = styles.Accent(m.spinner.View()) + " "
 	}
-	return head
+	room := width - ansi.StringWidth(lead)
+	head := strings.Join(parts, " · ")
+	if up != "" {
+		head = strings.Join(append(parts, up), " · ")
+		if ansi.StringWidth(head) > room {
+			head = strings.Join(append(parts, short), " · ")
+		}
+	}
+	return lead + styles.Faint(truncate(head, room))
 }
 
 // logsMeta is what the frame says of the level the logs are shown from, beside the filter, as
@@ -935,6 +956,28 @@ func (m model) logsMeta() string {
 		return ""
 	}
 	return styles.Render(styles.S("level ", styles.ToneFaint), styles.S("≥ "+rankNames[least], styles.ToneText))
+}
+
+// logsHints are the keys of the logs tab for the footer: enter while a line is shown, f, which
+// stops following while it follows, the filter, the level, the grouping and the column of times,
+// and ↑, which reads older lines at the top, or at once while no line is shown. A function
+// without a log group has none of them.
+func (m model) logsHints() [][2]string {
+	k := m.keys
+	l := &m.state.function.logs
+	if m.state.function.logGroup == "" {
+		return nil
+	}
+	var h [][2]string
+	older := [2]string{"↑", "older"}
+	if _, ok := m.logsCursorLine(); ok {
+		h, older = append(h, hint(k.View, "open line")), [2]string{"↑ at top", "older"}
+	}
+	follow := hint(k.Follow)
+	if l.follow {
+		follow = hint(k.Follow, "unfollow")
+	}
+	return append(h, follow, hint(k.Filter), hint(k.Level), hint(k.Group), hint(k.Stamps), older)
 }
 
 // hoursBefore names n steps of older lines: the hour before, the 3 hours before.
@@ -982,12 +1025,13 @@ func (m model) logsView() string {
 	}
 	w := m.logsWindow()
 	if w.all && len(w.rows) == 0 {
-		return lipgloss.NewStyle().PaddingLeft(1).Render(m.logsHead() + "\n\n" + styles.Muted(m.logsEmpty()))
+		note := wrapped(m.logsEmpty(), styles.ToneMuted, logWidth(), 0)
+		return indent(m.logsHead(tableWidth()) + "\n\n" + strings.Join(insetLines(note), "\n"))
 	}
 	lines := make([]string, 0, w.end-w.start)
 	for i := w.start; i < w.end; i++ {
 		if i < w.head {
-			lines = append(lines, " "+m.logsHead())
+			lines = append(lines, " "+m.logsHead(tableWidth()))
 			continue
 		}
 		lines = append(lines, m.paintLogRow(w.rows[i-w.head], w.list, w.cursor, logWidth()))

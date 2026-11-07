@@ -282,7 +282,8 @@ func TestLogsGrouped(t *testing.T) {
 }
 
 // TestLogsStamps checks t cycles the column in front of the lines from the time to how long ago
-// it was, to none, which gives its room to the lines, and back.
+// it was, to none, which gives its room to the lines but a hanging indent, and back, and the rows
+// a line wraps to sit under its first.
 func TestLogsStamps(t *testing.T) {
 	at := time.Now().Add(-90 * time.Second).Truncate(time.Millisecond)
 	long := strings.Repeat("word ", 60)
@@ -290,23 +291,28 @@ func TestLogsStamps(t *testing.T) {
 		name   string
 		keys   []string
 		prefix string
-		room   int
+		next   string
+		// column is the width in front of the lines.
+		column int
 	}{
-		{name: "time", prefix: at.Local().Format("15:04:05.000") + "  word", room: logWidth() - stampWidth},
-		{name: "ago", keys: []string{"t"}, prefix: "  1m ago  word", room: logWidth() - agoWidth},
-		{name: "none", keys: []string{"t", "t"}, prefix: "word", room: logWidth()},
-		{name: "time again", keys: []string{"t", "t", "t"}, prefix: at.Local().Format("15:04:05.000") + "  word", room: logWidth() - stampWidth},
+		{name: "time", prefix: at.Local().Format("15:04:05.000") + "  word", next: strings.Repeat(" ", stampWidth) + "word", column: stampWidth},
+		{name: "ago", keys: []string{"t"}, prefix: "  1m ago  word", next: strings.Repeat(" ", agoWidth) + "word", column: agoWidth},
+		{name: "none", keys: []string{"t", "t"}, prefix: "word", next: "  word", column: hangWidth},
+		{name: "time again", keys: []string{"t", "t", "t"}, prefix: at.Local().Format("15:04:05.000") + "  word", next: strings.Repeat(" ", stampWidth) + "word", column: stampWidth},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			m, _ := onLogs(t, []cli.LogEvent{{Time: at, Message: long}})
 			m = pressKeys(t, m, tt.keys...)
 			lines := strings.Split(ansi.Strip(m.logsView()), "\n")
-			if len(lines) < 2 || !strings.HasPrefix(lines[1][len(" ▌ "):], tt.prefix) {
+			if len(lines) < 3 || !strings.HasPrefix(lines[1][len(" ▌ "):], tt.prefix) {
 				t.Fatalf("the line is drawn as %q, want it to start %q", lines, tt.prefix)
 			}
-			if got := m.state.function.logs.room(); got != tt.room {
-				t.Errorf("the lines have %d columns, want %d", got, tt.room)
+			if !strings.HasPrefix(lines[2][len(" ▌ "):], tt.next) {
+				t.Errorf("the line wraps to %q, want it to start %q", lines[2], tt.next)
+			}
+			if got, want := m.state.function.logs.room(), logWidth()-tt.column; got != want {
+				t.Errorf("the lines have %d columns, want %d", got, want)
 			}
 		})
 	}
