@@ -61,6 +61,6 @@ resources {
 
 outputs {
   ["ordersTable"] = kdst.ref("orders", "TableName")
-  ["docs"] = "https://github.com/kontrolplane/koldstart/tree/main/vhs/shop"
+  ["docs"] = "https://github.com/kontrolplane/koldstart/tree/main/hack/demo/shop"
   ["features"] = #"{"checkout":true,"reviews":false,"currencies":["EUR","GBP","USD"],"limits":{"basket":50,"perMinute":120}}"#
 }
