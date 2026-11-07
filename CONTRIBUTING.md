@@ -16,7 +16,7 @@ make test
 - `make emulator test-emulator` runs the tests that talk to aws against floci; `make emulator-down` stops it.
 - `make local` starts floci and deploys the checkout service in [hack/demonstration/checkout](hack/demonstration/checkout) to it, to development, staging and production, invoked and with an hour of metrics; `make local-ui` then opens `kdst ui` on it.
 - [hack/floci/aws-config](hack/floci/aws-config) is an aws profile for floci, to run kdst and the aws cli against it by hand: `AWS_CONFIG_FILE=hack/floci/aws-config kdst --profile local deploy`, or copy the profile into `~/.aws/config`.
-- `make vhs` records the gif in the README and a screenshot of each page in [assets/pages](assets/pages), against a floci of its own on 127.0.0.1:4567. it needs vhs, ffmpeg and ttyd.
+- `make vhs` records the gif in the README and a screenshot of each page in [assets/pages](assets/pages), against a floci of its own on 127.0.0.1:4567. it needs vhs, ffmpeg, ttyd and gifsicle.
 - `make check` runs what ci runs but the emulator tests, the snapshot release (`make snapshot`) and the image (`make image`).
 
 ## e2e tests

@@ -339,7 +339,7 @@ A command that fails exits with 1, and a command line that is refused, such as a
 - [pkl](https://pkl-lang.org/), for the tests that evaluate configuration, which skip without it
 - [node](https://nodejs.org/) 22+, for the tests that run node functions here, which skip without it
 - [docker](https://www.docker.com/), for the tests that run against [floci](https://github.com/floci-io/floci), a local aws emulator
-- [vhs](https://github.com/charmbracelet/vhs) with `ffmpeg` and `ttyd`, only to record the readme gif and screenshots
+- [vhs](https://github.com/charmbracelet/vhs) with `ffmpeg`, `ttyd` and `gifsicle`, only to record the readme gif and screenshots
 
 ```bash
 make build

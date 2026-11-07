@@ -79,9 +79,11 @@ local-ui: build
 # The recording of kdst ui in the README, assets/cassette.gif and the screenshots in
 # assets/pages/, made with vhs, ffmpeg and ttyd. It deploys the checkout service in
 # hack/demonstration/checkout to a floci of its own on 127.0.0.1:4567, which it starts afresh and removes
-# again, so make emulator's is left alone.
+# again, so make emulator's is left alone. gifsicle then brings the gif from about 10 mb to 3: the
+# README shows it at most 1,000 pixels wide, so 1,800 is sharp on a retina screen.
 vhs: build
 	docker compose -f vhs/docker-compose.yaml down
 	docker compose -f vhs/docker-compose.yaml up --detach --wait
 	KOLDSTART_DEMONSTRATION_CONFIG=$(CURDIR)/vhs/aws-config KOLDSTART_DEMONSTRATION_PROFILE=vhs hack/demonstration/seed.sh
 	vhs vhs/cassette.tape; status=$$?; docker compose -f vhs/docker-compose.yaml down; exit $$status
+	gifsicle --batch -O3 --lossy=80 --colors 64 --resize-width 1800 assets/cassette.gif
