@@ -269,3 +269,34 @@ func TestLogCellsStack(t *testing.T) {
 		})
 	}
 }
+
+// TestListCellsLogfmt checks the logs tab reads a line of logfmt as it reads one of json: its
+// level in the level column, its message in the text ink, and its other pairs faint after it,
+// without the time, and a line with a pair or two among its words as it is.
+func TestListCellsLogfmt(t *testing.T) {
+	tests := []struct {
+		name string
+		line string
+		want string
+		part string
+		tone styles.Tone
+	}{
+		{name: "slog's text", line: `time=2026-11-05T10:00:00Z level=INFO msg="listening" port=8080`, want: "info   listening  port=8080", part: "listening", tone: styles.ToneText},
+		{name: "the level in its tone", line: `time=2026-11-05T10:00:00Z level=error msg="store failed" table=orders`, want: "error  store failed  table=orders", part: "error", tone: styles.ToneDanger},
+		{name: "a key faint", line: `level=info msg=hi took=12ms`, want: "info   hi  took=12ms", part: "took=", tone: styles.ToneFaint},
+		{name: "a value with a space quoted", line: `level=warn msg=slow who="levi van noort"`, want: `warn   slow  who="levi van noort"`, part: "levi van noort", tone: styles.ToneMuted},
+		{name: "no message", line: `level=debug a=1 b=2`, want: "debug  a=1  b=2", part: "a=", tone: styles.ToneFaint},
+		{name: "words with a pair as they are", line: `retrying the store with backoff=2s`, want: "retrying the store with backoff=2s", part: "retrying", tone: styles.ToneBody},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cells := listCells(tt.line, "", 80)
+			if len(cells) != 1 || plainText(cells[0]) != tt.want {
+				t.Fatalf("got %d lines, the first %q; want %q", len(cells), plainText(cells[0]), tt.want)
+			}
+			if tone, ok := toneOf(cells[0], tt.part); !ok || tone != tt.tone {
+				t.Errorf("%q is in tone %v, want %v", tt.part, tone, tt.tone)
+			}
+		})
+	}
+}

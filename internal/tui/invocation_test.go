@@ -334,7 +334,8 @@ func TestInvocationTones(t *testing.T) {
 
 // TestReadLogLine checks a line of json reads as its level, its message and then its other
 // fields in the order of the line, without the time and the request id, each value cut to
-// fieldWidth, and a line a runtime writes without its time and request id.
+// fieldWidth, a line of logfmt as one of json, and a line a runtime writes without its time and
+// request id.
 func TestReadLogLine(t *testing.T) {
 	id := "aaaaaaaa-0000-4000-8000-000000000001"
 	tests := []struct {
@@ -358,6 +359,8 @@ func TestReadLogLine(t *testing.T) {
 		{name: "a timeout", line: "2026-11-05T10:00:06.010Z " + id + " Task timed out after 6.01 seconds", body: "Task timed out after 6.01 seconds"},
 		{name: "broken json as it is", line: `{"msg":"cut`, body: `{"msg":"cut`},
 		{name: "a lambda error after words", line: `Invoke Error 	{"errorType":"Error","errorMessage":"boom","stack":["Error: boom","    at x (/var/task/a.js:1:1)"]}`, body: "Invoke Error · Error: boom", more: 1},
+		{name: "logfmt as json", line: `time=2026-11-05T10:00:00Z level=INFO msg="listening" requestId=` + id + ` port=8080`, level: "info", body: "listening  port=8080"},
+		{name: "logfmt's long value cut", line: `level=warn msg=slow q=` + strings.Repeat("x", 100), level: "warn", body: "slow  q=" + strings.Repeat("x", fieldWidth-1) + "…"},
 		{name: "go's frames from aws-lambda-go", line: `{"errorMessage":"boom","errorType":"runtimeError","stackTrace":[{"path":"/build/main.go","line":23,"label":"handler"}]}`, body: "runtimeError: boom", more: 2},
 	}
 	for _, tt := range tests {
