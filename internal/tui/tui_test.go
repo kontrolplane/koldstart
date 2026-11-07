@@ -352,17 +352,20 @@ func TestInvoke(t *testing.T) {
 	}
 }
 
-// TestRunLocal checks shift+i runs the function here, asking first against prod.
+// TestRunLocal checks shift+i runs the function here and shows what it returned, asking first
+// against prod; no goes back to the tab it was asked from.
 func TestRunLocal(t *testing.T) {
 	tests := []struct {
 		name  string
 		stage cli.StageRef
 		keys  []string
 		local int
+		tab   functionTab
 	}{
-		{name: "dev runs at once", stage: ordersDev, keys: []string{"I"}, local: 1},
-		{name: "prod asks, no", stage: ordersProd, keys: []string{"I", "n"}},
-		{name: "prod asks, yes", stage: ordersProd, keys: []string{"I", "y"}, local: 1},
+		{name: "dev runs at once", stage: ordersDev, keys: []string{"I"}, local: 1, tab: invokeTab},
+		{name: "prod asks, no", stage: ordersProd, keys: []string{"I", "n"}, tab: overviewTab},
+		{name: "prod asks from the logs, esc", stage: ordersProd, keys: []string{"tab", "I", "esc"}, tab: logsTab},
+		{name: "prod asks, yes", stage: ordersProd, keys: []string{"I", "y"}, local: 1, tab: invokeTab},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -372,8 +375,12 @@ func TestRunLocal(t *testing.T) {
 			m = settle(t, m, cmd)
 			m = pressKeys(t, m, "enter")
 			m = pressKeys(t, m, tt.keys...)
-			if f.local != tt.local || m.page != functionPage {
-				t.Fatalf("%d runs here, page %v; want %d on the function", f.local, m.page, tt.local)
+			fn := m.state.function
+			if f.local != tt.local || m.page != functionPage || fn.tab != tt.tab {
+				t.Fatalf("%d runs here, page %v, tab %v; want %d on the function's tab %v", f.local, m.page, fn.tab, tt.local, tt.tab)
+			}
+			if ran := tt.local > 0; fn.pane.result != ran {
+				t.Errorf("the pane shows the result: %v, want %v", fn.pane.result, ran)
 			}
 		})
 	}

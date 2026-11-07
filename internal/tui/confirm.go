@@ -25,10 +25,12 @@ type removeState struct {
 	confirm typedConfirm
 }
 
-// runLocalState asks before a function runs here against what prod deployed.
+// runLocalState asks before a function runs here against what prod deployed. tab is the tab of
+// the function it was asked from, which no goes back to.
 type runLocalState struct {
 	event    string
 	payload  []byte
+	tab      functionTab
 	selected int
 }
 
@@ -131,10 +133,12 @@ func (m model) runLocalUpdate(msg tea.Msg) (model, tea.Cmd) {
 	r := &m.state.runLocal
 	switch m.confirmKey(msg, &r.selected) {
 	case confirmYes:
-		m = m.switchPage(functionPage)
+		m = m.switchPage(functionPage).showPane(true)
 		return m.invoke(r.event, r.payload, true)
 	case confirmNo:
-		return m.switchPage(functionPage), nil
+		m = m.switchPage(functionPage)
+		m.state.function.tab = r.tab
+		return m, nil
 	}
 	return m, nil
 }

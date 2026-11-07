@@ -372,6 +372,7 @@ func (m model) startInvoke(local bool) (model, tea.Cmd) {
 	case !local && f.lambdaName == "":
 		return m.setStatus(f.name+" is not deployed yet", styles.ToneWarning)
 	}
+	from := f.tab
 	f.tab = invokeTab
 	payload, err := m.eventPayload()
 	switch {
@@ -382,7 +383,7 @@ func (m model) startInvoke(local bool) (model, tea.Cmd) {
 		return m, nil
 	}
 	if local && ref.Stage == "prod" {
-		m.state.runLocal = runLocalState{event: m.selectedEvent(), payload: payload}
+		m.state.runLocal = runLocalState{event: m.selectedEvent(), payload: payload, tab: from}
 		return m.switchPage(runLocalPage), nil
 	}
 	m = m.showPane(true)
