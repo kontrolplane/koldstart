@@ -2,7 +2,12 @@ package cli
 
 import (
 	"bytes"
+	"maps"
 	"testing"
+
+	"github.com/kontrolplane/koldstart/internal/config"
+	"github.com/kontrolplane/koldstart/internal/desired"
+	"github.com/kontrolplane/koldstart/internal/state"
 )
 
 // TestWriteOutputs checks outputs are sorted with their values lined up, after a deploy under a
@@ -48,6 +53,42 @@ func TestWriteOutputs(t *testing.T) {
 			tt.write(&out)
 			if out.String() != tt.want {
 				t.Errorf("got:\n%q\nwant:\n%q", out.String(), tt.want)
+			}
+		})
+	}
+}
+
+// TestURLOutputs checks the outputs a deploy adds are read from the state: the url of the rest
+// api's stage from its api and its stage, the id of its key, and none of an api the state does not
+// hold.
+func TestURLOutputs(t *testing.T) {
+	tests := []struct {
+		name      string
+		resources map[string]*state.Resource
+		want      map[string]string
+	}{
+		{name: "nothing", resources: map[string]*state.Resource{}, want: map[string]string{}},
+		{
+			name: "a rest api with a key",
+			resources: map[string]*state.Resource{
+				desired.RESTAPIID:   {Attributes: map[string]string{"ApiEndpoint": "https://abc.execute-api.eu-west-1.amazonaws.com"}},
+				desired.RESTStageID: {Attributes: map[string]string{"StageName": "dev"}},
+				desired.RESTKeyID:   {PhysicalID: "k1"},
+			},
+			want: map[string]string{config.OutputRESTAPIURL: "https://abc.execute-api.eu-west-1.amazonaws.com/dev", config.OutputRESTAPIKeyID: "k1"},
+		},
+		{
+			name:      "a rest api not deployed yet",
+			resources: map[string]*state.Resource{desired.RESTAPIID: {Attributes: map[string]string{"ApiEndpoint": "https://abc"}}},
+			want:      map[string]string{},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &stage{project: &project{Project: &config.Project{}}}
+			got := s.urlOutputs(&state.State{Resources: tt.resources})
+			if !maps.Equal(got, tt.want) {
+				t.Errorf("urlOutputs = %v, want %v", got, tt.want)
 			}
 		})
 	}

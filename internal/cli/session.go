@@ -15,6 +15,7 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials/ssocreds"
 	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
+	"github.com/aws/aws-sdk-go-v2/service/apigateway"
 	"github.com/aws/aws-sdk-go-v2/service/apigatewayv2"
 	awscloudcontrol "github.com/aws/aws-sdk-go-v2/service/cloudcontrol"
 	"github.com/aws/aws-sdk-go-v2/service/cloudformation"
@@ -175,6 +176,7 @@ func (s *session) in(region string) *session {
 // engine returns an engine with the providers for this session.
 func (s *session) engine(tags map[string]string) *engine.Engine {
 	apigw := apigatewayv2.NewFromConfig(s.cfg)
+	rest := apigateway.NewFromConfig(s.cfg, func(o *apigateway.Options) { o.RetryMaxAttempts = 10 })
 	return &engine.Engine{
 		Providers: map[string]engine.Provider{
 			awsp.TypeLogGroup:        awsp.LogGroup{Client: s.Logs},
@@ -187,6 +189,13 @@ func (s *session) engine(tags map[string]string) *engine.Engine {
 			awsp.TypeRoute:           awsp.Route{Client: apigw},
 			awsp.TypeAuthorizer:      awsp.Authorizer{Client: apigw},
 			awsp.TypeDomain:          awsp.Domain{Client: apigw},
+			awsp.TypeRESTAPI:         awsp.RESTAPI{Client: rest, Region: s.Region},
+			awsp.TypeRESTResource:    awsp.RESTResource{Client: rest},
+			awsp.TypeRESTRoute:       awsp.RESTRoute{Client: rest},
+			awsp.TypeRESTAuthorizer:  awsp.RESTAuthorizer{Client: rest},
+			awsp.TypeRESTStage:       awsp.RESTStage{Client: rest, Region: s.Region},
+			awsp.TypeRESTKey:         awsp.RESTKey{Client: rest, Region: s.Region},
+			awsp.TypeRESTUsagePlan:   awsp.RESTUsagePlan{Client: rest},
 			awsp.TypeSchedule:        awsp.Schedule{Client: scheduler.NewFromConfig(s.cfg)},
 			awsp.TypeMapping:         awsp.Mapping{Client: s.Lambda},
 			awsp.TypeSubscription:    awsp.Subscription{Client: sns.NewFromConfig(s.cfg)},

@@ -88,14 +88,17 @@ type LogEvent struct {
 // liveTypes are the cloud control types of koldstart's own, whose physical ids cloud control
 // takes as their identifiers.
 var liveTypes = map[string]string{
-	awsp.TypeRole:         "AWS::IAM::Role",
-	awsp.TypeLogGroup:     "AWS::Logs::LogGroup",
-	awsp.TypeFunction:     "AWS::Lambda::Function",
-	awsp.TypeHTTPAPI:      "AWS::ApiGatewayV2::Api",
-	awsp.TypeDomain:       "AWS::ApiGatewayV2::DomainName",
-	awsp.TypeSchedule:     "AWS::Scheduler::Schedule",
-	awsp.TypeMapping:      "AWS::Lambda::EventSourceMapping",
-	awsp.TypeSubscription: "AWS::SNS::Subscription",
+	awsp.TypeRole:          "AWS::IAM::Role",
+	awsp.TypeLogGroup:      "AWS::Logs::LogGroup",
+	awsp.TypeFunction:      "AWS::Lambda::Function",
+	awsp.TypeHTTPAPI:       "AWS::ApiGatewayV2::Api",
+	awsp.TypeDomain:        "AWS::ApiGatewayV2::DomainName",
+	awsp.TypeRESTAPI:       "AWS::ApiGateway::RestApi",
+	awsp.TypeRESTKey:       "AWS::ApiGateway::ApiKey",
+	awsp.TypeRESTUsagePlan: "AWS::ApiGateway::UsagePlan",
+	awsp.TypeSchedule:      "AWS::Scheduler::Schedule",
+	awsp.TypeMapping:       "AWS::Lambda::EventSourceMapping",
+	awsp.TypeSubscription:  "AWS::SNS::Subscription",
 }
 
 // ErrNotLive is a resource whose type cloud control cannot read.

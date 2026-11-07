@@ -1,6 +1,6 @@
 // Package desired turns a configuration into the nodes the engine applies: for each function its
-// log group, role, the function and its url; the http api and the nodes of every event; and
-// every resource.
+// log group, role, the function and its url; the http api, the rest api and the nodes of every
+// event; and every resource.
 package desired
 
 import (
@@ -25,8 +25,16 @@ const (
 	inputFunction = "function"
 	inputAPI      = "api"
 	inputCORS     = "cors"
+	inputStage    = "stage"
+	inputAuthType = "authorizationType"
+	inputAuth     = "authorizer"
 	authNone      = "NONE"
 )
+
+// throttlingInputs are the inputs of a request limit, of a stage or a route.
+func throttlingInputs(t *config.Throttling) map[string]any {
+	return map[string]any{"rate": t.Rate, "burst": t.Burst}
+}
 
 // Target is where the nodes are deployed.
 type Target struct {
@@ -88,6 +96,7 @@ func Build(p *config.Project, t Target) ([]engine.Node, error) {
 		nodes = append(nodes, fnNodes...)
 	}
 	nodes = append(nodes, b.httpAPI()...)
+	nodes = append(nodes, b.restAPI()...)
 	nodes = append(nodes, b.webSocketAPI()...)
 	for _, name := range slices.Sorted(maps.Keys(p.Functions)) {
 		nodes = append(nodes, b.events(name, p.Functions[name])...)

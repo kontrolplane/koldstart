@@ -815,6 +815,7 @@ func TestInvokerOf(t *testing.T) {
 		{kind: "rule", rest: "0", in: map[string]any{"pattern": `{"source":["orders"]}`}, want: invoker{kind: "event rule", what: `{"source":["orders"]}`, copy: `{"source":["orders"]}`}},
 		{kind: "lbrule", rest: "0", in: map[string]any{"paths": []any{"/a", "/b"}}, want: invoker{kind: "alb", what: "/a, /b", copy: "/a, /b"}},
 		{kind: "wsroute", rest: "$connect", want: invoker{kind: "websocket", what: "$connect", copy: "$connect"}},
+		{kind: "restroute", rest: "GET /orders/{id}", want: invoker{kind: "rest route", what: "GET /orders/{id}", copy: "GET /orders/{id}"}},
 		{kind: "notification", rest: "uploads", want: invoker{kind: "bucket", what: "uploads", copy: "uploads"}},
 	}
 	for _, tt := range tests {

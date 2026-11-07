@@ -528,7 +528,7 @@ func outputJSON(v string) (compact, hint string, ok bool) {
 }
 
 // groupKey orders the groups of the resources tab: functions, then resources, then the http api,
-// then anything else, each by name.
+// then the rest api, then anything else, each by name.
 type groupKey struct {
 	order int
 	name  string
@@ -544,14 +544,16 @@ const (
 	functionGroups = iota
 	resourceGroups
 	httpGroup
+	restGroup
 	otherGroups
 )
 
-var kindNames = [4]string{"functions", "resources", "http api", "other"}
+var kindNames = [5]string{"functions", "resources", "http api", "rest api", "other"}
 
 // groupResources puts the resources of the state, and the ones a remove left in place, in a tree:
 // each function with what it brings, each resource with its notifications, and the http api with
-// its domain and authorizers. A filter keeps a group whose head or any member matches.
+// its domain and authorizers, and the rest api with its resources, authorizers and stage. A
+// filter keeps a group whose head or any member matches.
 func groupResources(st *state.State, f filterBox) []stageResource {
 	heads := map[groupKey]string{}
 	members := map[groupKey][]stageResource{}
@@ -567,6 +569,8 @@ func groupResources(st *state.State, f filterBox) []stageResource {
 				k, head = groupKey{resourceGroups, name}, desired.ResourceID(name)
 			case desired.GroupHTTP:
 				k, head = groupKey{httpGroup, ""}, desired.HTTPAPIID
+			case desired.GroupREST:
+				k, head = groupKey{restGroup, ""}, desired.RESTAPIID
 			}
 			heads[k] = head
 			members[k] = append(members[k], stageResource{id: id, res: r, retained: retained, group: k})
@@ -691,7 +695,7 @@ func (s *stageState) resourceRows() ([]string, []tableRow) {
 			s.tree = append(s.tree, treeRow{kind: kind, res: -1})
 			keys = append(keys, "kind/"+kindNames[kind])
 			heading := cell{styles.B(kindNames[kind], styles.ToneText)}
-			if kind != httpGroup {
+			if kind != httpGroup && kind != restGroup {
 				heading = append(heading, styles.S("  "+formatInt(groups[kind]), styles.ToneFaint))
 			}
 			rows = append(rows, tableRow{heading})

@@ -21,6 +21,30 @@ type Node struct {
 	After []string
 	// DeletionPolicy is retain for a resource remove and replacements must leave in place.
 	DeletionPolicy string
+	// AfterDeletes applies the node, and every node that depends on it, after the nodes gone from
+	// the configuration are deleted: a deployment of a rest api, which takes a snapshot of the
+	// routes the deletes leave.
+	AfterDeletes bool
+}
+
+// lastIDs are the nodes applied after the deletes: those with AfterDeletes, and what depends on
+// them.
+func lastIDs(nodes []Node) map[string]bool {
+	last := map[string]bool{}
+	for _, n := range nodes {
+		if n.AfterDeletes {
+			last[n.ID] = true
+		}
+	}
+	for grew := len(last) > 0; grew; {
+		grew = false
+		for _, n := range nodes {
+			if !last[n.ID] && slices.ContainsFunc(n.Deps(), func(d string) bool { return last[d] }) {
+				last[n.ID], grew = true, true
+			}
+		}
+	}
+	return last
 }
 
 // The deletion policies: retain leaves a resource in place, delete deletes it even when it was

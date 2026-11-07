@@ -21,7 +21,8 @@ func outputsCommand(name string, opts *Options) *cobra.Command {
 		Use:   "outputs",
 		Short: "print the stage's outputs, such as the http api url",
 		Long: `outputs prints the outputs the last deploy of the stage recorded: those of the configuration,
-httpApiUrl, webSocketUrl and a <function>Url for each function url. -o json prints them as one
+httpApiUrl, restApiUrl, restApiKeyId, webSocketUrl and a <function>Url for each function url.
+-o json prints them as one
 json object of strings, its keys sorted, and {} when there are none:
 
   {
@@ -107,8 +108,9 @@ func (s *stage) outputValue(st *state.State, v config.Value) (string, error) {
 }
 
 // urlOutputs are the outputs config.GeneratedOutputs names, from the state: the urls of the
-// functions that have one, as config.URLOutput names them, of the http api and of the websocket
-// api. With a custom domain, httpDomainTarget is where its dns record points.
+// functions that have one, as config.URLOutput names them, of the http api, of the rest api's
+// stage and of the websocket api, and the id of the rest api's key. With a custom domain,
+// httpDomainTarget is where its dns record points.
 func (s *stage) urlOutputs(st *state.State) map[string]string {
 	out := map[string]string{}
 	for name := range s.Functions {
@@ -118,6 +120,12 @@ func (s *stage) urlOutputs(st *state.State) map[string]string {
 	}
 	if r := st.Resources[desired.HTTPAPIID]; r != nil {
 		out[config.OutputHTTPAPIURL] = r.Attributes["ApiEndpoint"]
+	}
+	if r, stage := st.Resources[desired.RESTAPIID], st.Resources[desired.RESTStageID]; r != nil && stage != nil {
+		out[config.OutputRESTAPIURL] = r.Attributes["ApiEndpoint"] + "/" + stage.Attributes["StageName"]
+	}
+	if r := st.Resources[desired.RESTKeyID]; r != nil {
+		out[config.OutputRESTAPIKeyID] = r.PhysicalID
 	}
 	if r := st.Resources[desired.WebSocketID]; r != nil {
 		out[config.OutputWebSocketURL] = r.Attributes["ApiEndpoint"] + "/" + r.Attributes["Stage"]

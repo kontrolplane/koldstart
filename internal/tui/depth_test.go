@@ -141,7 +141,8 @@ func TestSparkline(t *testing.T) {
 }
 
 // TestResourceTree checks the resources tab puts each node under the function or resource it
-// belongs to, with a queue's depth.
+// belongs to, a rest route under its function and the rest of the rest api in a group of its
+// own, with a queue's depth.
 func TestResourceTree(t *testing.T) {
 	f := newFake(t)
 	st := f.states[ordersDev]
@@ -149,14 +150,17 @@ func TestResourceTree(t *testing.T) {
 	st.Resources["httpapi"] = &state.Resource{Type: "koldstart::ApiGatewayV2::Api", PhysicalID: "abc"}
 	st.Resources["integration/api"] = &state.Resource{Type: "koldstart::ApiGatewayV2::Integration", PhysicalID: "i"}
 	st.Resources["route/GET /orders"] = &state.Resource{Type: "koldstart::ApiGatewayV2::Route", PhysicalID: "r", Dependencies: []string{"httpapi", "integration/api"}}
+	st.Resources["restapi"] = &state.Resource{Type: "koldstart::ApiGateway::RestApi", PhysicalID: "def"}
+	st.Resources["reststage"] = &state.Resource{Type: "koldstart::ApiGateway::Stage", PhysicalID: "dev", Dependencies: []string{"restapi"}}
+	st.Resources["restroute/GET /items"] = &state.Resource{Type: "koldstart::ApiGateway::Method", PhysicalID: "m", Dependencies: []string{"function/api", "restapi"}}
 	m := pressKeys(t, started(t, f), "tab")
 	got := make([]string, 0, len(m.state.stage.resources))
 	for _, r := range m.state.stage.resources {
 		got = append(got, strings.Repeat("  ", r.depth)+r.id)
 	}
 	want := []string{
-		"function/api", "  integration/api", "  loggroup/api", "  role/api", "  route/GET /orders",
-		"resource/jobs", "resource/table", "httpapi",
+		"function/api", "  integration/api", "  loggroup/api", "  restroute/GET /items", "  role/api", "  route/GET /orders",
+		"resource/jobs", "resource/table", "httpapi", "restapi", "  reststage",
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("tree:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))

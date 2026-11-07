@@ -1424,7 +1424,8 @@ func invokersOf(st *state.State, fn string) []invoker {
 
 // invokerOf names a trigger by what it is: a schedule by its expression, a queue, a stream or a
 // topic by its name, an event rule by its pattern, a load balancer's rule by its paths, a log
-// subscription by its log group, and a route, a websocket route or a bucket by the rest of its id. Each kind fits a label.
+// subscription by its log group, and a route of either api, a websocket route or a bucket by the
+// rest of its id. Each kind fits a label.
 func invokerOf(id, kind, rest string, in map[string]any) invoker {
 	str := func(k string) string {
 		s, _ := in[k].(string)
@@ -1457,6 +1458,8 @@ func invokerOf(id, kind, rest string, in map[string]any) invoker {
 		set(str("logGroup"), str("logGroup"))
 	case "wsroute":
 		t.kind = "websocket"
+	case "restroute":
+		t.kind = "rest route"
 	case "notification":
 		t.kind = "bucket"
 	}
