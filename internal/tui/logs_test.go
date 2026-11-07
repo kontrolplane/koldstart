@@ -270,3 +270,111 @@ func TestLogsNarrow(t *testing.T) {
 		}
 	}
 }
+
+// TestLogsHead checks the head counts the lines kept only when some were read, says ↑ reads the
+// hour before at once while no line is shown, and says ↑ older where the whole of it does not fit.
+func TestLogsHead(t *testing.T) {
+	tests := []struct {
+		name  string
+		lines []cli.LogEvent
+		keys  []string
+		width int
+		want  string
+		not   []string
+	}{
+		{name: "lines", lines: logSeries(time.Now(), 3, "line"), width: 120, want: "from ", not: []string{"of 3 lines"}},
+		{name: "lines and room", lines: logSeries(time.Now(), 3, "line"), width: 120, want: "↑ at the top reads the hour before"},
+		{name: "none", width: 120, want: "↑ reads the hour before", not: []string{"at the top"}},
+		{name: "none at a level", keys: []string{"s"}, width: 120, want: "↑ reads the hour before", not: []string{"0 of 0"}},
+		{name: "none kept", lines: logSeries(time.Now(), 3, "line"), keys: []string{"s", "s"}, width: 120, want: "0 of 3 lines", not: []string{"at the top"}},
+		{name: "narrow", lines: logSeries(time.Now(), 3, "line"), keys: []string{"b", "s"}, width: 70, want: "· ↑ older", not: []string{"…"}},
+		{name: "too narrow", lines: logSeries(time.Now(), 3, "line"), keys: []string{"b", "s"}, width: 30, want: "…"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m, _ := onLogs(t, tt.lines)
+			m = pressKeys(t, m, tt.keys...)
+			head := ansi.Strip(m.logsHead(tt.width))
+			if w := ansi.StringWidth(head); w > tt.width {
+				t.Errorf("the head is %d wide, more than %d: %q", w, tt.width, head)
+			}
+			if !strings.Contains(head, tt.want) {
+				t.Errorf("the head is %q, want %q in it", head, tt.want)
+			}
+			for _, n := range tt.not {
+				if strings.Contains(head, n) {
+					t.Errorf("the head is %q, want no %q in it", head, n)
+				}
+			}
+		})
+	}
+}
+
+// TestLogsEmptyNote checks the note in place of the lines starts where the lines do, three
+// columns in, under the head a column in.
+func TestLogsEmptyNote(t *testing.T) {
+	tests := []struct {
+		name  string
+		lines []cli.LogEvent
+		keys  []string
+		note  string
+	}{
+		{name: "nothing logged", note: "nothing logged since "},
+		{name: "none at a level", lines: logSeries(time.Now(), 3, "line"), keys: []string{"s", "s"}, note: "no line at warn or above: s changes the level"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m, _ := onLogs(t, tt.lines)
+			m = pressKeys(t, m, tt.keys...)
+			lines := strings.Split(ansi.Strip(m.logsView()), "\n")
+			if len(lines) < 3 || strings.HasPrefix(lines[0], "  ") {
+				t.Fatalf("the tab is drawn as %q, want the head a column in", lines)
+			}
+			if want := strings.Repeat(" ", rowInset+1) + tt.note; !strings.HasPrefix(lines[2], want) {
+				t.Errorf("the note is %q, want it to start %q", lines[2], want)
+			}
+		})
+	}
+}
+
+// TestLogsHints checks the footer of the logs tab offers enter only while a line is shown, says f
+// stops following while it follows, and offers none of the tab's keys without a log group.
+func TestLogsHints(t *testing.T) {
+	tests := []struct {
+		name    string
+		lines   []cli.LogEvent
+		keys    []string
+		noGroup bool
+		want    []string
+		not     []string
+	}{
+		{name: "following", lines: logSeries(time.Now(), 3, "line"), want: []string{"enter open line", "f unfollow", "↑ at top older"}},
+		{name: "not following", lines: logSeries(time.Now(), 3, "line"), keys: []string{"f"}, want: []string{"enter open line", "f follow"}, not: []string{"unfollow"}},
+		{name: "no line", want: []string{"f unfollow", "↑ older"}, not: []string{"open line", "at top"}},
+		{name: "no log group", lines: logSeries(time.Now(), 3, "line"), noGroup: true, not: []string{"open line", "follow", "filter"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m, _ := onLogs(t, tt.lines)
+			m = pressKeys(t, m, tt.keys...)
+			if tt.noGroup {
+				m.state.function.logGroup = ""
+			}
+			var hints []string
+			for _, h := range m.logsHints() {
+				hints = append(hints, h[0]+" "+h[1])
+			}
+			got := strings.Join(hints, " · ")
+			for _, w := range tt.want {
+				if !strings.Contains(got, w) {
+					t.Errorf("the hints are %q, want %q", got, w)
+				}
+			}
+			for _, n := range tt.not {
+				if strings.Contains(got, n) {
+					t.Errorf("the hints are %q, want no %q", got, n)
+				}
+			}
+		})
+	}
+}
