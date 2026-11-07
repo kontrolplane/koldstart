@@ -282,8 +282,57 @@ powershell or zsh. The help of each shell says where the script goes.`, root.Nam
 		cmd.Example = fmt.Sprintf("  %[1]s completion zsh --help\n  source <(%[1]s completion zsh)", root.Name())
 		for _, shell := range cmd.Commands() {
 			shell.Short = "print the completion script for " + shell.Name()
+			bothNames(shell, root.Name())
 		}
 	}
+}
+
+// bothNames makes the script of a shell complete the binary under both its names, so the script
+// brew installs for koldstart completes kdst too. zsh reads the names from its #compdef line, and
+// bash and fish take one more line. fish loads a script by the name typed, so there kdst completes
+// once koldstart has. cobra's own commands write to the stdout they were made with, so each script
+// is generated here.
+func bothNames(shell *cobra.Command, name string) {
+	other := nameShort
+	if name == nameShort {
+		other = nameLong
+	}
+	generate := map[string]func(*cobra.Command, io.Writer, bool) error{
+		"bash": func(root *cobra.Command, w io.Writer, desc bool) error { return root.GenBashCompletionV2(w, desc) },
+		"zsh": func(root *cobra.Command, w io.Writer, desc bool) error {
+			if desc {
+				return root.GenZshCompletion(w)
+			}
+			return root.GenZshCompletionNoDesc(w)
+		},
+		"fish": func(root *cobra.Command, w io.Writer, desc bool) error { return root.GenFishCompletion(w, desc) },
+	}[shell.Name()]
+	if generate == nil {
+		return
+	}
+	shell.RunE = func(cmd *cobra.Command, _ []string) error {
+		noDesc, _ := cmd.Flags().GetBool("no-descriptions")
+		var script strings.Builder
+		if err := generate(cmd.Root(), &script, !noDesc); err != nil {
+			return fmt.Errorf("writing the completion script for %s: %w", shell.Name(), err)
+		}
+		_, err := io.WriteString(cmd.OutOrStdout(), withName(shell.Name(), script.String(), name, other))
+		return err
+	}
+}
+
+// withName adds other to the names a completion script for name completes.
+func withName(shell, script, name, other string) string {
+	switch shell {
+	case "zsh":
+		script = strings.Replace(script, "#compdef "+name+"\n", "#compdef "+name+" "+other+"\n", 1)
+		return strings.Replace(script, "compdef _"+name+" "+name+"\n", "compdef _"+name+" "+name+" "+other+"\n", 1)
+	case "bash":
+		return script + fmt.Sprintf("complete -o default -F __start_%s %s\n", name, other)
+	case "fish":
+		return script + fmt.Sprintf("complete -c %s -w %s\n", other, name)
+	}
+	return script
 }
 
 // usageError is a command line that was refused: an unknown command or flag, a missing flag, or

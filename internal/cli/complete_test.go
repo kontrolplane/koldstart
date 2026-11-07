@@ -291,3 +291,35 @@ func TestCompletionProject(t *testing.T) {
 		})
 	}
 }
+
+// TestCompletionBothNames checks the script of each shell completes the binary under both its
+// names, whichever it was printed by, so the script brew installs for koldstart completes kdst.
+func TestCompletionBothNames(t *testing.T) {
+	tests := []struct {
+		name  string
+		shell string
+		want  []string
+	}{
+		{name: nameLong, shell: "zsh", want: []string{"#compdef koldstart kdst\n", "compdef _koldstart koldstart kdst\n"}},
+		{name: nameShort, shell: "zsh", want: []string{"#compdef kdst koldstart\n", "compdef _kdst kdst koldstart\n"}},
+		{name: nameLong, shell: "bash", want: []string{"complete -o default -F __start_koldstart kdst\n"}},
+		{name: nameLong, shell: "fish", want: []string{"complete -c kdst -w koldstart\n"}},
+		{name: nameShort, shell: "fish", want: []string{"complete -c koldstart -w kdst\n"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name+" "+tt.shell, func(t *testing.T) {
+			root := newRoot(tt.name, nil, completer{})
+			var out strings.Builder
+			root.SetOut(&out)
+			root.SetArgs([]string{"completion", tt.shell})
+			if err := root.Execute(); err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(out.String(), want) {
+					t.Errorf("no %q in the %s script", want, tt.shell)
+				}
+			}
+		})
+	}
+}
