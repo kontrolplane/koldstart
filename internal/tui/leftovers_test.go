@@ -85,7 +85,7 @@ func leftoversBlink(t *testing.T, cmd tea.Cmd) tea.Msg {
 }
 
 // TestUnreadableStage checks a stage whose state cannot be read says so in a word in its lock
-// column, and enter shows the error in full.
+// column, and its peek and enter show the error in full.
 func TestUnreadableStage(t *testing.T) {
 	long := "AccessDenied: User arn:aws:iam::123456789012:user/levi is not authorised to perform s3:GetObject"
 	tests := []struct {
@@ -95,6 +95,7 @@ func TestUnreadableStage(t *testing.T) {
 		not  string
 	}{
 		{name: "the row", want: "✗ unreadable", not: "AccessDenied"},
+		{name: "the peek", want: "could not read the stage: AccessDenied"},
 		{name: "enter", keys: []string{"enter"}, want: "is not authorised to perform s3:GetObject"},
 	}
 	for _, tt := range tests {
@@ -107,8 +108,13 @@ func TestUnreadableStage(t *testing.T) {
 			f.err = errors.New(long)
 			m = pressKeys(t, m, tt.keys...)
 			v := screen(m)
-			if !strings.Contains(v, tt.want) || (tt.not != "" && strings.Contains(v, tt.not)) {
-				t.Errorf("want %q and no %q:\n%s", tt.want, tt.not, v)
+			if !strings.Contains(v, tt.want) {
+				t.Errorf("want %q:\n%s", tt.want, v)
+			}
+			for line := range strings.SplitSeq(v, "\n") {
+				if tt.not != "" && strings.Contains(line, tt.want) && strings.Contains(line, tt.not) {
+					t.Errorf("want no %q beside %q: %s", tt.not, tt.want, line)
+				}
 			}
 		})
 	}

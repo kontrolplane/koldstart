@@ -44,6 +44,152 @@ func TestOverviewEmpty(t *testing.T) {
 	}
 }
 
+// TestOverviewLongErrorWraps checks a first load that fails with a long error says all of it on
+// a narrow terminal, wrapped under the table's header, with the key that tries again at its end.
+func TestOverviewLongErrorWraps(t *testing.T) {
+	tests := []struct {
+		name  string
+		width int
+	}{
+		{name: "narrow", width: 80},
+		{name: "wide", width: 120},
+	}
+	long := "listing the stages in koldstart-state-123456789012-eu-west-1: operation error S3: ListObjectsV2, https response error StatusCode: 403, api error AccessDenied: Access Denied"
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFake(t)
+			f.app, f.err = "", fmt.Errorf("%s", long)
+			m := started(t, f)
+			m, _ = update(t, m, tea.WindowSizeMsg{Width: tt.width, Height: 24})
+			m = pressKeys(t, m, "x")
+			v := screen(m)
+			var words []string
+			for line := range strings.SplitSeq(v, "\n") {
+				words = append(words, strings.Fields(strings.Trim(line, "│ "))...)
+			}
+			joined := strings.Join(words, " ")
+			if want := "could not list the stages: " + long + " · r tries again"; !strings.Contains(joined, want) {
+				t.Errorf("the page does not say %q:\n%s", want, v)
+			}
+		})
+	}
+}
+
+// TestOverviewCounts checks the counts of resources line up at their ends, also where some stages
+// say how many resources a remove kept beside them.
+func TestOverviewCounts(t *testing.T) {
+	tests := []struct {
+		name      string
+		resources []int
+		retained  []int
+		want      []string
+	}{
+		{name: "none kept", resources: []int{4, 140, 12}, retained: []int{0, 0, 0}, want: []string{"  4", "140", " 12"}},
+		{name: "some kept", resources: []int{4, 140, 12}, retained: []int{12, 0, 3}, want: []string{"  4 +12 kept", "140         ", " 12  +3 kept"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFake(t)
+			f.app = ""
+			m := started(t, f)
+			for i := range m.state.overview.stages {
+				m.state.overview.stages[i].Resources = tt.resources[i]
+				m.state.overview.stages[i].Retained = tt.retained[i]
+			}
+			m = m.updateOverviewTable()
+			lines := strings.Split(screen(m), "\n")
+			ends := map[int]bool{}
+			for _, w := range tt.want {
+				found := false
+				for _, l := range lines {
+					if i := strings.Index(l, w+"  "); i >= 0 && strings.Contains(l, "ago") {
+						ends[ansi.StringWidth(l[:i])+len(w)] = true
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("no row with the count %q:\n%s", w, strings.Join(lines, "\n"))
+				}
+			}
+			if len(ends) > 1 {
+				t.Errorf("the counts end in %d columns, want one:\n%s", len(ends), strings.Join(lines, "\n"))
+			}
+		})
+	}
+}
+
+// TestOverviewLock checks a locked stage names the operation before who holds it, so a narrow
+// column cuts the name rather than the operation, and that a stage not yet deployed shows its
+// lock too.
+func TestOverviewLock(t *testing.T) {
+	tests := []struct {
+		name  string
+		stage string
+		row   int
+		lock  state.LockInfo
+		want  string
+	}{
+		{name: "a deploy", stage: "dev", row: 1, lock: state.LockInfo{Who: "github-actions[bot]", Operation: "deploy"}, want: "● deploy by github-ac…"},
+		{name: "no operation", stage: "dev", row: 1, lock: state.LockInfo{Who: "ci"}, want: "● locked by ci"},
+		{name: "no one", stage: "dev", row: 1, lock: state.LockInfo{Operation: "remove"}, want: "● remove by someone"},
+		{name: "not deployed yet", stage: "pr-12", row: 2, lock: state.LockInfo{Who: "ci", Operation: "deploy"}, want: "● deploy by ci"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFake(t)
+			f.stage = "pr-12"
+			m := pressKeys(t, started(t, f), "q")
+			m, _ = update(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+			lock := tt.lock
+			m.state.overview.stages[tt.row].Lock = &lock
+			m = m.updateOverviewTable()
+			v := screen(m)
+			found := false
+			for line := range strings.SplitSeq(v, "\n") {
+				if strings.Contains(line, " "+tt.stage+" ") && strings.Contains(line, tt.want) {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("the row of %s does not say %q:\n%s", tt.stage, tt.want, v)
+			}
+		})
+	}
+}
+
+// TestOverviewPeekNotes checks the peek of a stage it cannot show says why, where the values
+// start.
+func TestOverviewPeekNotes(t *testing.T) {
+	tests := []struct {
+		name string
+		row  int
+		set  func(m *model)
+		want string
+	}{
+		{name: "the project's stage before its first deploy", row: 2, want: "not deployed yet: d plans its first deploy"},
+		{name: "a stage that cannot be read", row: 1, set: func(m *model) { m.state.overview.stages[1].Err = errAWS }, want: "could not read the stage: aws said no · r tries again"},
+		{name: "a stage being read", row: 3, set: func(m *model) { m.state.overview.peeks = nil }, want: "reading the state of orders/prod…"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFake(t)
+			f.stage = "pr-12"
+			m := pressKeys(t, started(t, f), "q")
+			if tt.set != nil {
+				tt.set(&m)
+			}
+			m = m.updateOverviewTable()
+			m.state.overview.table.setCursor(tt.row)
+			v := screen(m)
+			want := "│" + strings.Repeat(" ", rowInset+labelWidth+1) + tt.want
+			if !strings.Contains(v, want) {
+				t.Errorf("the peek does not say %q where the values start:\n%s", tt.want, v)
+			}
+		})
+	}
+}
+
 // TestOverviewLoadFails checks a first load that fails raises the error once, says on the page
 // that r tries again, and that the refreshes failing after it go to the footer instead.
 func TestOverviewLoadFails(t *testing.T) {
