@@ -71,13 +71,17 @@ func (m model) applyUnlocked(msg unlockedMsg) (model, tea.Cmd) {
 }
 
 // unlockView asks before releasing a lock, saying who holds it in the words a deploy refused by
-// it says.
+// it says, and what to make sure of first: that what took it, as a deploy, has stopped.
 func (m model) unlockView() string {
 	u := m.state.unlock
+	holder := "what took it"
+	if u.lock.Operation != "" {
+		holder = "that " + u.lock.Operation
+	}
 	return dialog("release the lock of "+u.ref.String()+"?", styles.ToneWarning,
 		styles.Render(styles.S(cli.LockHeld(u.lock, time.Now()), styles.ToneBody)),
 		"",
-		styles.Muted("make sure that deploy is really gone: two deploys of one stage at once can leave its state wrong."),
+		styles.Render(styles.S("make sure "+holder+" has stopped: another run of "+u.ref.String()+" at the same time can leave its state wrong.", styles.ToneMuted)),
 		"",
 		confirmButtons(u.selected, styles.ToneWarning),
 	)
@@ -114,9 +118,12 @@ func (m model) removeUpdate(msg tea.Msg) (model, tea.Cmd) {
 func (m model) removeView() string {
 	p := m.state.plan
 	counts := p.plan.Counts()
+	deletes := styles.B(plural(counts[engine.Delete], "resource"), styles.ToneDanger)
+	if counts[engine.Delete] == 0 {
+		deletes = styles.S("nothing", styles.ToneBody)
+	}
 	body := []string{
-		styles.Render(styles.S("deletes ", styles.ToneBody), styles.B(plural(counts[engine.Delete], "resource"), styles.ToneDanger),
-			styles.S(" of "+p.ref.String()+" in "+p.ref.Region, styles.ToneBody)),
+		styles.Render(styles.S("deletes ", styles.ToneBody), deletes, styles.S(" of "+p.ref.String()+" in "+p.ref.Region, styles.ToneBody)),
 	}
 	if n := counts[engine.Keep]; n > 0 {
 		hold := " that hold data in place"
@@ -147,14 +154,15 @@ func (m model) runLocalUpdate(msg tea.Msg) (model, tea.Cmd) {
 // the file of one kept for it, or {} without any.
 func (m model) runLocalView() string {
 	r := m.state.runLocal
+	ref := m.state.stage.ref
 	event := []styles.Span{styles.S("with ", styles.ToneFaint), styles.B(cmpOr(r.event, defaultEvent), styles.ToneText)}
 	if r.event == "" {
 		event = append(event, styles.S(": no events are kept for it", styles.ToneFaint))
 	}
-	return dialog("run "+m.state.function.name+" against prod?", styles.ToneWarning,
+	return dialog("run "+m.state.function.name+" here against "+ref.String()+"?", styles.ToneWarning,
 		styles.Render(event...),
 		"",
-		styles.Muted("it runs on this machine with what prod deployed, its data included."),
+		styles.Render(styles.S("it runs here with "+ref.Stage+"'s environment and your aws credentials, so it works on "+ref.Stage+"'s data.", styles.ToneMuted)),
 		"",
 		confirmButtons(r.selected, styles.ToneWarning),
 	)
