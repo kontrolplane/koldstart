@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -649,6 +650,46 @@ func markedLogCells(message, mark string, width int) []cell {
 	return out
 }
 
+// listCells are the drawn lines of a line of the logs tab, wrapped to width, where it holds mark
+// marked: the level it was logged at, when it names one, in a column of its own in its tone,
+// then what it says
+// without the time, request id and level a runtime writes in front of it, a line of json as its
+// message and its other fields as faint key=value pairs, each whole, and under it what it holds,
+// a stack trace or the rest of a message, the frames of the function's own code in the body ink
+// and the rest faint. The time is in the column beside it, and the request in the rule over its
+// lines when they are grouped by request.
+func listCells(message, mark string, width int) []cell {
+	l := readLine(message, "", 0)
+	var level, lead cell
+	room := width
+	if l.level != "" {
+		tone := levelTone(l.level)
+		name := truncate(styles.Clean(l.level), levelWidth)
+		level = cell{styles.Span{Text: name + strings.Repeat(" ", levelWidth-ansi.StringWidth(name)), Tone: tone, Bold: tone == styles.ToneDanger}, styles.S("  ", styles.ToneFaint)}
+		lead = cell{styles.S(strings.Repeat(" ", levelWidth+2), styles.ToneFaint)}
+		room = max(minColumnWidth, width-levelWidth-2)
+	}
+	parts := wrapCell(highlight(l.body, mark), room)
+	first := make(cell, 0, len(level)+len(parts[0]))
+	out := []cell{append(append(first, level...), parts[0]...)}
+	for _, p := range parts[1:] {
+		out = append(out, append(slices.Clone(lead), p...))
+	}
+	stack := stackLines(l.more, l.block)
+	for i, line := range l.more {
+		c := tint(styles.Clean(line))
+		depth := 0
+		if stack[i].kind != notFrame {
+			c, depth = text(strings.TrimLeft(line, " \t"), stack[i].tone()), frameDepth(stack[i].kind)
+		}
+		indent := append(slices.Clone(lead), styles.S(strings.Repeat(" ", depth), styles.ToneFaint))
+		for _, p := range wrapCell(highlight(c, mark), max(minColumnWidth, room-depth)) {
+			out = append(out, append(slices.Clone(indent), p...))
+		}
+	}
+	return out
+}
+
 // jsonField is a field of a json object, in the order of the line.
 type jsonField struct {
 	key   string
@@ -745,6 +786,8 @@ type shownLine struct {
 	// frame is what the line is in a stack trace, as each line of go's panic is an event of its
 	// own.
 	frame stackLine
+	// limit is the widest the value of a field of json is shown, 0 for whole.
+	limit int
 }
 
 // readLogLine reads a raw line of the log of request id as the invocation page shows it, without
@@ -752,8 +795,13 @@ type shownLine struct {
 // its other fields as faint key=value pairs, each value cut to fieldWidth, with the stack trace
 // it holds under it.
 func readLogLine(raw, id string) shownLine {
+	return readLine(raw, id, fieldWidth)
+}
+
+// readLine is readLogLine with the values of json's fields cut to limit, or whole for 0.
+func readLine(raw, id string, limit int) shownLine {
 	lines := messageLines(colours.ReplaceAllString(raw, ""))
-	var l shownLine
+	l := shownLine{limit: limit}
 	first, rest := l.dropPrefix(lines[0], id), lines[1:]
 	if obj := strings.TrimSpace(first); strings.HasPrefix(obj, "{") {
 		if fields, ok := jsonFields(strings.Join(append([]string{obj}, rest...), "\n")); ok {
@@ -835,7 +883,7 @@ func (l *shownLine) fromJSON(prefix string, fields []jsonField, id string) {
 		case keyIn(f.key, "err", "error"):
 			errs = append(errs, l.errorField(f)...)
 		default:
-			rest = append(rest, fieldSpans(f.key, f.text(), styles.ToneMuted)...)
+			rest = append(rest, fieldSpans(f.key, f.text(), styles.ToneMuted, l.limit)...)
 		}
 	}
 	headline := message
@@ -867,7 +915,7 @@ func (l *shownLine) fromJSON(prefix string, fields []jsonField, id string) {
 func (l *shownLine) errorField(f jsonField) cell {
 	nested, ok := jsonFields(string(f.value))
 	if !ok {
-		return fieldSpans(f.key, f.text(), styles.ToneBody)
+		return fieldSpans(f.key, f.text(), styles.ToneBody, l.limit)
 	}
 	var kind, message string
 	if t, ok := fieldOf(nested, "type", "name"); ok {
@@ -881,9 +929,9 @@ func (l *shownLine) errorField(f jsonField) cell {
 		l.dropRepeat(joinNonEmpty(kind, message))
 	}
 	if kind == "" && message == "" {
-		return fieldSpans(f.key, f.text(), styles.ToneBody)
+		return fieldSpans(f.key, f.text(), styles.ToneBody, l.limit)
 	}
-	return fieldSpans(f.key, joinNonEmpty(kind, message), styles.ToneBody)
+	return fieldSpans(f.key, joinNonEmpty(kind, message), styles.ToneBody, l.limit)
 }
 
 // dropRepeat drops the first line of a stack trace when it says again what the line does, as the
@@ -895,9 +943,12 @@ func (l *shownLine) dropRepeat(said string) {
 }
 
 // fieldSpans are the spans of a field of json beside the message: two spaces, its key and = faint,
-// and its value in tone, cut to fieldWidth, and quoted when it is empty or holds a space.
-func fieldSpans(key, value string, tone styles.Tone) cell {
-	value = truncate(styles.Clean(value), fieldWidth)
+// and its value in tone, cut to limit unless it is 0, and quoted when it is empty or holds a space.
+func fieldSpans(key, value string, tone styles.Tone, limit int) cell {
+	value = styles.Clean(value)
+	if limit > 0 {
+		value = truncate(value, limit)
+	}
 	if value == "" || strings.ContainsAny(value, " =") {
 		value = `"` + value + `"`
 	}

@@ -100,6 +100,11 @@ type stageState struct {
 	// depth from the read before stays.
 	queueAt   map[string]time.Time
 	queueErrs map[string]string
+	// peekLive is what lambda said of each function the peek of the functions tab showed, by its
+	// name in lambda, and peekGen the generation of the last read of one. It is copied before it
+	// changes, as folded is.
+	peekLive map[string]peekLive
+	peekGen  int
 }
 
 // lambdaNames are the names in lambda of the stage's functions, sorted.
@@ -237,8 +242,9 @@ func (s *stageState) setRows(tab stageTab, keys []string, rows []tableRow) {
 	}
 }
 
-// stageHeaderHeight is the facts above the tabs, the tab bar, and the space under each.
-const stageHeaderHeight = 5
+// stageHeaderHeight is the tab bar and the rule under it; the facts of the stage are in the
+// frame's top border.
+const stageHeaderHeight = 2
 
 func stageTableHeight() int {
 	return contentHeight - stageHeaderHeight - tableHeaderRows
@@ -313,11 +319,12 @@ func (m model) applyStage(msg stageLoadedMsg) (model, tea.Cmd) {
 	}
 	m, metrics := m.loadMetrics()
 	m, queues := m.loadQueues()
+	m, peek := m.loadPeekLive()
 	var history tea.Cmd
 	if written && s.historyLoaded {
 		m, history = m.loadHistory()
 	}
-	return m, tea.Batch(metrics, queues, history)
+	return m, tea.Batch(metrics, queues, peek, history)
 }
 
 func (m model) applyMetrics(msg metricsLoadedMsg) (model, tea.Cmd) {
@@ -467,19 +474,16 @@ func (s stageState) metricCells(name string) (calls, errs, p99 cell) {
 	return calls, errs, p99
 }
 
-// activityCell draws a function's invocations of the last hour as a sparkline, in danger where
-// the hour had errors, its quiet minutes dotted as on the function's overview, so the line always
-// spans the hour and ends at now; nothing while they are read or when there were none.
+// activityCell draws a function's invocations of the last hour as a sparkline in the accent, the
+// minutes that had errors in danger, its quiet minutes dotted as on the function's overview, so
+// the line always spans the hour, ends at now, and shows when it failed rather than that it did;
+// nothing while they are read or when there were none.
 func (s stageState) activityCell(name string) cell {
 	mt, ok := s.metrics[name]
 	if !ok || peak(mt.Invocations) == 0 {
 		return cell{}
 	}
-	tone := styles.ToneAccent
-	if peak(mt.Errors) > 0 {
-		tone = styles.ToneDanger
-	}
-	return sparkCell(mt.Invocations, sparkWidth, tone)
+	return markedSpark(mt.Invocations, mt.Errors, sparkWidth, styles.ToneAccent, styles.ToneDanger)
 }
 
 // outputValue draws an output on one line, with a hint of what more it holds: json, a list or
@@ -899,6 +903,10 @@ func (m model) stageUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 		return m.stageGoBack()
 	case key.Matches(msg, m.keys.Quit):
 		return m.stageGoBack()
+	case key.Matches(msg, m.keys.Tab):
+		if n, ok := tabNumber(msg, len(stageTabs)); ok {
+			return m.switchTab(n - int(s.tab))
+		}
 	case key.Matches(msg, m.keys.NextTab, m.keys.Right):
 		return m.switchTab(1)
 	case key.Matches(msg, m.keys.PrevTab, m.keys.Left):
@@ -919,6 +927,8 @@ func (m model) stageUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 			cmd = tea.Batch(cmd, history)
 		}
 		return m, cmd
+	case key.Matches(msg, m.keys.Invoke, m.keys.RunLocal) && s.tab == functionsTab:
+		return m.invokeFromStage(key.Matches(msg, m.keys.RunLocal))
 	case key.Matches(msg, m.keys.Deploy):
 		return m.planDeploy(s.ref, "")
 	case key.Matches(msg, m.keys.Remove):
@@ -1014,11 +1024,11 @@ type headFact struct {
 	short cell
 }
 
-// stageFacts are the lines above the tabs, as the function's overview has its own: the stage's
-// name, and the facts of it on a line below, how many resources it has and a remove kept, its
-// account and region where they are not the header's, when it was last deployed and by whom, and
-// its lock. Where they do not fit, the date of the deploy and the account go.
-func (m model) stageFacts() string {
+// stageFacts are the facts of the stage the frame's top border holds beside the breadcrumb, which
+// names it, in width: how many resources it has and a remove kept, its account and region where
+// they are not the header's, when it was last deployed and by whom, and its lock. Where they do not
+// fit, the date of the deploy and the account go, and then the first of them.
+func (m model) stageFacts(width int) string {
 	s := m.state.stage
 	if s.st == nil {
 		return ""
@@ -1070,16 +1080,14 @@ func (m model) stageFacts() string {
 		}
 		facts[len(facts)-1] = held
 	}
-	width := contentWidth - 2
-	title := renderCell(cell{{Text: styles.Clean(s.ref.String()), Tone: styles.ToneText, Bold: true}}, column{width: width}, nil)
-	return indent(title + "\n" + factLine(facts, width))
+	return styles.Render(factCell(facts, width)...)
 }
 
-// factLine is the facts of a head on one line of width, between faint dots, as the function's
-// overview writes its own: each whole where they all fit, and otherwise giving way from the last,
-// each to its shorter form or left out where it has none, cut at the end where even that does
-// not fit.
-func factLine(facts []headFact, width int) string {
+// factCell is the facts of a head on one line of width, between faint dots: each whole where they
+// all fit, and otherwise giving way from the last, each to its shorter form or left out where it
+// has none. Where even the shorter forms do not fit, the first facts go, so what comes last, the
+// lock, stays.
+func factCell(facts []headFact, width int) cell {
 	join := func(short int) cell {
 		var line cell
 		for i, f := range facts {
@@ -1101,7 +1109,10 @@ func factLine(facts []headFact, width int) string {
 	for short := 1; short <= len(facts) && cellWidth(line) > width; short++ {
 		line = join(short)
 	}
-	return renderCell(line, column{width: width}, nil)
+	if cellWidth(line) > width && len(facts) > 1 {
+		return factCell(facts[1:], width)
+	}
+	return line
 }
 
 // lockSince says when a lock was taken: since 14:02:11, 4m ago, with the date when it was not
@@ -1118,26 +1129,94 @@ func lockSince(since time.Time) string {
 	return "since " + when + ", " + formatAgo(since)
 }
 
-// tabBar names the tabs with how many rows each holds, the open one in the accent. Each page
-// sets it one column in, where its section headings start.
+// tabBar draws tabs on one line, the open one in the accent and bold, the others muted, with
+// their counts faint, as the panes of the invoke tab switch.
 func tabBar(names []string, counts []string, open int) string {
 	var spans []styles.Span
 	for i, name := range names {
 		if i > 0 {
 			spans = append(spans, styles.S("   ", styles.ToneFaint))
 		}
-		tone := styles.ToneMuted
-		if i == open {
-			spans = append(spans, styles.B(name, styles.ToneAccent))
-		} else {
-			spans = append(spans, styles.S(name, tone))
-		}
-		if i < len(counts) && counts[i] != "" {
-			spans = append(spans, styles.S(" "+counts[i], styles.ToneFaint))
-		}
+		spans = append(spans, tabSpans(name, count(counts, i), i == open)...)
 	}
 	return styles.Render(spans...)
 }
+
+// count is the count of the i-th tab, or "" where it has none.
+func count(counts []string, i int) string {
+	if i < len(counts) {
+		return counts[i]
+	}
+	return ""
+}
+
+// tabSpans are a tab's name and its count.
+func tabSpans(name, count string, open bool) []styles.Span {
+	spans := []styles.Span{styles.S(name, styles.ToneMuted)}
+	if open {
+		spans[0] = styles.B(name, styles.ToneText)
+	}
+	if count != "" {
+		spans = append(spans, styles.S(" "+count, styles.ToneFaint))
+	}
+	return spans
+}
+
+// tabRow draws the tabs of a page, each after the number that opens it, over a rule as wide as
+// width whose stretch under the open tab is in the accent, so which is open reads at a glance:
+//
+//	1 functions 3   2 resources 20   3 outputs 4   4 history
+//	──────────────────────────────────────────────────────────
+//
+// The rule is the light one of the frame throughout: the heavy one is wide in some terminals,
+// which wraps the line and leaves the rows under it out of step.
+func tabRow(names []string, counts []string, open, width int) string {
+	var spans []styles.Span
+	var under strings.Builder
+	rule := lipgloss.NewStyle().Foreground(styles.P.Rule)
+	used := 0
+	for i, name := range names {
+		if i > 0 {
+			spans = append(spans, styles.S(tabGap, styles.ToneFaint))
+			under.WriteString(rule.Render(strings.Repeat("─", len(tabGap))))
+			used += len(tabGap)
+		}
+		tab := append([]styles.Span{styles.S(strconv.Itoa(i+1)+" ", styles.ToneFaint)}, tabSpans(name, count(counts, i), i == open)...)
+		w := ansi.StringWidth(plainText(cell(tab)))
+		spans = append(spans, tab...)
+		if i == open {
+			under.WriteString(lipgloss.NewStyle().Foreground(styles.P.Accent).Render(strings.Repeat("─", w)))
+		} else {
+			under.WriteString(rule.Render(strings.Repeat("─", w)))
+		}
+		used += w
+	}
+	under.WriteString(rule.Render(strings.Repeat("─", max(0, width-used))))
+	return styles.Render(spans...) + "\n" + under.String()
+}
+
+// invokeFromStage invokes the function under the cursor of the functions tab, in aws or on this
+// machine, as i and shift+i do on its page: it opens on its invoke tab, where the event it is
+// invoked with and what it returned are in sight.
+func (m model) invokeFromStage(local bool) (model, tea.Cmd) {
+	s := m.state.stage
+	t := s.tables[functionsTab]
+	if t.cursor >= len(s.keys[functionsTab]) {
+		return m, nil
+	}
+	m, open := m.openFunction(s.keys[functionsTab][t.cursor])
+	m, run := m.startInvoke(local)
+	return m, tea.Batch(open, run)
+}
+
+// tabNumber is the tab a digit opens, counting from 0, and false for a page with fewer tabs.
+func tabNumber(msg tea.KeyPressMsg, tabs int) (int, bool) {
+	n, err := strconv.Atoi(msg.String())
+	return n - 1, err == nil && n >= 1 && n <= tabs
+}
+
+// tabGap is the room between two tabs.
+const tabGap = "   "
 
 // metricsNote says the metrics could not be read, or that those on screen are from an earlier
 // read, faint as the table beside it says what it can.
@@ -1166,15 +1245,13 @@ func (m model) stageView() string {
 	if s.historyLoaded {
 		counts[historyTab] = formatInt(len(s.shownDeploys))
 	}
-	bar := indent(tabBar(stageTabs, counts, int(s.tab)))
+	bar, under, _ := strings.Cut(indent(tabRow(stageTabs, counts, int(s.tab), tableWidth())), "\n")
 	if room := contentWidth - ansi.StringWidth(bar) - 4; s.tab == functionsTab && s.metricsErr != "" && room >= stageNoteWidth {
 		bar = spread(bar, ansi.Truncate(styles.Render(m.metricsNote()...), room, "…"), contentWidth-1)
 	}
 	return strings.Join([]string{
-		m.stageFacts(),
-		"",
 		bar,
-		"",
-		indent(s.tables[s.tab].View()),
+		under,
+		indent(m.stageBody()),
 	}, "\n")
 }

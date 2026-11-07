@@ -407,8 +407,8 @@ func TestNavPickHighlight(t *testing.T) {
 	}
 }
 
-// TestNavBreadcrumb checks the frame names where every page sits, a diff and an invocation under
-// the page they came from.
+// TestNavBreadcrumb checks the frame names where every page sits, each step by its kind, a diff
+// and an invocation under the page they came from.
 func TestNavBreadcrumb(t *testing.T) {
 	pages := navPages(t)
 	tests := []struct {
@@ -416,15 +416,15 @@ func TestNavBreadcrumb(t *testing.T) {
 		want string
 	}{
 		{page: "overview", want: "╭─ stages ─"},
-		{page: "stage", want: "stages › orders/dev › functions ─"},
-		{page: "function", want: "stages › orders/dev › functions › api › overview ─"},
-		{page: "logs", want: "stages › orders/dev › functions › api › logs ─"},
-		{page: "invocation", want: "stages › orders/dev › functions › api › invocations › 33333333 ─"},
-		{page: "resource", want: "stages › orders/dev › resources › resource/table ─"},
-		{page: "plan", want: "stages › orders/dev › deploy ─"},
-		{page: "diff", want: "stages › orders/dev › deploy › function/api ─"},
-		{page: "unlock", want: "stages › orders/dev › unlock ─"},
-		{page: "run here", want: "stages › orders/prod › functions › api › invoke ─"},
+		{page: "stage", want: "stages › app orders › stage dev › functions ─"},
+		{page: "function", want: "stages › app orders › stage dev › function api › overview ─"},
+		{page: "logs", want: "stages › app orders › stage dev › function api › logs ─"},
+		{page: "invocation", want: "stages › app orders › stage dev › function api › invocations › request 33333333 ─"},
+		{page: "resource", want: "stages › app orders › stage dev › resource table ─"},
+		{page: "plan", want: "stages › app orders › stage dev › deploy ─"},
+		{page: "diff", want: "stages › app orders › stage dev › deploy › function/api ─"},
+		{page: "unlock", want: "stages › app orders › stage dev › unlock ─"},
+		{page: "run here", want: "stages › app orders › stage prod › function api › invoke ─"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.page, func(t *testing.T) {
@@ -434,14 +434,14 @@ func TestNavBreadcrumb(t *testing.T) {
 		})
 	}
 	version := pages["version"]
-	if top := navTop(pressKeys(t, version, "enter")); !strings.Contains(top, "› history › ") || !strings.HasSuffix(strings.TrimRight(top, "─╮ "), "resource/table") {
+	if top := navTop(pressKeys(t, version, "enter")); !strings.Contains(top, "› deploy ") || !strings.HasSuffix(strings.TrimRight(top, "─╮ "), "resource/table") {
 		t.Errorf("a diff of a deploy does not sit under it: %q", top)
 	}
 }
 
 // TestNavBreadcrumbNarrow checks a breadcrumb that does not fit loses its middle, keeping the
 // first crumb and the page on screen whole: the crumbs between fold into an ellipsis, then the
-// function is cut.
+// kinds of the crumbs go, then the function is cut.
 func TestNavBreadcrumbNarrow(t *testing.T) {
 	long := strings.Repeat("checkout", 4)
 	tests := []struct {
@@ -450,8 +450,8 @@ func TestNavBreadcrumbNarrow(t *testing.T) {
 		width    int
 		want     string
 	}{
-		{name: "fits", function: "api", want: "stages › orders/dev › functions › api › logs"},
-		{name: "middle folds", function: long, want: "stages › … › functions › " + long + " › logs"},
+		{name: "fits", function: "api", want: "stages › app orders › stage dev › function api › logs"},
+		{name: "middle folds", function: long, want: "stages › … › function " + long + " › logs"},
 		{name: "function cut", function: long, width: 30, want: "stages › … › checkoutc… › logs"},
 	}
 	for _, tt := range tests {

@@ -136,6 +136,11 @@ func (m model) resourceUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 		return m.switchPage(functionPage).syncFunction(), nil
 	case key.Matches(msg, m.keys.Back, m.keys.Quit):
 		return m.switchPage(stagePage), nil
+	case key.Matches(msg, m.keys.Tab):
+		if n, ok := tabNumber(msg, len(resourceTabs)); ok && n != int(r.tab) {
+			return m.resourceUpdate(tea.KeyPressMsg{Code: tea.KeyTab})
+		}
+		return m, nil
 	case key.Matches(msg, m.keys.NextTab, m.keys.PrevTab, m.keys.Left, m.keys.Right):
 		r.tab, r.scroll = 1-r.tab, 0
 		if v := r.shown(); v != nil && v.at() > 0 {
@@ -337,7 +342,7 @@ func (m model) resourceLines() lazyLines {
 func (m model) resourceBody() (lazyLines, int) {
 	r := m.state.resource
 	width := resourceWidth()
-	lines := lazyOf(append(m.headLines(width), "", tabBar(resourceTabs, nil, int(r.tab))))
+	lines := lazyOf(append(append(m.headLines(width), ""), strings.Split(tabRow(resourceTabs, nil, int(r.tab), width), "\n")...))
 	var tab lazyLines
 	var at int
 	if r.tab == liveTab {

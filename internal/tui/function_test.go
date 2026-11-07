@@ -251,7 +251,7 @@ func TestOverviewStates(t *testing.T) {
 		{
 			name:     "deployed as it is",
 			function: cli.FunctionState{State: "Active", LastUpdate: "Successful", LastModified: time.Now(), CodeSHA256: strings.Repeat("ab", 32), CodeSize: 42 << 20, Memory: 1024, Timeout: 6, Runtime: "nodejs22.x"},
-			want:     []string{"✓ what koldstart deployed · 42 mb", "1,024 mb · 6s timeout", "✓ active"},
+			want:     []string{"✓ what koldstart deployed · 42 mb", "nodejs22.x · 1,024 mb", "✓ active"},
 			notWant:  []string{"changed outside koldstart"},
 		},
 		{
@@ -509,7 +509,7 @@ func TestOverviewOpen(t *testing.T) {
 				if opened.page != resourcePage || opened.state.resource.res.id != tt.resource {
 					t.Fatalf("enter on %q: page %v, resource %q, want %q", tt.row, opened.page, opened.state.resource.res.id, tt.resource)
 				}
-				if top := navTop(opened); !strings.Contains(top, "api › overview › "+tt.resource) {
+				if top := navTop(opened); !strings.Contains(top, "api › overview › "+strings.Replace(tt.resource, "/", " ", 1)) {
 					t.Errorf("the breadcrumb is %q", top)
 				}
 				back := pressKeys(t, opened, "q")
@@ -633,16 +633,17 @@ func TestOverviewColumns(t *testing.T) {
 	}
 }
 
-// TestOverviewHead checks the head names the function and says the facts of it on one line, as
-// far as lambda's state is known, and that it is not deployed or no longer in the state.
+// TestOverviewHead checks the frame's border says the facts of the function on its page, as far as
+// lambda's state is known, and that it is not deployed or no longer in the state, which the
+// breadcrumb names, so the overview has no head of its own.
 func TestOverviewHead(t *testing.T) {
 	tests := []struct {
 		name string
 		prep func(m model) model
 		want string
 	}{
-		{name: "deployed", prep: func(m model) model { return m }, want: "nodejs22.x · arm64 · 1,024 mb · 6s timeout · deployed 10m ago · ✓ active"},
-		{name: "reading lambda", prep: func(m model) model { m.state.function.live = nil; return m }, want: "nodejs22.x · arm64 · 1,024 mb · 6s timeout · deployed 10m ago\n"},
+		{name: "deployed", prep: func(m model) model { return m }, want: "deployed 10m ago · ✓ active ─╮"},
+		{name: "reading lambda", prep: func(m model) model { m.state.function.live = nil; return m }, want: "· deployed 10m ago ─╮"},
 		{name: "failed", prep: func(m model) model { m.state.function.live.State = "Failed"; return m }, want: "deployed 10m ago · ✗ failed"},
 		{name: "pending", prep: func(m model) model { m.state.function.live.State = "Pending"; return m }, want: "· ● pending"},
 		{name: "gone", prep: func(m model) model { m.state.function.gone = true; return m }, want: "▲ no longer in the stage's state"},
@@ -651,13 +652,13 @@ func TestOverviewHead(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			m := tt.prep(pressKeys(t, started(t, fdFull(t)), "enter"))
-			var head []string
-			for _, l := range m.functionOverview().head {
-				head = append(head, strings.TrimSpace(ansi.Strip(l)))
+			meta, _ := m.frameMeta()
+			v := ansi.Strip(meta) + "\n" + screen(m)
+			if !strings.Contains(v, tt.want) {
+				t.Errorf("want %q in the frame's border or the page:\n%s", tt.want, v)
 			}
-			v := strings.Join(head, "\n") + "\n" + screen(m)
-			if name := cmpOr(m.state.function.lambdaName, "api"); head[0] != name || !strings.Contains(v, tt.want) {
-				t.Errorf("the head is\n%s\nwant %q in it:\n%s", strings.Join(head, "\n"), tt.want, v)
+			if head := m.functionOverview().head; len(head) != 1 || strings.TrimSpace(ansi.Strip(head[0])) != "" {
+				t.Errorf("the head on the page is %q, want the facts in the border alone", head)
 			}
 		})
 	}

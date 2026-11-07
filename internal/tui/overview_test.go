@@ -163,7 +163,7 @@ func TestHeaderFitsBucket(t *testing.T) {
 			m, _ = update(t, m, tea.WindowSizeMsg{Width: width, Height: 30})
 			m.ident.Bucket = "koldstart-state-000000000000-ap-southeast-2"
 			h := ansi.Strip(m.header())
-			for _, want := range []string{m.ident.Bucket, "orders · dev", "user/levi"} {
+			for _, want := range []string{m.ident.Bucket, "orders  dev ", "user/levi"} {
 				if !strings.Contains(h, want) {
 					t.Errorf("the header cuts %q:\n%s", want, h)
 				}

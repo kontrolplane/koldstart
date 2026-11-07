@@ -12,6 +12,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/kontrolplane/koldstart/internal/cli"
 	"github.com/kontrolplane/koldstart/internal/tui/keys"
 	"github.com/kontrolplane/koldstart/internal/tui/styles"
 )
@@ -149,10 +150,8 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		return m.applyTail(msg)
 	case functionLiveMsg:
 		return m.applyFunctionLive(msg)
-	case metricsLoadedMsg:
-		return m.applyMetrics(msg)
-	case queuesLoadedMsg:
-		return m.applyQueues(msg)
+	case metricsLoadedMsg, queuesLoadedMsg, peekLiveMsg, stagePeekMsg:
+		return m.applyStageReads(msg)
 	case liveLoadedMsg:
 		return m.applyLive(msg)
 	case invokedMsg:
@@ -257,9 +256,13 @@ func (m model) keyPress(msg tea.KeyPressMsg) (model, tea.Cmd) {
 	}
 	switch m.page {
 	case overviewPage:
-		return m.overviewUpdate(msg)
+		m, cmd := m.overviewUpdate(msg)
+		m, peek := m.loadStagePeek()
+		return m, tea.Batch(cmd, peek)
 	case stagePage:
-		return m.stageUpdate(msg)
+		m, cmd := m.stageUpdate(msg)
+		m, peek := m.loadPeekLive()
+		return m, tea.Batch(cmd, peek)
 	case functionPage:
 		return m.functionUpdate(msg)
 	case resourcePage:
@@ -394,6 +397,22 @@ func (m model) view(p page) string {
 	return ""
 }
 
+// applyStageReads applies what a stage's page and the stages show beside its state: the metrics,
+// the depths of the queues, and what the peeks read.
+func (m model) applyStageReads(msg tea.Msg) (model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case metricsLoadedMsg:
+		return m.applyMetrics(msg)
+	case queuesLoadedMsg:
+		return m.applyQueues(msg)
+	case peekLiveMsg:
+		return m.applyPeekLive(msg)
+	case stagePeekMsg:
+		return m.applyStagePeek(msg)
+	}
+	return m, nil
+}
+
 // fact is a label and its value in the header.
 type fact struct {
 	label string
@@ -401,41 +420,84 @@ type fact struct {
 	// middle cuts the value in the middle where it does not fit, as a bucket's name, whose end,
 	// its account and region, tells it apart.
 	middle bool
+	// badge is drawn after the value as a badge, as the stage after its app.
+	badge     string
+	badgeTone styles.Tone
+}
+
+// width is how wide the fact draws: its label, its value and its badge.
+func (f fact) width() int {
+	w := headerLabelWidth + cellWidth(f.value)
+	if f.badge != "" {
+		w += 1 + ansi.StringWidth(f.badge) + 2
+	}
+	return w
+}
+
+// render draws the fact in width, its value cut to what its label and badge leave.
+func (f fact) render(width int) string {
+	badge := ""
+	room := width - headerLabelWidth
+	if f.badge != "" {
+		badge = " " + styles.Badge(f.badge, f.badgeTone)
+		room -= ansi.StringWidth(badge)
+	}
+	value := strings.TrimRight(renderCell(f.value, column{width: max(1, room), middle: f.middle}, nil), " ")
+	return styles.Faint(fmt.Sprintf("%-*s", headerLabelWidth, f.label)) + value + badge
+}
+
+// stageTone is the tone of a stage's badge: the warning for production, where a deploy is felt,
+// and the accent for any other.
+func stageTone(stage string) styles.Tone {
+	if stage == "production" || stage == "prod" {
+		return styles.ToneWarning
+	}
+	return styles.ToneAccent
 }
 
 // header shows who the interface works as, and where: the profile, account, region and state
-// bucket, and the project here.
+// bucket, and the project here, its app and its stage as a badge. Its three columns sit at the
+// left, in the middle and at the right, where the frame's top border ends; where they do not fit,
+// each takes a share of the width.
 func (m model) header() string {
 	id := m.ident
-	project := text("none here", styles.ToneFaint)
+	project := fact{label: "project", value: text("none here", styles.ToneFaint)}
 	if m.project != "" {
-		project = cell{styles.S(m.project, styles.ToneText), styles.S(" · "+m.projectStage, styles.ToneMuted)}
+		project = fact{label: "project", value: cell{styles.B(m.project, styles.ToneText)}, badge: m.projectStage, badgeTone: stageTone(m.projectStage)}
 	}
 	columns := [][2]fact{
 		{{label: "profile", value: text(orDash(id.Profile), styles.ToneBody)}, {label: "account", value: text(orDash(id.Account), styles.ToneBody)}},
 		{{label: "region", value: text(orDash(id.Region), styles.ToneBody)}, {label: "bucket", value: text(orDash(id.Bucket), styles.ToneMuted), middle: true}},
-		{{label: "project", value: project}, {label: "as", value: text(orDash(callerName(id.Caller)), styles.ToneMuted)}},
+		{project, {label: "as", value: text(orDash(callerName(id.Caller)), styles.ToneMuted)}},
 	}
 	want := make([]int, len(columns))
 	for i, c := range columns {
 		for _, f := range c {
-			want[i] = max(want[i], headerLabelWidth+cellWidth(f.value))
+			want[i] = max(want[i], f.width())
 		}
 	}
-	widths := shareWidths(want, frameWidth-1-2*(len(columns)-1))
-	var rendered []string
-	for i, c := range columns {
-		if i > 0 {
-			rendered = append(rendered, "  ")
-		}
-		var lines []string
-		for _, f := range c {
-			value := renderCell(f.value, column{width: max(1, widths[i]-headerLabelWidth), middle: f.middle}, nil)
-			lines = append(lines, styles.Faint(fmt.Sprintf("%-*s", headerLabelWidth, f.label))+value)
-		}
-		rendered = append(rendered, strings.Join(lines, "\n"))
+	line := frameWidth - 4
+	widths := shareWidths(want, line-2*(len(columns)-1))
+	for i := range widths {
+		widths[i] = min(widths[i], want[i])
 	}
-	return indent(lipgloss.JoinHorizontal(lipgloss.Top, rendered...))
+	starts := []int{0, (line - widths[1]) / 2, line - widths[2]}
+	if starts[1] < widths[0]+2 || starts[2] < starts[1]+widths[1]+2 {
+		starts = []int{0, widths[0] + 2, widths[0] + widths[1] + 4}
+	}
+	rows := make([]string, 2)
+	for r := range rows {
+		var b strings.Builder
+		at := 0
+		for i, c := range columns {
+			b.WriteString(strings.Repeat(" ", max(0, starts[i]-at)))
+			drawn := c[r].render(widths[i])
+			b.WriteString(drawn)
+			at = max(at, starts[i]) + ansi.StringWidth(drawn)
+		}
+		rows[r] = b.String()
+	}
+	return indent(strings.Join(rows, "\n"))
 }
 
 // headerLabelWidth is the room of a label in the header, the value beside it.
@@ -516,26 +578,29 @@ const (
 // trail names where a page sits, from the stages down: a diff and an invocation under the page
 // they were opened from.
 func (m model) trail(p page) []string {
-	ref := m.state.stage.ref.String()
+	stage := func(ref cli.StageRef) []string {
+		return []string{crumbStages, crumb("app", ref.App), crumb("stage", ref.Stage)}
+	}
+	ref := m.state.stage.ref
 	switch p {
 	case overviewPage:
 		return []string{crumbStages}
 	case stagePage:
-		return []string{crumbStages, ref, stageTabs[m.state.stage.tab]}
+		return append(stage(ref), stageTabs[m.state.stage.tab])
 	case functionPage, runLocalPage:
 		f := m.state.function
-		return []string{crumbStages, ref, stageTabs[functionsTab], f.name, functionTabs[f.tab]}
+		return append(stage(ref), crumb(functionWord, f.name), functionTabs[f.tab])
 	case resourcePage:
 		if m.state.resource.fromFunction {
-			return append(m.trail(functionPage), m.state.resource.res.id)
+			return append(m.trail(functionPage), nodeCrumb(m.state.resource.res.id))
 		}
-		return []string{crumbStages, ref, stageTabs[resourcesTab], m.state.resource.res.id}
+		return append(stage(ref), nodeCrumb(m.state.resource.res.id))
 	case versionPage:
-		return []string{crumbStages, ref, stageTabs[historyTab], formatTime(m.state.version.version.LastModified)}
+		return append(stage(ref), crumb("deploy", formatTime(m.state.version.version.LastModified)))
 	case planPage, removePage:
-		return []string{crumbStages, m.state.plan.ref.String(), m.planWhat()}
+		return append(stage(m.state.plan.ref), m.planWhat())
 	case unlockPage:
-		return []string{crumbStages, m.state.unlock.ref.String(), m.keys.Unlock.Help().Desc}
+		return append(stage(m.state.unlock.ref), m.keys.Unlock.Help().Desc)
 	case diffPage:
 		from := m.state.diff.from
 		if from == diffPage {
@@ -547,44 +612,98 @@ func (m model) trail(p page) []string {
 		if from != logLinePage {
 			from = functionPage
 		}
-		return append(m.trail(from), shortRequest(m.state.invocation.req.id))
+		return append(m.trail(from), crumb("request", shortRequest(m.state.invocation.req.id)))
 	case outputPage:
-		return []string{crumbStages, ref, stageTabs[outputsTab], m.state.output.name}
+		return append(stage(ref), crumb("output", m.state.output.name))
 	case inputsPage:
 		return append(m.trail(planPage), m.state.inputs.id)
 	case logLinePage:
-		return append(m.trail(functionPage), "line "+m.state.logLine.e.Time.Local().Format("15:04:05.000"))
+		return append(m.trail(functionPage), crumb("line", m.state.logLine.e.Time.Local().Format("15:04:05.000")))
 	}
 	return []string{crumbStages}
+}
+
+// crumbLabel separates the kind of a step of the trail from its name, which the breadcrumb draws
+// faint before it: app shop, stage dev, function api.
+const crumbLabel = "\x00"
+
+// crumb is a step of the trail of a kind, by its name.
+func crumb(kind, name string) string {
+	return kind + crumbLabel + name
+}
+
+// nodeCrumb is a step of the trail for a node of the state, by the kind its id starts with:
+// resource orders, loggroup api, route GET /orders.
+func nodeCrumb(id string) string {
+	if kind, name, ok := strings.Cut(id, "/"); ok {
+		return crumb(kind, name)
+	}
+	return id
 }
 
 // breadcrumb names where the page sits in width columns: stages › orders/dev › functions › api ›
 // logs, the page on screen in bold.
 func (m model) breadcrumb(width int) string {
 	trail := m.trail(m.page)
+	kinds := make(map[int]string, len(trail))
 	for i := range trail {
-		trail[i] = styles.Clean(trail[i])
+		if kind, name, ok := strings.Cut(trail[i], crumbLabel); ok {
+			kinds[i], trail[i] = styles.Clean(kind), styles.Clean(name)
+		} else {
+			trail[i] = styles.Clean(trail[i])
+		}
 		if i < len(trail)-1 {
 			trail[i] = truncate(trail[i], crumbWidth)
 		}
+		if kinds[i] != "" {
+			trail[i] = kinds[i] + " " + trail[i]
+		}
 	}
 	crumbs := foldCrumbs(trail, width)
+	if cut(crumbs, trail) {
+		for i := range trail {
+			if kind := kinds[i]; kind != "" {
+				trail[i] = strings.TrimPrefix(trail[i], kind+" ")
+			}
+		}
+		kinds = nil
+		crumbs = foldCrumbs(trail, width)
+	}
 	last := len(crumbs) - 1
 	var spans []styles.Span
 	for i, c := range crumbs {
 		if i > 0 {
 			spans = append(spans, styles.S(crumbSep, styles.ToneFaint))
 		}
+		tone, bold := styles.ToneMuted, false
 		switch {
 		case i == last:
-			spans = append(spans, styles.B(c, styles.ToneText))
+			tone, bold = styles.ToneText, true
 		case c == "…" && i == 1:
 			spans = append(spans, styles.S(c, styles.ToneFaint))
-		default:
-			spans = append(spans, styles.S(c, styles.ToneMuted))
+			continue
 		}
+		at := i
+		if len(crumbs) != len(trail) && i > 0 {
+			at = i + len(trail) - len(crumbs)
+		}
+		if kind := kinds[at]; kind != "" && strings.HasPrefix(c, kind+" ") {
+			spans = append(spans, styles.S(kind+" ", styles.ToneFaint))
+			c = strings.TrimPrefix(c, kind+" ")
+		}
+		spans = append(spans, styles.Span{Text: c, Tone: tone, Bold: bold})
 	}
 	return styles.Render(spans...)
+}
+
+// cut reports whether folding cut a crumb of the trail rather than only leaving some out.
+func cut(crumbs, trail []string) bool {
+	for _, c := range crumbs {
+		if c != "…" && !slices.Contains(trail, c) {
+			return true
+		}
+	}
+	return false
 }
 
 // foldCrumbs fits a trail to width by giving way in the middle: the crumbs after the first fold
@@ -714,6 +833,13 @@ func (m model) frameMeta() (string, string) {
 			meta += styles.Faint(" · ")
 		}
 		meta += level
+	}
+	switch room := frameWidth - 10 - ansi.StringWidth(m.breadcrumb(frameWidth)); {
+	case meta != "":
+	case m.page == stagePage:
+		meta = m.stageFacts(room)
+	case m.page == functionPage:
+		meta = m.functionFactsMeta(room)
 	}
 	var foot []footPart
 	if v := m.state.json(m.page); v != nil {
@@ -988,6 +1114,9 @@ func (m model) stageHints() [][2]string {
 	if rows && !heading && s.tab == resourcesTab && s.filter.text == "" {
 		h = append(h, hint(k.Fold))
 	}
+	if rows && s.tab == functionsTab {
+		h = append(h, hint(k.Invoke))
+	}
 	h = append(h, hint(k.NextTab))
 	if m.b.Local(s.ref) {
 		h = append(h, hint(k.Deploy))
@@ -1023,7 +1152,7 @@ func helpSections(k keys.KeyMap) []helpSection {
 		{"everywhere", [][2]string{
 			{name(k.Up) + " " + name(k.Down), "up / down"}, {name(k.Top) + " " + name(k.Bottom), "first / last"},
 			{name(k.PageUp) + " " + name(k.PageDown), "page up / down"}, {name(k.View), "open"},
-			{name(k.NextTab) + " " + name(k.PrevTab), "next / previous tab"}, {name(k.Left) + " " + name(k.Right), "choose, switch tab"},
+			{name(k.NextTab) + " " + name(k.PrevTab), "next / previous tab"}, {name(k.Left) + " " + name(k.Right) + " " + name(k.Tab), "switch tab, choose"},
 			{name(k.Quit), "back, quit on stages"}, {name(k.Back), "back, clear, cancel"}, {name(k.ForceQuit), "quit"},
 			{name(k.Help), "this help"},
 		}},

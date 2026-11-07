@@ -400,6 +400,12 @@ func Button(label string, focused bool, tone Tone) string {
 	return style.Foreground(P.Base).Background(bg).Bold(true).Reverse(Mono()).Render(label)
 }
 
+// Badge renders a short label on a ground of tone, as the stage beside its app in the header,
+// so it reads as a thing of its own; without colour, it is reversed.
+func Badge(label string, tone Tone) string {
+	return lipgloss.NewStyle().Padding(0, 1).Foreground(P.Base).Background(P.Color(tone)).Bold(true).Reverse(Mono()).Render(Clean(label))
+}
+
 // Key renders a key binding hint.
 func Key(k, desc string) string {
 	return Fg(ToneText).Bold(true).Render(k) + " " + Muted(desc)

@@ -5,19 +5,21 @@ import "charm.land/bubbles/v2/key"
 
 // KeyMap holds the keybindings shared by the views.
 type KeyMap struct {
-	Up        key.Binding
-	Down      key.Binding
-	PageUp    key.Binding
-	PageDown  key.Binding
-	Top       key.Binding
-	Bottom    key.Binding
-	Left      key.Binding
-	Right     key.Binding
-	Help      key.Binding
-	View      key.Binding
-	Filter    key.Binding
-	NextTab   key.Binding
-	PrevTab   key.Binding
+	Up       key.Binding
+	Down     key.Binding
+	PageUp   key.Binding
+	PageDown key.Binding
+	Top      key.Binding
+	Bottom   key.Binding
+	Left     key.Binding
+	Right    key.Binding
+	Help     key.Binding
+	View     key.Binding
+	Filter   key.Binding
+	NextTab  key.Binding
+	PrevTab  key.Binding
+	// Tab opens a page's tab by its number, as the tab row numbers them.
+	Tab       key.Binding
 	Deploy    key.Binding
 	Apply     key.Binding
 	Remove    key.Binding
@@ -75,6 +77,7 @@ var Keys = KeyMap{
 	Filter:    key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter")),
 	NextTab:   key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next tab")),
 	PrevTab:   key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "previous tab")),
+	Tab:       key.NewBinding(key.WithKeys("1", "2", "3", "4"), key.WithHelp("1-4", "open tab")),
 	Deploy:    key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "plan")),
 	Apply:     key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("ctrl+s", "apply")),
 	Remove:    key.NewBinding(key.WithKeys("ctrl+d"), key.WithHelp("ctrl+d", "remove")),

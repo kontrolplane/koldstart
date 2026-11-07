@@ -26,7 +26,7 @@ func TestPlanOpensInputs(t *testing.T) {
 		want   []string
 	}{
 		{name: "a create", change: create, page: inputsPage, want: []string{
-			"create dynamodb table · its inputs, with nothing deployed to diff against", `"TableName": "orders"`, "(secret ssm:/orders/api-key)", "stages › orders/dev › deploy › resource/table",
+			"create dynamodb table · its inputs, with nothing deployed to diff against", `"TableName": "orders"`, "(secret ssm:/orders/api-key)", "stages › app orders › stage dev › deploy › resource/table",
 		}},
 		{name: "created again", change: gone, page: diffPage},
 		{name: "an update", change: update, page: diffPage},

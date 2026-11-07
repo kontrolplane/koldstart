@@ -1,7 +1,0 @@
-{
-  "version": "2.0",
-  "routeKey": "GET /orders/{id}",
-  "rawPath": "/orders/ord_7291",
-  "pathParameters": { "id": "ord_7291" },
-  "requestContext": { "http": { "method": "GET", "path": "/orders/ord_7291" } }
-}

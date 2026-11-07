@@ -570,3 +570,21 @@ func TestInvokeAlias(t *testing.T) {
 		})
 	}
 }
+
+// TestInvokeFromStage checks i on the functions tab invokes the function under the cursor and
+// opens it on its invoke tab, where the result is, and does nothing on another tab.
+func TestInvokeFromStage(t *testing.T) {
+	f := newFake(t)
+	m := pressKeys(t, started(t, f), "i")
+	if m.page != functionPage || m.state.function.tab != invokeTab || m.state.function.name != "api" {
+		t.Errorf("page %v tab %v of %q, want the invoke tab of api", m.page, m.state.function.tab, m.state.function.name)
+	}
+	if len(f.invokes) != 1 {
+		t.Errorf("invoked %v, want api once", f.invokes)
+	}
+	other := newFake(t)
+	m = pressKeys(t, started(t, other), "2", "i")
+	if m.page != stagePage || len(other.invokes) != 0 {
+		t.Errorf("i on the resources tab: page %v, invoked %v", m.page, other.invokes)
+	}
+}

@@ -81,7 +81,7 @@ func frame(title, meta, foot, body string) string {
 
 	metaWidth := 0
 	if meta != "" {
-		meta = " " + ansi.Truncate(meta, frameWidth/3, "…") + " "
+		meta = " " + ansi.Truncate(meta, max(frameWidth/3, frameWidth-9-ansi.StringWidth(title)), "…") + " "
 		metaWidth = ansi.StringWidth(meta)
 	}
 	title = ansi.Truncate(title, frameWidth-7-metaWidth, "…")

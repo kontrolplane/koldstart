@@ -810,7 +810,7 @@ func entryRows(e cli.LogEvent, mark string, width int) []logRow {
 // stampedRows are the drawn lines of one event, where it holds mark marked, wrapped to room, the
 // width beside the column of times.
 func stampedRows(e cli.LogEvent, mark string, room int) []logRow {
-	cells := markedLogCells(e.Message, mark, room)
+	cells := listCells(e.Message, mark, room)
 	out := make([]logRow, len(cells))
 	for i, c := range cells {
 		out[i] = logRow{at: e.Time, first: i == 0, c: c}

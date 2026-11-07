@@ -223,6 +223,11 @@ func (m model) functionUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 		return m.leaveFunction()
 	case key.Matches(msg, m.keys.Quit):
 		return m.leaveFunction()
+	case key.Matches(msg, m.keys.Tab):
+		if n, ok := tabNumber(msg, len(functionTabs)); ok {
+			f.tab, f.scroll = functionTab(n), 0
+		}
+		return m, nil
 	case key.Matches(msg, m.keys.NextTab, m.keys.Right):
 		f.tab, f.scroll = (f.tab+1)%functionTab(len(functionTabs)), 0
 		return m, nil
@@ -318,7 +323,7 @@ func (m model) functionView() string {
 	if !f.logs.loaded {
 		counts[logsTab], counts[invocationsTab] = "", ""
 	}
-	return indent(tabBar(functionTabs, counts, int(f.tab))) + "\n\n" + body
+	return indent(tabRow(functionTabs, counts, int(f.tab), tableWidth())) + "\n" + body
 }
 
 // functionPosition is where the function's tab is: the lines in sight of the overview, the logs
@@ -740,9 +745,13 @@ func (m model) functionOverview() functionOverview {
 // overviewHead is the function's name, the facts of it below as far as they fit, and a notice of
 // what lambda runs that koldstart did not deploy, so it is in sight however far the columns
 // scroll; from the gutter, as a page's title starts a column before its rows, and a blank line
-// after.
+// after. On the function's page, the breadcrumb names it and the frame's top border holds the
+// facts, so the head is the notice alone.
 func (m model) overviewHead(width int) []string {
 	f := m.state.function
+	if m.page == functionPage {
+		return append(m.driftNotice(width+overviewGutter), "")
+	}
 	name := styles.Span{Text: styles.Clean(cmpOr(f.lambdaName, f.name)), Tone: styles.ToneText, Bold: true}
 	width += overviewGutter
 	lines := append([]string{renderCell(cell{name}, column{width: width}, nil)}, packCells(m.functionFacts(), width)...)
@@ -750,6 +759,30 @@ func (m model) overviewHead(width int) []string {
 		lines = append(append(lines, ""), notice...)
 	}
 	return append(lines, "")
+}
+
+// functionFactsMeta are the facts of the function in width, for the frame's top border on its
+// page. Where they do not all fit, its architecture, timeout and memory go first, which the
+// configuration and the stage's table say too, and then the first of the rest.
+func (m model) functionFactsMeta(width int) string {
+	all := m.functionFacts()
+	in := m.state.function.inputs
+	drops := []string{styles.Clean(in.Architecture), seconds(in.Timeout) + " timeout", formatInt(int(in.Memory)) + " mb"}
+	for n := 0; ; n++ {
+		var facts []headFact
+		for _, c := range all {
+			if !slices.Contains(drops[:n], plainText(c)) {
+				facts = append(facts, headFact{value: c, short: c})
+			}
+		}
+		whole := -3
+		for _, f := range facts {
+			whole += 3 + cellWidth(f.value)
+		}
+		if whole <= width || n == len(drops) {
+			return styles.Render(factCell(facts, width)...)
+		}
+	}
 }
 
 // functionFacts are what the head says of the function: its runtime and architecture, its memory
@@ -1264,6 +1297,34 @@ func sparkCell(series []float64, width int, tone styles.Tone) cell {
 	return c
 }
 
+// markedSpark is the sparkline of series in tone, as sparkCell draws it, with the columns where
+// marks has a point in markTone, as the minutes a function had errors in.
+func markedSpark(series, marks []float64, width int, tone, markTone styles.Tone) cell {
+	line := []rune(sparkline(series, width))
+	marked := make([]bool, len(line))
+	for i, v := range marks {
+		if c := i * len(line) / max(1, len(marks)); v > 0 && c < len(marked) {
+			marked[c] = true
+		}
+	}
+	var c cell
+	for i, r := range line {
+		t := tone
+		switch {
+		case marked[i]:
+			t = markTone
+		case r == ' ':
+			r, t = '·', styles.ToneFaint
+		}
+		if n := len(c); n > 0 && c[n-1].Tone == t {
+			c[n-1].Text += string(r)
+			continue
+		}
+		c = append(c, styles.S(string(r), t))
+	}
+	return c
+}
+
 // hidden stands in for a value that looks like a secret.
 const hidden = "••••••••"
 
@@ -1451,7 +1512,7 @@ func (m model) invokerSection(c *overviewColumn) {
 	}
 	var entries []entry
 	if f.url != "" {
-		entries = append(entries, entry{"url", f.url, detailRow{copy: f.url, url: f.url}})
+		entries = append(entries, entry{kindURL, f.url, detailRow{copy: f.url, url: f.url}})
 	}
 	for _, t := range f.invokers {
 		r := detailRow{copy: t.copy}

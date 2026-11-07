@@ -32,10 +32,16 @@ func sdLine(m model, want string) (string, int) {
 	return "", -1
 }
 
-// TestStageHead checks the head above the tabs, as the function's overview has its own: the
-// stage's name, and on one line below its resources and what a remove kept, when it was deployed
-// and by whom, and its lock, without the account and region the header shows, and the shorter
-// forms where the whole line does not fit.
+// sdBorder is the frame's top border, with the breadcrumb and what is beside it.
+func sdBorder(m model) string {
+	line, _ := sdLine(m, "stages ›")
+	return line
+}
+
+// TestStageHead checks the facts of the stage in the frame's top border, beside the breadcrumb
+// that names it: its resources and what a remove kept, when it was deployed and by whom, and its
+// lock, without the account and region the header shows, the shorter forms where the whole line
+// does not fit, and the lock alone where those do not either.
 func TestStageHead(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -45,13 +51,13 @@ func TestStageHead(t *testing.T) {
 		not   []string
 	}{
 		{
-			name: "deployed and locked", width: 160,
+			name: "deployed and locked", width: 200,
 			facts: []string{"200 resources · 1 kept · deployed 3h ago by levi · " + formatTime(time.Now().Add(-3 * time.Hour))[:9], " · ● ana on ana-mbp · deploy since ", ", 4m ago"},
 			not:   []string{"123456789012", "eu-west-1"},
 		},
 		{
 			name: "narrow", width: 80,
-			facts: []string{"200 resources · 1 kept · deployed 3h ago by levi · ● ana on ana-mbp, 4m ago"},
+			facts: []string{"● ana on ana-mbp, 4m ago"},
 			not:   []string{"deploy since", "123456789012", "eu-west-1"},
 		},
 		{
@@ -64,7 +70,7 @@ func TestStageHead(t *testing.T) {
 			not:   []string{"since"},
 		},
 		{
-			name: "not deployed yet", width: 120,
+			name: "not deployed yet", width: 140,
 			prep: func(f *fakeBackend) {
 				st := state.New("orders", "dev", "eu-west-1", "123456789012")
 				f.states[ordersDev] = st
@@ -80,25 +86,22 @@ func TestStageHead(t *testing.T) {
 				tt.prep(f)
 			}
 			m := sdAt(t, f, tt.width, 30)
-			title, at := sdLine(m, "orders/dev  ")
-			if at != 2 || strings.TrimSpace(strings.Trim(title, "│")) != "orders/dev" {
-				t.Fatalf("the title is %q at %d, want orders/dev alone one column in", title, at)
+			border, at := sdLine(m, "stages › app orders › stage dev")
+			if at < 0 {
+				t.Fatalf("no breadcrumb of orders/dev in:\n%s", screen(m))
 			}
-			lines := strings.Split(screen(m), "\n")
-			i := slices.Index(lines, title)
-			facts := lines[i+1]
 			for _, want := range tt.facts {
-				if !strings.Contains(facts, want) {
-					t.Errorf("the facts have no %q: %s", want, facts)
+				if !strings.Contains(border, want) {
+					t.Errorf("the border has no %q: %s", want, border)
 				}
 			}
 			for _, not := range tt.not {
-				if strings.Contains(facts, not) {
-					t.Errorf("the facts say %q: %s", not, facts)
+				if strings.Contains(border, not) {
+					t.Errorf("the border says %q: %s", not, border)
 				}
 			}
-			if strings.Contains(facts, "…") {
-				t.Errorf("the facts are cut: %s", facts)
+			if strings.Contains(border, "…") {
+				t.Errorf("the facts are cut: %s", border)
 			}
 		})
 	}
@@ -252,9 +255,9 @@ func TestDriftMarks(t *testing.T) {
 	}
 }
 
-// TestFunctionRows checks the functions tab draws the last hour as a sparkline, in danger when
-// the hour had errors, with the errors in danger and bold, and nothing for a function not
-// invoked.
+// TestFunctionRows checks the functions tab draws the last hour as a sparkline in the accent,
+// the minutes with errors in danger, with the errors in danger and bold, and nothing for a
+// function not invoked.
 func TestFunctionRows(t *testing.T) {
 	m := started(t, sdStage(t, 3))
 	tests := []struct {
@@ -274,8 +277,10 @@ func TestFunctionRows(t *testing.T) {
 			switch {
 			case tt.tone == 0 && len(spark) != 0:
 				t.Errorf("a sparkline %q for a function not invoked", plainText(spark))
-			case tt.tone != 0 && (len(spark) != 1 || spark[0].Tone != tt.tone || ansi.StringWidth(spark[0].Text) != sparkWidth):
-				t.Errorf("sparkline %+v, want %d wide in tone %d", spark, sparkWidth, tt.tone)
+			case tt.tone != 0 && (ansi.StringWidth(plainText(spark)) != sparkWidth || !slices.ContainsFunc(spark, func(s styles.Span) bool { return s.Tone == tt.tone })):
+				t.Errorf("sparkline %+v, want %d wide with tone %d in it", spark, sparkWidth, tt.tone)
+			case tt.tone == styles.ToneAccent && slices.ContainsFunc(spark, func(s styles.Span) bool { return s.Tone == styles.ToneDanger }):
+				t.Errorf("sparkline %+v of a function without errors has minutes in danger", spark)
 			}
 			if got := errs[0].Tone == styles.ToneDanger && errs[0].Bold; got != tt.errors {
 				t.Errorf("errors %q in danger and bold %v, want %v", plainText(errs), got, tt.errors)
@@ -330,7 +335,7 @@ func TestStageLayout(t *testing.T) {
 				switch {
 				case m.page == outputPage && !strings.Contains(v, "holds  "):
 					t.Errorf("%d functions, %dx%d %s: no head:\n%s", functions, w, h, name, v)
-				case m.page == stagePage && (!strings.Contains(v, "│ orders/dev ") || !strings.Contains(v, "● ana")):
+				case m.page == stagePage && !strings.Contains(name, "filtered") && !strings.Contains(sdBorder(m), "● ana"):
 					t.Errorf("%d functions, %dx%d %s: no head:\n%s", functions, w, h, name, v)
 				case m.page == stagePage && !strings.Contains(v, "▌"):
 					t.Errorf("%d functions, %dx%d %s: the cursor is out of sight:\n%s", functions, w, h, name, v)

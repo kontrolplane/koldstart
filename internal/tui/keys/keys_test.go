@@ -31,8 +31,8 @@ func bindings() map[string]key.Binding {
 	return out
 }
 
-// TestHelp checks every binding has keys and help, its help names each of its keys, and its
-// description is lowercase.
+// TestHelp checks every binding has keys and help, its help names each of its keys, a run of
+// digits as 1-4, and its description is lowercase.
 func TestHelp(t *testing.T) {
 	for name, b := range bindings() {
 		t.Run(name, func(t *testing.T) {
@@ -44,6 +44,13 @@ func TestHelp(t *testing.T) {
 				t.Errorf("description %q is not lowercase", h.Desc)
 			}
 			shown := strings.Split(h.Key, "/")
+			for _, s := range slices.Clone(shown) {
+				if from, to, ok := strings.Cut(s, "-"); ok && len(from) == 1 && len(to) == 1 && from < to {
+					for d := from[0]; d <= to[0]; d++ {
+						shown = append(shown, string(d))
+					}
+				}
+			}
 			for _, k := range b.Keys() {
 				if n, ok := names[k]; ok {
 					k = n

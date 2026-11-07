@@ -26,8 +26,12 @@ type overviewState struct {
 	err    string
 	stages []cli.StageSummary
 	shown  []cli.StageSummary
-	table  dataTable
-	filter filterBox
+	// peeks are the states the peek of the stage under the cursor read, by the stage, and peekGen
+	// the generation of the last read. It is copied before it changes.
+	peeks   map[cli.StageRef]stagePeek
+	peekGen int
+	table   dataTable
+	filter  filterBox
 }
 
 // overviewColumns are the columns of the stages. On a narrow terminal who deployed goes first,
@@ -190,7 +194,7 @@ func (m model) applyStages(msg stagesLoadedMsg) (model, tea.Cmd) {
 			}
 		}
 	}
-	return m, nil
+	return m.loadStagePeek()
 }
 
 func (m model) overviewUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
@@ -234,5 +238,5 @@ func (m model) overviewUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 }
 
 func (m model) overviewView() string {
-	return indent(m.state.overview.table.View())
+	return indent(withPeek(m.state.overview.table, func(height int) []string { return m.overviewPeek(tableWidth()) }))
 }

@@ -126,10 +126,13 @@ func TestLogsCursor(t *testing.T) {
 		name   string
 		keys   []string
 		cursor string
+		// drawn is how the line under the cursor reads, when not as it was logged: without the
+		// time it starts with, which the column of times shows.
+		drawn  string
 		follow bool
 	}{
 		{name: "following", cursor: "panic: runtime error", follow: true},
-		{name: "up", keys: []string{"k"}, cursor: "2026/11/06 10:00:00 connected"},
+		{name: "up", keys: []string{"k"}, cursor: "2026/11/06 10:00:00 connected", drawn: "connected to the queue"},
 		{name: "up and down", keys: []string{"k", "j"}, cursor: "panic: runtime error"},
 		{name: "down at the newest", keys: []string{"j"}, cursor: "panic: runtime error", follow: true},
 		{name: "page up", keys: []string{"pgup"}, cursor: "START RequestId: " + lgNodeID},
@@ -146,9 +149,10 @@ func TestLogsCursor(t *testing.T) {
 			if !strings.HasPrefix(lgCursor(m), tt.cursor) || l.follow != tt.follow {
 				t.Errorf("cursor on %q, follow %t; want %q, %t", lgCursor(m), l.follow, tt.cursor, tt.follow)
 			}
+			drawn := cmpOr(tt.drawn, tt.cursor)
 			marked := lgMarked(m)
-			if len(marked) == 0 || !strings.Contains(marked[0], tt.cursor[:min(len(tt.cursor), 20)]) {
-				t.Errorf("the marker is on %q, want the line %q", marked, tt.cursor)
+			if len(marked) == 0 || !strings.Contains(marked[0], drawn[:min(len(drawn), 20)]) {
+				t.Errorf("the marker is on %q, want the line %q", marked, drawn)
 			}
 		})
 	}
@@ -210,8 +214,8 @@ func TestLogsLevel(t *testing.T) {
 				t.Errorf("%d lines shown, want %d: %q", got, tt.shown, lgShown(m))
 			}
 			meta, _ := m.frameMeta()
-			if got := ansi.Strip(meta); got != tt.meta {
-				t.Errorf("the frame says %q, want %q", got, tt.meta)
+			if got := ansi.Strip(meta); got != tt.meta && (tt.meta != "" || !strings.HasPrefix(got, "nodejs22.x")) {
+				t.Errorf("the frame says %q, want %q, or the function's facts without a level or a filter", got, tt.meta)
 			}
 			v := screen(m)
 			if counted := formatInt(tt.shown) + " of 16 lines"; tt.meta != "" && !strings.Contains(v, counted) {

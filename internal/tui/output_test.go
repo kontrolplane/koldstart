@@ -55,7 +55,7 @@ func TestOutputPage(t *testing.T) {
 			}
 			m := sdOpenOutput(t, sdOutputs(t, f), tt.name)
 			v := screen(m)
-			for _, want := range append(tt.want, "outputs › "+tt.name) {
+			for _, want := range append(tt.want, "stage dev › output "+tt.name) {
 				if !strings.Contains(v, want) {
 					t.Errorf("no %q:\n%s", want, v)
 				}
