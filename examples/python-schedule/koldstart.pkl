@@ -1,0 +1,27 @@
+amends "@koldstart/Project.pkl"
+
+import "@koldstart/kdst.pkl"
+
+app = "invites"
+region = "eu-west-1"
+
+functions {
+  ["sweep"] {
+    memory = 256
+    timeout = 1.min
+    link {
+      ["invites"] = "readwrite"
+    }
+    events {
+      (kdst.schedule("cron(0 3 * * ? *)")) { timezone = "Europe/London" }
+    }
+  }
+}
+
+resources {
+  ["invites"] = kdst.table("code")
+}
+
+outputs {
+  ["invitesTable"] = kdst.ref("invites", "TableName")
+}
