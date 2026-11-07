@@ -300,6 +300,8 @@ Everything koldstart creates is tagged with its app, stage and node, together wi
 | `completion <shell>`             | print the completion script for bash, fish, powershell or zsh                   |
 | `help [command]`                 | print the help of a command                                                     |
 
+The completions complete the commands, the flags and their values: `--stage` with the stages of the project's app in its state bucket, `-f` and `import` with the functions and resources of the `koldstart.pkl` here, and `-o`, `--theme`, `--template` and the files of `--config` and `--path`. `--stage` waits a couple of seconds for aws at most, and offers only `dev`, or `KOLDSTART_STAGE`, when it cannot reach it; the others work offline, with the pkl already here. The brew cask installs them for `koldstart`. For `kdst`, or a build from source, load them in your shell's startup file with `source <(kdst completion zsh)`, or `kdst completion bash`, `fish` or `powershell`; `kdst completion zsh --help` says where to put the script instead.
+
 ## flags
 
 | flag             | environment variable | description                                                     |

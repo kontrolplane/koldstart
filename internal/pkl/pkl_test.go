@@ -133,3 +133,54 @@ func TestDownload(t *testing.T) {
 		}
 	})
 }
+
+// TestInstalled checks the pkl a completion may use is found without a download: the one
+// $KOLDSTART_PKL names, else the pinned one in the cache, else none.
+func TestInstalled(t *testing.T) {
+	cached := filepath.Join("cache", "koldstart", "pkl", Version, "pkl")
+	tests := []struct {
+		name string
+		// env is what $KOLDSTART_PKL names, relative to the test's directory.
+		env string
+		// files are the files there, relative to it.
+		files   []string
+		want    string
+		wantErr bool
+	}{
+		{name: "environment", env: "pkl-here", files: []string{"pkl-here", cached}, want: "pkl-here"},
+		{name: "environment missing", env: "pkl-gone", files: []string{cached}, wantErr: true},
+		{name: "cache", files: []string{cached}, want: cached},
+		{name: "none"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("PATH", t.TempDir())
+			t.Setenv("XDG_CACHE_HOME", filepath.Join(dir, "cache"))
+			t.Setenv(EnvBinary, "")
+			if tt.env != "" {
+				t.Setenv(EnvBinary, filepath.Join(dir, tt.env))
+			}
+			for _, file := range tt.files {
+				path := filepath.Join(dir, file)
+				if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, nil, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got, err := Installed(context.Background())
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("Installed() error = %v, want an error: %t", err, tt.wantErr)
+			}
+			want := tt.want
+			if want != "" {
+				want = filepath.Join(dir, want)
+			}
+			if got != want {
+				t.Errorf("Installed() = %q, want %q", got, want)
+			}
+		})
+	}
+}

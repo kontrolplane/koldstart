@@ -87,7 +87,7 @@ shape, here on fewer lines:
 	return cmd
 }
 
-func deployCommand(name string, opts *Options) *cobra.Command {
+func deployCommand(name string, opts *Options, c completer) *cobra.Command {
 	var yes bool
 	var plan planOptions
 	cmd := &cobra.Command{
@@ -130,13 +130,13 @@ and plain lines elsewhere, as in ci.`,
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "apply without asking")
 	cmd.Flags().BoolVar(&plan.AllowReplace, "allow-replace", false, "replace retained resources; the old ones stay")
 	cmd.Flags().BoolVar(&plan.Refresh, "refresh", false, "undo what changed outside koldstart")
-	cmd.AddCommand(deployFunctionCommand(name, opts))
+	cmd.AddCommand(deployFunctionCommand(name, opts, c))
 	return cmd
 }
 
 // deployFunctionCommand deploys the code of one function. The other functions keep the code the
 // state says they have.
-func deployFunctionCommand(name string, opts *Options) *cobra.Command {
+func deployFunctionCommand(name string, opts *Options, c completer) *cobra.Command {
 	var function string
 	cmd := &cobra.Command{
 		Use:   "function",
@@ -176,8 +176,7 @@ function is not deployed yet or its configuration changed too: run deploy for th
 			return s.endProgress(cmd, p, plan, "deployed", err)
 		},
 	}
-	cmd.Flags().StringVarP(&function, "function", "f", "", "the function to deploy")
-	_ = cmd.MarkFlagRequired("function")
+	functionFlag(cmd, &function, "the function to deploy", opts, c)
 	return cmd
 }
 

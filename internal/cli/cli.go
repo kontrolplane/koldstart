@@ -81,6 +81,11 @@ const (
 // names the help to read, for which ExitCode is 2. The root runs only to print its help, so its
 // usage leaves out the line for running it.
 func Root(name string, ui UI) *cobra.Command {
+	return newRoot(name, ui, liveCompleter)
+}
+
+// newRoot is Root, its completions reading the configuration and the stages through c.
+func newRoot(name string, ui UI, c completer) *cobra.Command {
 	opts := &Options{name: name}
 	var logFile *os.File
 
@@ -139,9 +144,7 @@ works on a stage works on the one --stage names, dev without it.`, name),
 	flags.BoolP("help", "h", false, "print the flags and exit")
 	root.Flags().Bool("version", false, "print the version and exit")
 	_ = root.MarkPersistentFlagFilename("config", "pkl")
-	for _, flag := range []string{"stage", "profile", "region"} {
-		_ = root.RegisterFlagCompletionFunc(flag, cobra.NoFileCompletions)
-	}
+	_ = root.RegisterFlagCompletionFunc("stage", c.stageNames(opts))
 
 	root.AddGroup(
 		&cobra.Group{ID: groupStart, Title: "Start a project:"},
@@ -156,9 +159,9 @@ works on a stage works on the one --stage names, dev without it.`, name),
 		}
 	}
 	add(groupStart, initCommand(name, opts), migrateCommand(name), upgradeCommand(name, opts))
-	add(groupDeploy, packageCommand(name, opts), planCommand(name, opts), deployCommand(name, opts),
-		importCommand(name, opts), removeCommand(name, opts), unlockCommand(name, opts))
-	add(groupWork, invokeCommand(name, opts), offlineCommand(name, opts), logsCommand(name, opts), outputsCommand(name, opts))
+	add(groupDeploy, packageCommand(name, opts), planCommand(name, opts), deployCommand(name, opts, c),
+		importCommand(name, opts, c), removeCommand(name, opts), unlockCommand(name, opts))
+	add(groupWork, invokeCommand(name, opts, c), offlineCommand(name, opts), logsCommand(name, opts, c), outputsCommand(name, opts))
 	if ui != nil {
 		add(groupWork, uiCommand(name, opts, ui))
 	}
@@ -170,6 +173,7 @@ works on a stage works on the one --stage names, dev without it.`, name),
 	for _, cmd := range root.Commands() {
 		checkArgs(cmd)
 	}
+	noFileFlags(root)
 
 	return root
 }

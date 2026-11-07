@@ -36,7 +36,8 @@ when it has none.`,
 		Example: fmt.Sprintf(`  %[1]s migrate
   %[1]s migrate path/to/serverless.yml --out koldstart.pkl
   %[1]s migrate --force`, name),
-		Args: cobra.MaximumNArgs(1),
+		Args:              cobra.MaximumNArgs(1),
+		ValidArgsFunction: fileArgument("yml", "yaml"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			in := "serverless.yml"
@@ -94,6 +95,7 @@ when it has none.`,
 	}
 	cmd.Flags().StringVarP(&out, "out", "o", "", "the file to write, beside serverless.yml by default")
 	cmd.Flags().BoolVar(&force, "force", false, "write over a koldstart.pkl that is there")
+	_ = cmd.MarkFlagFilename("out", "pkl")
 	return cmd
 }
 

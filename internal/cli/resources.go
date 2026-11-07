@@ -62,7 +62,7 @@ func propertyProblems(name, typ string, problems []cloudcontrol.Problem) error {
 	return errors.New(b.String())
 }
 
-func importCommand(name string, opts *Options) *cobra.Command {
+func importCommand(name string, opts *Options, c completer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "import <resource> <identifier>",
 		Short: "take over a resource that exists already",
@@ -73,7 +73,8 @@ configuration. An imported resource is retained, so remove leaves it in place, u
 deletionPolicy says delete.`,
 		Example: fmt.Sprintf(`  %[1]s import orders orders-prod --stage prod
   %[1]s import jobs https://sqs.eu-west-1.amazonaws.com/123456789012/jobs`, name),
-		Args: cobra.ExactArgs(2),
+		Args:              cobra.ExactArgs(2),
+		ValidArgsFunction: c.resources(opts),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			resource, identifier := args[0], args[1]
