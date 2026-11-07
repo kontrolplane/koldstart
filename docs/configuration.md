@@ -249,7 +249,7 @@ A stream without `maximumRetryAttempts` or `maximumRecordAge` retries a batch un
 url = new { auth = "iam" }
 ```
 
-`auth` has no default: `"iam"` requires signed requests, `"none"` makes the url public. The url is the output `<function>Url`.
+`auth` has no default: `"iam"` requires signed requests, `"none"` makes the url public. The url is the output `<function>Url`, the function's name in camel case: `stripeWebhookUrl` for `stripe-webhook`.
 
 ## events
 

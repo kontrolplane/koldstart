@@ -108,13 +108,25 @@ func (s *stage) outputValue(st *state.State, v config.Value) (string, error) {
 	return v.Literal, nil
 }
 
-// urlOutputs are the urls of the functions that have one, as <function>Url, and of the http
-// api, as httpApiUrl. With a custom domain, httpDomainTarget is where its dns record points.
+// camelCase joins the words of a name of dashes, as an output's name does: stripe-webhook is
+// stripeWebhook.
+func camelCase(name string) string {
+	words := strings.Split(name, "-")
+	for i, w := range words[1:] {
+		if w != "" {
+			words[i+1] = strings.ToUpper(w[:1]) + w[1:]
+		}
+	}
+	return strings.Join(words, "")
+}
+
+// urlOutputs are the urls of the functions that have one, as <function>Url with the function's
+// name in camel case, stripeWebhookUrl for stripe-webhook, and of the http api, as httpApiUrl. With a custom domain, httpDomainTarget is where its dns record points.
 func (s *stage) urlOutputs(st *state.State) map[string]string {
 	out := map[string]string{}
 	for name := range s.Functions {
 		if r := st.Resources[desired.URLID(name)]; r != nil {
-			out[name+"Url"] = r.Attributes["FunctionUrl"]
+			out[camelCase(name)+"Url"] = r.Attributes["FunctionUrl"]
 		}
 	}
 	if r := st.Resources[desired.HTTPAPIID]; r != nil {
