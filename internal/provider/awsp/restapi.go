@@ -519,16 +519,23 @@ func (p RESTAuthorizer) Read(ctx context.Context, req engine.Request) (engine.Re
 	return engine.Result{}, false, nil
 }
 
-// patches are what changes an authorizer from prior to in: each field set again, and the user
-// pools it gains added and those it loses removed.
+// patches are what changes an authorizer from prior to in: each field that differs set again, as
+// a field of another type may not be, and the user pools it gains added and those it loses
+// removed. Without a prior, as after a crash, every field is set.
 func (in RESTAuthorizerInputs) patches(prior RESTAuthorizerInputs) []types.PatchOperation {
-	ops := []types.PatchOperation{
-		replace("/name", in.Name), replace("/type", in.Type), replace("/identitySource", in.Identity),
-		replace("/authorizerResultTtlInSeconds", strconv.Itoa(int(in.TTL))),
-		replace("/identityValidationExpression", in.Validation),
+	fields := []struct{ path, value, was string }{
+		{"/name", in.Name, prior.Name},
+		{"/type", in.Type, prior.Type},
+		{"/identitySource", in.Identity, prior.Identity},
+		{"/authorizerResultTtlInSeconds", strconv.Itoa(int(in.TTL)), strconv.Itoa(int(prior.TTL))},
+		{"/identityValidationExpression", in.Validation, prior.Validation},
+		{"/authorizerUri", in.URI, prior.URI},
 	}
-	if in.URI != "" {
-		ops = append(ops, replace("/authorizerUri", in.URI))
+	var ops []types.PatchOperation
+	for _, f := range fields {
+		if f.value != f.was || (prior.API == "" && f.value != "") {
+			ops = append(ops, replace(f.path, f.value))
+		}
 	}
 	for _, pool := range in.UserPools {
 		if !slices.Contains(prior.UserPools, pool) {
@@ -546,8 +553,12 @@ func (in RESTAuthorizerInputs) patches(prior RESTAuthorizerInputs) []types.Patch
 // Update implements engine.Provider.
 func (p RESTAuthorizer) Update(ctx context.Context, req engine.Request) (engine.Result, error) {
 	prior, in := decodeBoth[RESTAuthorizerInputs](req.Prior, req.Inputs)
+	ops := in.patches(prior)
+	if len(ops) == 0 {
+		return restAuthorizerResult(req.PhysicalID), nil
+	}
 	err := call(ctx, func() error {
-		_, err := p.Client.UpdateAuthorizer(ctx, &apigateway.UpdateAuthorizerInput{RestApiId: &in.API, AuthorizerId: &req.PhysicalID, PatchOperations: in.patches(prior)})
+		_, err := p.Client.UpdateAuthorizer(ctx, &apigateway.UpdateAuthorizerInput{RestApiId: &in.API, AuthorizerId: &req.PhysicalID, PatchOperations: ops})
 		return err
 	})
 	if err != nil {
