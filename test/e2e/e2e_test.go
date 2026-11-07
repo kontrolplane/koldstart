@@ -24,7 +24,10 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/lambda"
+	lambdatypes "github.com/aws/aws-sdk-go-v2/service/lambda/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
@@ -45,15 +48,76 @@ const (
 	staleAfter  = 6 * time.Hour
 )
 
-// e2eConfig amends the example so a remove deletes what holds data too: an e2e stage keeps
-// nothing.
+// e2eConfig amends the example so a remove deletes what holds data too, as an e2e stage keeps
+// nothing, and adds what only aws itself can check:
+//
+//   - audit, written by the test, subscribed to the worker's log group, found through a ref so it
+//     waits for the group, with provisioned concurrency, so it has a live alias its events
+//     invoke, async invocations sent to the failures queue once they fail, tracing and json logs
+//   - a route of the api that takes only requests signed with sigv4
+//   - a limit on how many workers read the jobs queue at once
 const e2eConfig = `amends "koldstart.pkl"
+
+import "@koldstart/kdst.pkl"
+
+functions {
+  ["api"] {
+    events {
+      (kdst.get("/admin/stats")) { iam = true }
+    }
+  }
+  ["worker"] {
+    events = new {
+      (kdst.fromQueue("jobs")) { maximumConcurrency = 2 }
+    }
+  }
+  ["audit"] {
+    memory = 256
+    provisionedConcurrency = 1
+    tracing = true
+    logFormat = "json"
+    async = new {
+      maximumRetryAttempts = 0
+      onFailure = kdst.ref("failures", "Arn")
+    }
+    events {
+      (kdst.fromLogs(kdst.join(List("/aws/lambda/", kdst.ref("worker", "FunctionName"))))) {
+        filter = "stored an order"
+      }
+    }
+  }
+}
 
 resources {
   ["orders"] { deletionPolicy = "delete" }
   ["jobs"] { deletionPolicy = "delete" }
+  ["failures"] = (kdst.queue()) {
+    deletionPolicy = "delete"
+    properties { QueueName = "shop-\(kdst.stage)-failures" }
+  }
+}
+
+outputs {
+  ["failuresUrl"] = kdst.ref("failures", "QueueUrl")
 }
 `
+
+// auditSource is the audit function: it counts the lines of the worker's log it is sent, and
+// fails when an event asks it to, for its async failures to reach the failures queue. version
+// changes what it logs, so a deploy of it publishes a new version.
+func auditSource(version string) string {
+	return `import { gunzipSync } from "node:zlib";
+
+export const handler = async (event: { fail?: boolean; awslogs?: { data: string } }) => {
+  if (event.fail) {
+    throw new Error("asked to fail");
+  }
+  const lines = event.awslogs ? JSON.parse(gunzipSync(Buffer.from(event.awslogs.data, "base64")).toString()).logEvents.length : 0;
+  console.log(JSON.stringify({ msg: "audited", lines, version: "` + version + `" }));
+  return { lines };
+};
+`
+}
 
 // project is a copy of the example, with the kdst built from this tree to run in it.
 type project struct {
@@ -83,6 +147,7 @@ func newProject(t *testing.T, stage string) *project {
 	run(t, p.dir, "npm", "ci", "--no-audit", "--no-fund")
 	p.useLocalSchema()
 	write(t, filepath.Join(p.dir, "e2e.pkl"), e2eConfig)
+	write(t, filepath.Join(p.dir, "src", "audit.ts"), auditSource("1"))
 	return p
 }
 
@@ -142,7 +207,9 @@ func (p *project) putAPIKey() string {
 }
 
 // TestFullFeatured deploys the example, calls its api, checks the worker stored what the api
-// queued, deploys a change of code through the fast path, and removes the stage, leaving nothing.
+// queued, that a route of iam refuses an unsigned request, and what audit brings: its settings,
+// its alias, its subscription to the worker's log and its async failures. It deploys a change of
+// code through the fast path, and removes the stage, leaving nothing.
 func TestFullFeatured(t *testing.T) {
 	p := newProject(t, stageName())
 	key := p.putAPIKey()
@@ -178,6 +245,10 @@ func TestFullFeatured(t *testing.T) {
 	eventually(t, 2*time.Minute, "the worker's log to say so", func() bool {
 		return strings.Contains(p.kdstRun("logs", "-f", "worker", "--since", "15m"), "stored an order")
 	})
+	if status, _ := request(t, http.MethodGet, api+"/admin/stats", key, ""); status != http.StatusForbidden {
+		t.Errorf("GET /admin/stats unsigned: %d, want 403 from a route that takes only signed requests", status)
+	}
+	p.checkAudit()
 
 	report := filepath.Join(p.dir, "src", "report.ts")
 	data, err := os.ReadFile(report)
@@ -204,6 +275,73 @@ func TestFullFeatured(t *testing.T) {
 		}
 		return len(left) == 0
 	})
+}
+
+// checkAudit checks what audit brings that only aws can: its settings in lambda, its live alias
+// with provisioned concurrency, the subscription to the worker's log, an async failure reaching
+// the failures queue, the worker's queue read by at most two at once, and a change of its code
+// publishing a version the alias moves to.
+func (p *project) checkAudit() {
+	t := p.t
+	t.Helper()
+	ctx := context.Background()
+	fns := lambda.NewFromConfig(p.cfg)
+	name := app + "-" + p.stage + "-audit"
+	conf, err := fns.GetFunctionConfiguration(ctx, &lambda.GetFunctionConfigurationInput{FunctionName: &name})
+	if err != nil {
+		t.Fatalf("reading audit: %v", err)
+	}
+	if conf.TracingConfig == nil || conf.TracingConfig.Mode != lambdatypes.TracingModeActive {
+		t.Errorf("audit's tracing = %+v, want Active", conf.TracingConfig)
+	}
+	if conf.LoggingConfig == nil || conf.LoggingConfig.LogFormat != lambdatypes.LogFormatJson {
+		t.Errorf("audit's logging = %+v, want JSON", conf.LoggingConfig)
+	}
+	first := aliasVersion(t, fns, name)
+	if pc, err := fns.GetProvisionedConcurrencyConfig(ctx, &lambda.GetProvisionedConcurrencyConfigInput{FunctionName: &name, Qualifier: aws.String("live")}); err != nil || aws.ToInt32(pc.RequestedProvisionedConcurrentExecutions) != 1 {
+		t.Errorf("audit's provisioned concurrency = %+v, %v, want 1 on live", pc, err)
+	}
+	async, err := fns.GetFunctionEventInvokeConfig(ctx, &lambda.GetFunctionEventInvokeConfigInput{FunctionName: &name})
+	if err != nil || aws.ToInt32(async.MaximumRetryAttempts) != 0 || async.DestinationConfig == nil || async.DestinationConfig.OnFailure == nil {
+		t.Errorf("audit's async settings = %+v, %v", async, err)
+	}
+	mappings, err := fns.ListEventSourceMappings(ctx, &lambda.ListEventSourceMappingsInput{FunctionName: aws.String(app + "-" + p.stage + "-worker")})
+	if err != nil || len(mappings.EventSourceMappings) != 1 || mappings.EventSourceMappings[0].ScalingConfig == nil || aws.ToInt32(mappings.EventSourceMappings[0].ScalingConfig.MaximumConcurrency) != 2 {
+		t.Errorf("the worker's mapping = %+v, %v, want at most 2 at once", mappings, err)
+	}
+
+	eventually(t, 3*time.Minute, "audit to be sent the worker's line", func() bool {
+		return strings.Contains(p.kdstRun("logs", "-f", "audit", "--since", "15m"), "audited")
+	})
+
+	if _, err := fns.Invoke(ctx, &lambda.InvokeInput{FunctionName: aws.String(name + ":live"), InvocationType: lambdatypes.InvocationTypeEvent, Payload: []byte(`{"fail": true}`)}); err != nil {
+		t.Fatalf("invoking audit async: %v", err)
+	}
+	queues := sqs.NewFromConfig(p.cfg)
+	url := p.outputs()["failuresUrl"]
+	if url == "" {
+		t.Fatal("no failuresUrl output")
+	}
+	eventually(t, 3*time.Minute, "audit's async failure to reach the failures queue", func() bool {
+		out, err := queues.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{QueueUrl: &url, WaitTimeSeconds: 5})
+		return err == nil && len(out.Messages) > 0 && strings.Contains(aws.ToString(out.Messages[0].Body), "asked to fail")
+	})
+
+	write(t, filepath.Join(p.dir, "src", "audit.ts"), auditSource("2"))
+	p.kdstRun("deploy", "function", "-f", "audit")
+	if next := aliasVersion(t, fns, name); next == first {
+		t.Errorf("a change of audit's code left live at version %s", first)
+	}
+}
+
+// aliasVersion is the version the live alias of function points at.
+func aliasVersion(t *testing.T, fns *lambda.Client, function string) string {
+	t.Helper()
+	out, err := fns.GetAlias(context.Background(), &lambda.GetAliasInput{FunctionName: &function, Name: aws.String("live")})
+	if err != nil {
+		t.Fatalf("reading the live alias of %s: %v", function, err)
+	}
+	return aws.ToString(out.FunctionVersion)
 }
 
 // TestSweep removes the e2e stages that runs left behind, older than staleAfter, when
