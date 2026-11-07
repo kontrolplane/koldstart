@@ -1204,14 +1204,15 @@ func (v *jsonView) follow(width, height int) {
 // followJSON is the scroll of a page of total lines, its json v drawn at width from line at, after
 // msg moved the cursor from row before: as little as keeps the cursor in sight, but for up on the
 // json's first line, which scrolls up to what is above it, and g, which goes to the top of the
-// page. A page whose json is not all it shows scrolls with it after each key the json takes.
+// page. A page whose json is not all it shows scrolls with it after each key the json takes. While
+// its search is typed, a key is a letter of it and only keeps the match in sight.
 func (m model) followJSON(v *jsonView, msg tea.KeyPressMsg, before, scroll, at, total, width int) int {
 	most := maxOffset(total, contentHeight)
 	switch {
 	case v == nil || at < 0:
-	case key.Matches(msg, m.keys.Top):
+	case !v.search.active && key.Matches(msg, m.keys.Top):
 		scroll = 0
-	case before == 0 && v.at() == 0 && key.Matches(msg, m.keys.Up, m.keys.PageUp):
+	case !v.search.active && before == 0 && v.at() == 0 && key.Matches(msg, m.keys.Up, m.keys.PageUp):
 		scroll = scrollBy(msg, m.keys, scroll, contentHeight, most)
 	default:
 		top, bottom := v.cursorLines(width)

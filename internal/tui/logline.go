@@ -209,7 +209,8 @@ func (v logLineState) body(width int) []string {
 // logLineText draws what a line says in width but its json, which a json view reads: its
 // message whole, tinted as the logs tint it and wrapped, the error and stack trace of json that
 // holds one, as node's Invoke Error does, read as kdst invoke reads one, and the pairs of logfmt
-// each under its key.
+// each under its key. A line that says nothing has a note under its message where the text would
+// be.
 func logLineText(e cli.LogEvent, width int) []string {
 	parts := splitLogLine(e.Message)
 	var out []string
@@ -248,7 +249,7 @@ func logLineText(e cli.LogEvent, width int) []string {
 		}
 	}
 	if len(out) == 0 && parts.json == "" {
-		out = append(out, "", styles.Faint("an empty line"))
+		out = append(out, "", styles.SectionHeader("message", width), pad(rowInset, nil)+styles.Faint("an empty line"))
 	}
 	return out
 }

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -344,5 +345,57 @@ func TestLogLineEscapes(t *testing.T) {
 		if strings.Contains(v, "\x1b]") || strings.Contains(v, "\x07") || strings.Contains(v, "\x1b[2J") || strings.ContainsRune(v, '\u009b') || strings.ContainsRune(v, '\u202e') || !utf8.ValidString(v) {
 			t.Errorf("%s: an escape sequence reached the view", name)
 		}
+	}
+}
+
+// TestLogLineEmpty checks the page of a line that says nothing says so under its message, where
+// the text would start.
+func TestLogLineEmpty(t *testing.T) {
+	tests := []struct {
+		name    string
+		message string
+	}{
+		{name: "empty", message: ""},
+		{name: "blank", message: "  \n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m, _ := onLogs(t, []cli.LogEvent{{Time: time.Now(), Stream: "a", Message: tt.message}})
+			m = pressKeys(t, m, "enter")
+			lines := strings.Split(ansi.Strip(m.logLineView()), "\n")
+			at := slices.IndexFunc(lines, func(l string) bool { return strings.HasPrefix(l, " message ─") })
+			if at < 0 || at+1 >= len(lines) {
+				t.Fatalf("the page has no message section:\n%s", strings.Join(lines, "\n"))
+			}
+			if got, want := strings.TrimRight(lines[at+1], " "), strings.Repeat(" ", rowInset+1)+"an empty line"; got != want {
+				t.Errorf("the message says %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// TestLogLineSearchKeepsItsMatch checks a search typed into the json of a line that ends in a
+// letter that is also a key, as g is, keeps the match in sight rather than scrolling to the top.
+func TestLogLineSearchKeepsItsMatch(t *testing.T) {
+	tests := []struct {
+		name  string
+		typed string
+	}{
+		{name: "a word", typed: "long"},
+		{name: "words", typed: "a long"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m, _ := onLogs(t, lgBig(time.Now().Add(-time.Minute)))
+			m = pressKeys(t, lgOpen(t, m, 0), "/")
+			for _, r := range tt.typed {
+				m = pressKeys(t, m, string(r))
+			}
+			lines, at := m.logLineBody()
+			top, _ := m.state.logLine.json.cursorLines(logLineWidth())
+			if s := m.state.logLine.scroll; s == 0 || at+top < s || at+top >= s+contentHeight {
+				t.Errorf("the match is on line %d of %d, the page scrolled to %d", at+top, lines.len(), s)
+			}
+		})
 	}
 }
