@@ -70,7 +70,7 @@ kdst deploy --stage prod
 
 ## highlights
 
-koldstart calls the AWS APIs directly instead of generating CloudFormation, so there is no stack to wait on and no 500 resource limit. When the only change is a function's code, a deploy uploads the new zip and makes one `UpdateFunctionCode` call. `kdst deploy function -f api` goes straight down that path.
+koldstart calls the AWS APIs directly instead of generating CloudFormation, so there is no stack to wait on and no 500 resource limit. When the only change is a function's code, a deploy uploads the new zip and makes one `UpdateFunctionCode` call, and for a function with provisioned concurrency or snapstart publishes a version and points its `live` alias at it. `kdst deploy function -f api` goes straight down that path.
 
 What was deployed is recorded in an S3 bucket in your account, created on the first deploy. A team and its CI share it without setting anything up, and a lock in the same bucket keeps two deploys of one stage from running at once. Every step is recorded before it is made, so a deploy that fails or is stopped halfway is finished by the next one, with nothing made twice.
 
@@ -278,7 +278,6 @@ Everything koldstart creates is tagged with its app, stage and node, together wi
 
 - runtimes other than node, go and python
 - the rest api of api gateway, only http apis are deployed
-- provisioned concurrency and snapstart, which need the published versions koldstart does not make yet
 - windows, other than through the container image
 
 ## commands
