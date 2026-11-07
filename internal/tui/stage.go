@@ -1197,7 +1197,8 @@ func tabRow(names []string, counts []string, open, width int) string {
 
 // invokeFromStage invokes the function under the cursor of the functions tab, in aws or on this
 // machine, as i and shift+i do on its page: it opens on its invoke tab, where the event it is
-// invoked with and what it returned are in sight.
+// invoked with and what it returned are in sight. Running here against prod asks over the stage,
+// and no goes back to it.
 func (m model) invokeFromStage(local bool) (model, tea.Cmd) {
 	s := m.state.stage
 	t := s.tables[functionsTab]
@@ -1206,6 +1207,9 @@ func (m model) invokeFromStage(local bool) (model, tea.Cmd) {
 	}
 	m, open := m.openFunction(s.keys[functionsTab][t.cursor])
 	m, run := m.startInvoke(local)
+	if m.page == runLocalPage {
+		m.state.runLocal.from = stagePage
+	}
 	return m, tea.Batch(open, run)
 }
 

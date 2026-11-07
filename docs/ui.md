@@ -80,7 +80,7 @@ The stages, a stage and a function are read again every five seconds, and `p` pa
 - `r` on a plan of a deploy of the stage: plan again with every resource read as it is in aws, to find what was deleted or changed outside koldstart
 - `ctrl+d`: remove the stage, on the stages and on a stage; on a plan whose remove failed, plan the remove of what is left
 - `ctrl+x`: release the stage's lock, on the stages and on a stage
-- `i`: invoke the function in aws, `shift+i` to run it on this machine, from any tab of a function, or on the functions tab of a stage the function under the cursor, which opens on its invoke tab
+- `i`: invoke the function in aws, `shift+i` to run it on this machine, from any tab of a function, or on the functions tab of a stage the function under the cursor, which opens on its invoke tab; against prod or production `shift+i` asks first, over the page it was pressed on, and no goes back to it
 - `e`: edit the event to invoke with in `$VISUAL`, `$EDITOR` or `vi`
 - `v`: on the invoke tab, show the event's payload or the result of the last invocation with it
 - `f`: on the logs, follow the newest lines, or stop following

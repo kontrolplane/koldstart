@@ -353,34 +353,58 @@ func TestInvoke(t *testing.T) {
 }
 
 // TestRunLocal checks shift+i runs the function here and shows what it returned, asking first
-// against prod or production; no goes back to the tab it was asked from.
+// against prod or production over the page it was pressed on; no goes back to the tab it was
+// asked from, or to the stage's functions tab on the row it was pressed on.
 func TestRunLocal(t *testing.T) {
 	tests := []struct {
 		name  string
 		stage cli.StageRef
+		reach []string
 		keys  []string
 		local int
+		page  page
 		tab   functionTab
+		row   int
 	}{
-		{name: "dev runs at once", stage: ordersDev, keys: []string{"I"}, local: 1, tab: invokeTab},
-		{name: "prod asks, no", stage: ordersProd, keys: []string{"I", "n"}, tab: overviewTab},
-		{name: "prod asks from the logs, esc", stage: ordersProd, keys: []string{"tab", "I", "esc"}, tab: logsTab},
-		{name: "prod asks, yes", stage: ordersProd, keys: []string{"I", "y"}, local: 1, tab: invokeTab},
-		{name: "production asks, no", stage: ordersProduction, keys: []string{"I", "n"}, tab: overviewTab},
-		{name: "staging runs at once", stage: ordersStaging, keys: []string{"I"}, local: 1, tab: invokeTab},
+		{name: "dev runs at once", stage: ordersDev, reach: []string{"enter"}, keys: []string{"I"}, local: 1, page: functionPage, tab: invokeTab},
+		{name: "prod asks, no", stage: ordersProd, reach: []string{"enter"}, keys: []string{"I", "n"}, page: functionPage, tab: overviewTab},
+		{name: "prod asks from the logs, esc", stage: ordersProd, reach: []string{"enter", "tab"}, keys: []string{"I", "esc"}, page: functionPage, tab: logsTab},
+		{name: "prod asks, yes", stage: ordersProd, reach: []string{"enter"}, keys: []string{"I", "y"}, local: 1, page: functionPage, tab: invokeTab},
+		{name: "production asks, no", stage: ordersProduction, reach: []string{"enter"}, keys: []string{"I", "n"}, page: functionPage, tab: overviewTab},
+		{name: "staging runs at once", stage: ordersStaging, reach: []string{"enter"}, keys: []string{"I"}, local: 1, page: functionPage, tab: invokeTab},
+		{name: "prod asks from the stage, no", stage: ordersProd, reach: []string{"j"}, keys: []string{"I", "n"}, page: stagePage, row: 1},
+		{name: "prod asks from the stage, esc", stage: ordersProd, reach: []string{"j"}, keys: []string{"I", "esc"}, page: stagePage, row: 1},
+		{name: "prod asks from the stage, yes", stage: ordersProd, reach: []string{"j"}, keys: []string{"I", "y"}, local: 1, page: functionPage, tab: invokeTab},
+		{name: "dev runs from the stage at once", stage: ordersDev, reach: []string{"j"}, keys: []string{"I"}, local: 1, page: functionPage, tab: invokeTab},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newFake(t)
 			f.states[tt.stage] = testState(tt.stage)
+			worker := *f.states[tt.stage].Resources["function/api"]
+			f.states[tt.stage].Resources["function/worker"] = &worker
 			m := started(t, f)
 			m, cmd := m.openStage(tt.stage)
 			m = settle(t, m, cmd)
-			m = pressKeys(t, m, "enter")
-			m = pressKeys(t, m, tt.keys...)
+			m = pressKeys(t, m, tt.reach...)
+			from := m.page
+			for _, k := range tt.keys {
+				if m = pressKeys(t, m, k); m.page != runLocalPage {
+					continue
+				}
+				if over, _ := m.dialogFrom(); over != from {
+					t.Errorf("the dialog is drawn over page %v, want %v", over, from)
+				}
+			}
 			fn := m.state.function
-			if f.local != tt.local || m.page != functionPage || fn.tab != tt.tab {
-				t.Fatalf("%d runs here, page %v, tab %v; want %d on the function's tab %v", f.local, m.page, fn.tab, tt.local, tt.tab)
+			if f.local != tt.local || m.page != tt.page {
+				t.Fatalf("%d runs here, page %v; want %d on page %v", f.local, m.page, tt.local, tt.page)
+			}
+			if s := m.state.stage; tt.page == stagePage && (s.tab != functionsTab || s.tables[functionsTab].cursor != tt.row) {
+				t.Errorf("the stage is on tab %v, row %d; want the functions, row %d", s.tab, s.tables[functionsTab].cursor, tt.row)
+			}
+			if tt.page == functionPage && fn.tab != tt.tab {
+				t.Errorf("the function is on tab %v, want %v", fn.tab, tt.tab)
 			}
 			if ran := tt.local > 0; fn.pane.result != ran {
 				t.Errorf("the pane shows the result: %v, want %v", fn.pane.result, ran)

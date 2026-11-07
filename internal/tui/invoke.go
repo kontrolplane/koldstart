@@ -391,7 +391,7 @@ func (m model) startInvoke(local bool) (model, tea.Cmd) {
 		return m, nil
 	}
 	if local && cli.Production(ref.Stage) {
-		m.state.runLocal = runLocalState{event: m.selectedEvent(), payload: payload, tab: from}
+		m.state.runLocal = runLocalState{event: m.selectedEvent(), payload: payload, tab: from, from: functionPage}
 		return m.switchPage(runLocalPage), nil
 	}
 	m = m.showPane(true)

@@ -358,7 +358,7 @@ func (m model) dialogFrom() (page, bool) {
 	case removePage:
 		return planPage, true
 	case runLocalPage:
-		return functionPage, true
+		return m.state.runLocal.from, true
 	}
 	return 0, false
 }
@@ -591,7 +591,7 @@ func (m model) trail(p page) []string {
 		f := m.state.function
 		return append(stage(ref), crumb(functionWord, f.name), functionTabs[f.tab])
 	case runLocalPage:
-		return append(m.trail(functionPage), m.keys.RunLocal.Help().Desc)
+		return append(m.trail(m.state.runLocal.from), m.keys.RunLocal.Help().Desc)
 	case resourcePage:
 		if m.state.resource.fromFunction {
 			return append(m.trail(functionPage), nodeCrumb(m.state.resource.res.id))
