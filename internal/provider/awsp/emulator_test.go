@@ -564,3 +564,154 @@ func TestLoadBalancerEmulator(t *testing.T) {
 		t.Fatalf("TargetGroup.Delete: %v", err)
 	}
 }
+
+// TestSettingsEmulator deploys a function that traces, logs json, has tags of its own, a dead
+// letter queue and async settings, checks lambda has them, and takes them off again.
+func TestSettingsEmulator(t *testing.T) {
+	cfg := awstest.Emulator(t)
+	ctx := context.Background()
+	ident, err := sts.NewFromConfig(cfg).GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	account := *ident.Account
+	backend, err := state.Open(ctx, s3.NewFromConfig(cfg, func(o *s3.Options) { o.UsePathStyle = true }), account, awstest.Region)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lambdaClient := lambda.NewFromConfig(cfg)
+	e := &engine.Engine{
+		Providers: map[string]engine.Provider{
+			awsp.TypeLogGroup: awsp.LogGroup{Client: cloudwatchlogs.NewFromConfig(cfg)},
+			awsp.TypeRole:     awsp.Role{Client: iam.NewFromConfig(cfg)},
+			awsp.TypeFunction: awsp.Function{Client: lambdaClient, Wait: time.Minute, RetryEvery: 200 * time.Millisecond},
+		},
+		Concurrency: 4,
+	}
+	app := awstest.Name("settings")
+	queue, err := sqs.NewFromConfig(cfg).CreateQueue(ctx, &sqs.CreateQueueInput{QueueName: aws.String(app + "-dead")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dead := "arn:aws:sqs:" + awstest.Region + ":" + account + ":" + app + "-dead"
+	t.Cleanup(func() {
+		_, _ = sqs.NewFromConfig(cfg).DeleteQueue(ctx, &sqs.DeleteQueueInput{QueueUrl: queue.QueueUrl})
+	})
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "src"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "src", "api.ts"), []byte("export const handler = async () => 'ok'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	retries := 0
+	plain := config.Function{Runtime: config.RuntimeNode22, Handler: "src/api.handler", Memory: 128, Timeout: 5, Architecture: config.ArchARM64, EphemeralStorage: 512, LogRetention: 7}
+	set := plain
+	set.Tracing, set.Tags, set.LogFormat, set.ApplicationLogLevel = true, map[string]string{"tier": "web"}, config.LogFormatJSON, "WARN"
+	set.DeadLetter = config.Value{Literal: dead}
+	set.Async = &config.Async{MaximumRetryAttempts: &retries, OnFailure: config.Value{Literal: dead}}
+	p := &config.Project{App: app, Stage: "dev", Region: awstest.Region, Functions: map[string]config.Function{"api": set}}
+	deploy := func() {
+		t.Helper()
+		arc, err := build.Builder{Root: root, Stage: "dev"}.Build(ctx, "api", p.Functions["api"])
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, _ := os.ReadFile(arc.Path)
+		if err := backend.PutZip(ctx, app, "dev", arc.SHA256, data); err != nil {
+			t.Fatal(err)
+		}
+		nodes, err := desired.Build(p, desired.Target{Account: account, Region: awstest.Region, Bucket: backend.Bucket, Archives: map[string]build.Archive{"api": arc}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		apply(t, e, backend, app, nodes)
+	}
+
+	deploy()
+	name := desired.FunctionName(p, "api")
+	hasSettings(t, lambdaClient, name, app, dead)
+
+	p.Functions["api"] = plain
+	deploy()
+	fn, err := lambdaClient.GetFunction(ctx, &lambda.GetFunctionInput{FunctionName: &name})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := fn.Configuration; (c.TracingConfig != nil && c.TracingConfig.Mode == types.TracingModeActive) ||
+		(c.DeadLetterConfig != nil && aws.ToString(c.DeadLetterConfig.TargetArn) != "") ||
+		(c.LoggingConfig != nil && c.LoggingConfig.LogFormat == types.LogFormatJson) {
+		t.Errorf("the settings are still there: tracing %+v, dead letter %+v, logging %+v", c.TracingConfig, c.DeadLetterConfig, c.LoggingConfig)
+	}
+	if _, err := lambdaClient.GetFunctionEventInvokeConfig(ctx, &lambda.GetFunctionEventInvokeConfigInput{FunctionName: &name}); !isNotFound(err) {
+		t.Errorf("the async settings are still there: %v", err)
+	}
+	apply(t, e, backend, app, nil)
+}
+
+// hasSettings checks lambda has the settings TestSettingsEmulator deploys: tracing, json logs,
+// the dead letter queue, the function's tags and its async settings.
+func hasSettings(t *testing.T, lambdaClient *lambda.Client, name, app, dead string) {
+	t.Helper()
+	ctx := context.Background()
+	fn, err := lambdaClient.GetFunction(ctx, &lambda.GetFunctionInput{FunctionName: &name})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := fn.Configuration
+	if c.TracingConfig == nil || c.TracingConfig.Mode != types.TracingModeActive {
+		t.Errorf("tracing = %+v", c.TracingConfig)
+	}
+	if c.LoggingConfig == nil || c.LoggingConfig.LogFormat != types.LogFormatJson || c.LoggingConfig.ApplicationLogLevel != types.ApplicationLogLevelWarn {
+		t.Errorf("logging = %+v", c.LoggingConfig)
+	}
+	if c.DeadLetterConfig == nil || aws.ToString(c.DeadLetterConfig.TargetArn) != dead {
+		t.Errorf("dead letter = %+v", c.DeadLetterConfig)
+	}
+	if fn.Tags["tier"] != "web" || fn.Tags[engine.TagApp] != app {
+		t.Errorf("tags = %v", fn.Tags)
+	}
+	async, err := lambdaClient.GetFunctionEventInvokeConfig(ctx, &lambda.GetFunctionEventInvokeConfigInput{FunctionName: &name})
+	if err != nil || aws.ToInt32(async.MaximumRetryAttempts) != 0 || async.DestinationConfig == nil || aws.ToString(async.DestinationConfig.OnFailure.Destination) != dead {
+		t.Errorf("async = %+v, %v", async, err)
+	}
+}
+
+// TestLogSubscriptionEmulator subscribes a function to a log group, finds the subscription, puts
+// it again with another filter, and deletes it.
+func TestLogSubscriptionEmulator(t *testing.T) {
+	cfg := awstest.Emulator(t)
+	ctx := context.Background()
+	logs := cloudwatchlogs.NewFromConfig(cfg)
+	name := awstest.Name("logsub")
+	group := "/koldstart/" + name
+	if _, err := logs.CreateLogGroup(ctx, &cloudwatchlogs.CreateLogGroupInput{LogGroupName: &group}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = logs.DeleteLogGroup(ctx, &cloudwatchlogs.DeleteLogGroupInput{LogGroupName: &group}) })
+	subs := awsp.LogSubscription{Client: logs, Wait: 10 * time.Second}
+	in := awsp.LogSubscriptionInputs{Name: name, LogGroup: group, Pattern: "", Function: emulatorFunction(name)}
+	data, _ := json.Marshal(in)
+	if _, err := subs.Create(ctx, engine.Request{Inputs: data}); err != nil {
+		t.Fatalf("LogSubscription.Create: %v", err)
+	}
+	if _, found, err := subs.Read(ctx, engine.Request{Inputs: data}); err != nil || !found {
+		t.Fatalf("LogSubscription.Read = %v, %v", found, err)
+	}
+	in.Pattern = "ERROR"
+	changed, _ := json.Marshal(in)
+	if _, err := subs.Update(ctx, engine.Request{PhysicalID: name, Inputs: changed, Prior: data}); err != nil {
+		t.Fatalf("LogSubscription.Update: %v", err)
+	}
+	out, err := logs.DescribeSubscriptionFilters(ctx, &cloudwatchlogs.DescribeSubscriptionFiltersInput{LogGroupName: &group})
+	if err != nil || len(out.SubscriptionFilters) != 1 || aws.ToString(out.SubscriptionFilters[0].FilterPattern) != "ERROR" {
+		t.Errorf("filters = %+v, %v", out, err)
+	}
+	if err := subs.Delete(ctx, engine.Request{PhysicalID: name, Prior: changed}); err != nil {
+		t.Fatalf("LogSubscription.Delete: %v", err)
+	}
+	if _, found, err := subs.Read(ctx, engine.Request{Inputs: changed}); err != nil || found {
+		t.Errorf("after delete, Read = %v, %v", found, err)
+	}
+}

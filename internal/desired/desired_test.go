@@ -525,3 +525,146 @@ func TestMoreEvents(t *testing.T) {
 		}
 	}
 }
+
+// TestFunctionSettings checks the inputs of a function's tracing, kms key, tags, dead letter
+// target, async handling, file system and json logs, the statements its role gets for them, and
+// that a function without them has none of these inputs, so its hash stays.
+func TestFunctionSettings(t *testing.T) {
+	p := project(t)
+	api := p.Functions["api"]
+	dead := config.Value{Ref: &config.Ref{Resource: "dead", Attribute: "Arn"}}
+	api.Tracing = true
+	api.KMSKey = config.Value{Literal: "arn:aws:kms:eu-west-1:123456789012:key/1"}
+	api.Tags = map[string]string{"tier": "web"}
+	api.DeadLetter = dead
+	retries := 0
+	api.Async = &config.Async{MaximumRetryAttempts: &retries, OnSuccess: config.Value{Ref: &config.Ref{Resource: "worker", Attribute: "Arn"}}, OnFailure: dead}
+	api.VPC = &config.VPC{SubnetIDs: []config.Value{{Literal: "subnet-1"}}, SecurityGroupIDs: []config.Value{{Literal: "sg-1"}}}
+	api.FileSystem = &config.FileSystem{AccessPoint: config.Value{Literal: "arn:aws:elasticfilesystem:eu-west-1:1:access-point/fsap-1"}, MountPath: "/mnt/data"}
+	api.LogFormat, api.ApplicationLogLevel = config.LogFormatJSON, "WARN"
+	p.Functions["api"] = api
+	nodes, err := Build(p, target())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := byID(nodes)
+	in := got[FunctionID("api")].Inputs
+	want := map[string]string{
+		"tracing":             `"Active"`,
+		"kmsKey":              `"arn:aws:kms:eu-west-1:123456789012:key/1"`,
+		"tags":                `{"tier":"web"}`,
+		"deadLetter":          js(t, engine.Ref("resource/dead", "Arn")),
+		"async":               js(t, map[string]any{"maximumRetryAttempts": 0, "onFailure": engine.Ref("resource/dead", "Arn"), "onSuccess": engine.Ref("function/worker", "Arn")}),
+		"fileSystem":          `{"accessPoint":"arn:aws:elasticfilesystem:eu-west-1:1:access-point/fsap-1","mountPath":"/mnt/data"}`,
+		"logFormat":           `"JSON"`,
+		"applicationLogLevel": `"WARN"`,
+	}
+	for key, value := range want {
+		if js(t, in[key]) != value {
+			t.Errorf("%s = %s, want %s", key, js(t, in[key]), value)
+		}
+	}
+	if _, ok := in["systemLogLevel"]; ok {
+		t.Error("a level that is not set is an input")
+	}
+	policy := js(t, got[RoleID("api")].Inputs["policy"])
+	for _, action := range []string{"xray:PutTraceSegments", "kms:Decrypt", "sqs:SendMessage", "lambda:InvokeFunction"} {
+		if !strings.Contains(policy, action) {
+			t.Errorf("the role may not %s: %s", action, policy)
+		}
+	}
+	managed := js(t, got[RoleID("api")].Inputs["managedPolicies"])
+	if !strings.Contains(managed, "AmazonElasticFileSystemClientReadWriteAccess") {
+		t.Errorf("managed policies = %s", managed)
+	}
+	worker := got[FunctionID("worker")].Inputs
+	for key := range want {
+		if _, ok := worker[key]; ok {
+			t.Errorf("a function without %s has it as an input, which changes its hash", key)
+		}
+	}
+}
+
+// TestEventSettings checks the inputs of a stream's failure handling and a queue's limit, an
+// event rule's target, a route signed with iam, the conditions of a load balancer rule, a log
+// subscription with its permission, and the http api's access logs, each left out when not set.
+func TestEventSettings(t *testing.T) {
+	p := project(t)
+	api := p.Functions["api"]
+	retries, age, limit, disabled := 3, 3600, 5, false
+	dead := config.Value{Ref: &config.Ref{Resource: "dead", Attribute: "Arn"}}
+	api.Events = append(api.Events,
+		config.Event{Type: config.EventStream, Stream: config.Value{Literal: "arn:aws:kinesis:eu-west-1:1:stream/clicks"}, StartingPosition: "LATEST",
+			MaximumRetryAttempts: &retries, MaximumRecordAge: &age, BisectBatchOnFunctionError: true, ParallelizationFactor: 1, OnFailure: dead},
+		config.Event{Type: config.EventQueue, Queue: config.Value{Literal: "arn:aws:sqs:eu-west-1:1:other"}, MaximumConcurrency: &limit, Enabled: &disabled},
+		config.Event{Type: config.EventRule, Pattern: json.RawMessage(`{"source":["x"]}`), InputPath: "$.detail", MaximumRetryAttempts: &retries, DeadLetter: dead},
+		config.Event{Type: config.EventHTTPRoute, Method: "POST", Path: "/internal", IAM: true},
+		config.Event{Type: config.EventALB, Listener: config.Value{Literal: "arn:aws:elasticloadbalancing:eu-west-1:1:listener/app/x/y/z"}, Priority: 1,
+			Headers: map[string][]string{"X-Tenant": {"acme"}}, SourceIPs: []string{"10.0.0.0/8"}},
+		config.Event{Type: config.EventLogs, LogGroup: config.Value{Literal: "/ecs/web"}, Filter: "ERROR"},
+	)
+	p.Functions["api"] = api
+	p.HTTP.AccessLogs = &config.AccessLogs{Format: "$context.requestId", Retention: 7}
+	nodes, err := Build(p, target())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := byID(nodes)
+	tests := []struct {
+		node, input, want string
+	}{
+		{node: "mapping/api/clicks", input: "maximumRetryAttempts", want: "3"},
+		{node: "mapping/api/clicks", input: "maximumRecordAge", want: "3600"},
+		{node: "mapping/api/clicks", input: "bisectBatchOnFunctionError", want: "true"},
+		{node: "mapping/api/clicks", input: "onFailure", want: js(t, engine.Ref("resource/dead", "Arn"))},
+		{node: "mapping/api/other", input: "maximumConcurrency", want: "5"},
+		{node: "mapping/api/other", input: "enabled", want: "false"},
+		{node: "rule/api/0", input: "inputPath", want: `"$.detail"`},
+		{node: "rule/api/0", input: "maximumRetryAttempts", want: "3"},
+		{node: "route/POST /internal", input: "authorizationType", want: `"AWS_IAM"`},
+		{node: "lbrule/api/0", input: "headers", want: `{"X-Tenant":["acme"]}`},
+		{node: "lbrule/api/0", input: "sourceIps", want: `["10.0.0.0/8"]`},
+		{node: "logsubscription/api/0", input: "logGroup", want: `"/ecs/web"`},
+		{node: "logsubscription/api/0", input: "pattern", want: `"ERROR"`},
+		{node: AccessLogsID, input: "retention", want: "7"},
+		{node: HTTPAPIID, input: "accessLogs", want: js(t, map[string]any{"destination": engine.Ref(AccessLogsID, "Arn"), "format": "$context.requestId"})},
+	}
+	for _, tt := range tests {
+		if n, ok := got[tt.node]; !ok || js(t, n.Inputs[tt.input]) != tt.want {
+			t.Errorf("%s %s = %s, want %s", tt.node, tt.input, js(t, got[tt.node].Inputs[tt.input]), tt.want)
+		}
+	}
+	for _, input := range []string{"parallelizationFactor", "tumblingWindow", "maximumConcurrency", "enabled"} {
+		if _, ok := got["mapping/api/clicks"].Inputs[input]; ok {
+			t.Errorf("the stream has %s as an input, which it leaves to lambda", input)
+		}
+	}
+	if _, ok := got["mapping/worker/jobs"].Inputs["maximumConcurrency"]; ok {
+		t.Error("a queue without a limit has one as an input")
+	}
+	if _, ok := got["lbrule/api/0"].Inputs["query"]; ok {
+		t.Error("a rule without a query condition has one as an input")
+	}
+	permission := got["permission/api/logs-0"].Inputs
+	if permission["principal"] != "logs.amazonaws.com" || js(t, permission["sourceArn"]) != `"arn:aws:logs:eu-west-1:123456789012:log-group:/ecs/web:*"` {
+		t.Errorf("log subscription permission = %v", permission)
+	}
+	if after := got["logsubscription/api/0"].After; !slices.Contains(after, "permission/api/logs-0") {
+		t.Errorf("the subscription is made before logs may invoke the function: %v", after)
+	}
+	if !strings.Contains(js(t, got[RoleID("api")].Inputs["policy"]), "sqs:SendMessage") {
+		t.Error("the role may not send a stream's failures to its queue")
+	}
+	for _, n := range nodes {
+		if kind, _ := Group(n.ID, n.Deps()); kind == "" {
+			t.Errorf("%s belongs to nothing", n.ID)
+		}
+	}
+	resources := map[string]*state.Resource{}
+	for _, n := range nodes {
+		resources[n.ID] = &state.Resource{Dependencies: n.Deps()}
+	}
+	if !slices.Contains(Triggers(resources, "api"), "logsubscription/api/0") {
+		t.Error("a log subscription is not among the function's triggers")
+	}
+}

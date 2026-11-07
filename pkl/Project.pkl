@@ -175,6 +175,59 @@ class Function {
 
   /// For typescript: run `tsc --noEmit` before bundling.
   typecheck: Boolean = false
+
+  /// Send traces to x-ray. The role may write them.
+  tracing: Boolean = false
+
+  /// A kms key of your own that encrypts the environment variables, by its arn, in place of
+  /// lambda's. The role may decrypt with it.
+  kmsKey: Value?
+
+  /// Tags of this function alone, next to `tags`.
+  tags: Mapping<String, String>
+
+  /// Where lambda sends an event it was handed without waiting, as from s3, sns or eventbridge,
+  /// once the function has failed on it every time: an sqs queue or sns topic, by its arn. The
+  /// role may send to it.
+  deadLetter: Value?
+
+  /// What lambda does with the events it is handed without waiting: how often it retries, how
+  /// long an event may wait, and where results go.
+  async: Async?
+
+  /// An efs access point to mount. The function needs a `vpc` that reaches the file system.
+  fileSystem: FileSystem?
+
+  /// `"json"` writes each line of the logs as json, with its level, and takes the levels below.
+  logFormat: "text"|"json" = "text"
+
+  /// For `"json"` logs: the lowest level of the function's own lines that is kept.
+  applicationLogLevel: ("TRACE"|"DEBUG"|"INFO"|"WARN"|"ERROR"|"FATAL")?
+
+  /// For `"json"` logs: the lowest level of lambda's own lines that is kept.
+  systemLogLevel: ("DEBUG"|"INFO"|"WARN")?
+}
+
+/// What lambda does with the events it is handed without waiting.
+class Async {
+  /// How often a failed event is tried again, at most 2, lambda's default.
+  maximumRetryAttempts: Int(isBetween(0, 2))?
+  /// How long an event may wait to be handed to the function, between a minute and six hours,
+  /// lambda's default.
+  maximumEventAge: Duration(isBetween(1.min, 6.h))?
+  /// Where the result of an event the function handled goes: an sqs queue, sns topic, event bus
+  /// or function, by its arn. The role may send to it.
+  onSuccess: Value?
+  /// Where an event goes once the function has failed on it every time, or it waited too long.
+  onFailure: Value?
+}
+
+/// An efs access point a function mounts.
+class FileSystem {
+  /// The access point's arn.
+  accessPoint: Value
+  /// Where it is mounted, under `/mnt/`.
+  mountPath: String(matches(Regex(#"/mnt/[A-Za-z0-9._/-]+"#)))
 }
 
 /// The days a log group can keep logs, as cloudwatch allows them.
@@ -240,6 +293,18 @@ class Http {
   authorizers: Mapping<String, Authorizer>
   /// The stage-wide request limit.
   throttling: Throttling?
+  /// A line for every request, written to a log group koldstart makes,
+  /// `/aws/http-api/<app>-<stage>`.
+  accessLogs: AccessLogs?
+}
+
+/// The access logs of the http api.
+class AccessLogs {
+  /// Each line, with `$context` variables. By default json of the request's id, ip, time,
+  /// method, route, status, protocol and length.
+  format: String = #"{"requestId":"$context.requestId","ip":"$context.identity.sourceIp","requestTime":"$context.requestTime","httpMethod":"$context.httpMethod","routeKey":"$context.routeKey","status":"$context.status","protocol":"$context.protocol","responseLength":"$context.responseLength"}"#
+  /// How many days the log group keeps them.
+  retention: LogRetention = 30
 }
 
 class WebSocket {

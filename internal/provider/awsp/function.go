@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -37,6 +38,81 @@ type FunctionInputs struct {
 	// deployed before they were known keeps its hash.
 	Layers      []string     `json:"layers,omitempty"`
 	ImageConfig *ImageConfig `json:"imageConfig,omitempty"`
+	// The settings below are left out the same way when a function does not set them.
+	Tracing             string            `json:"tracing,omitempty"`
+	KMSKey              string            `json:"kmsKey,omitempty"`
+	Tags                map[string]string `json:"tags,omitempty"`
+	DeadLetter          string            `json:"deadLetter,omitempty"`
+	Async               *AsyncConfig      `json:"async,omitempty"`
+	FileSystem          *FileSystemConfig `json:"fileSystem,omitempty"`
+	LogFormat           string            `json:"logFormat,omitempty"`
+	ApplicationLogLevel string            `json:"applicationLogLevel,omitempty"`
+	SystemLogLevel      string            `json:"systemLogLevel,omitempty"`
+}
+
+// AsyncConfig is what lambda does with the events it is handed without waiting.
+type AsyncConfig struct {
+	MaximumRetryAttempts *int32 `json:"maximumRetryAttempts,omitempty"`
+	MaximumEventAge      *int32 `json:"maximumEventAge,omitempty"`
+	OnSuccess            string `json:"onSuccess,omitempty"`
+	OnFailure            string `json:"onFailure,omitempty"`
+}
+
+// FileSystemConfig is an efs access point a function mounts.
+type FileSystemConfig struct {
+	AccessPoint string `json:"accessPoint"`
+	MountPath   string `json:"mountPath"`
+}
+
+// tracing is the function's x-ray mode: PassThrough unless it traces.
+func (in FunctionInputs) tracing() *types.TracingConfig {
+	if in.Tracing == string(types.TracingModeActive) {
+		return &types.TracingConfig{Mode: types.TracingModeActive}
+	}
+	return &types.TracingConfig{Mode: types.TracingModePassThrough}
+}
+
+// deadLetter is the function's dead letter target, an empty one to remove it.
+func (in FunctionInputs) deadLetter() *types.DeadLetterConfig {
+	return &types.DeadLetterConfig{TargetArn: &in.DeadLetter}
+}
+
+// kmsKey is the key of the function's variables, an empty one for lambda's own.
+func (in FunctionInputs) kmsKey() *string {
+	return &in.KMSKey
+}
+
+// fileSystems are the access points the function mounts, an empty list to unmount them.
+func (in FunctionInputs) fileSystems() []types.FileSystemConfig {
+	if in.FileSystem == nil {
+		return []types.FileSystemConfig{}
+	}
+	return []types.FileSystemConfig{{Arn: &in.FileSystem.AccessPoint, LocalMountPath: &in.FileSystem.MountPath}}
+}
+
+// logging is where and how the function logs: text, or json with its levels.
+func (in FunctionInputs) logging() *types.LoggingConfig {
+	c := &types.LoggingConfig{LogGroup: &in.LogGroup, LogFormat: types.LogFormatText}
+	if in.LogFormat == string(types.LogFormatJson) {
+		c.LogFormat = types.LogFormatJson
+		if in.ApplicationLogLevel != "" {
+			c.ApplicationLogLevel = types.ApplicationLogLevel(in.ApplicationLogLevel)
+		}
+		if in.SystemLogLevel != "" {
+			c.SystemLogLevel = types.SystemLogLevel(in.SystemLogLevel)
+		}
+	}
+	return c
+}
+
+// tags are the tags of the function: its own, and koldstart's over them.
+func (in FunctionInputs) tags(tags map[string]string) map[string]string {
+	if len(in.Tags) == 0 {
+		return tags
+	}
+	out := maps.Clone(in.Tags)
+	maps.Copy(out, tags)
+	return out
 }
 
 // Code is where a function's code is: its zip in the state bucket, or its container image.
@@ -137,7 +213,8 @@ func (p Function) wait() time.Duration {
 func (p Function) retry(ctx context.Context, fn func() error) error {
 	retryable := func(err error) bool {
 		return awserr.Is(err, "ResourceConflictException", "TooManyRequestsException") ||
-			(awserr.Is(err, "InvalidParameterValueException") && strings.Contains(err.Error(), "cannot be assumed"))
+			(awserr.Is(err, "InvalidParameterValueException") &&
+				(strings.Contains(err.Error(), "cannot be assumed") || strings.Contains(err.Error(), "does not have permission")))
 	}
 	return retry(ctx, p.wait(), cmp.Or(p.RetryEvery, 2*time.Second), retryable, fn)
 }
@@ -166,22 +243,26 @@ func (p Function) Create(ctx context.Context, req engine.Request) (engine.Result
 	err := p.retry(ctx, func() error {
 		var err error
 		out, err = p.Client.CreateFunction(ctx, &lambda.CreateFunctionInput{
-			FunctionName:     &in.Name,
-			Runtime:          in.runtime(),
-			Handler:          in.handler(),
-			PackageType:      in.packageType(),
-			ImageConfig:      in.imageConfig(),
-			Layers:           in.Layers,
-			Role:             &in.Role,
-			MemorySize:       &in.Memory,
-			Timeout:          &in.Timeout,
-			Architectures:    architectures(in.Architecture),
-			EphemeralStorage: &types.EphemeralStorage{Size: &in.EphemeralStorage},
-			Environment:      &types.Environment{Variables: in.Environment},
-			Code:             in.code(),
-			LoggingConfig:    &types.LoggingConfig{LogGroup: &in.LogGroup, LogFormat: types.LogFormatText},
-			VpcConfig:        vpcConfig(in.VPC),
-			Tags:             req.Tags,
+			FunctionName:      &in.Name,
+			Runtime:           in.runtime(),
+			Handler:           in.handler(),
+			PackageType:       in.packageType(),
+			ImageConfig:       in.imageConfig(),
+			Layers:            in.Layers,
+			Role:              &in.Role,
+			MemorySize:        &in.Memory,
+			Timeout:           &in.Timeout,
+			Architectures:     architectures(in.Architecture),
+			EphemeralStorage:  &types.EphemeralStorage{Size: &in.EphemeralStorage},
+			Environment:       &types.Environment{Variables: in.Environment},
+			Code:              in.code(),
+			LoggingConfig:     in.logging(),
+			VpcConfig:         vpcConfig(in.VPC),
+			TracingConfig:     in.tracing(),
+			KMSKeyArn:         optional(in.KMSKey),
+			DeadLetterConfig:  in.createDeadLetter(),
+			FileSystemConfigs: in.createFileSystems(),
+			Tags:              in.tags(req.Tags),
 		})
 		if awserr.Is(err, "ResourceConflictException") && strings.Contains(err.Error(), "already exist") {
 			return engine.ErrExists
@@ -200,7 +281,64 @@ func (p Function) Create(ctx context.Context, req engine.Request) (engine.Result
 	if err := p.concurrency(ctx, in, nil); err != nil {
 		return engine.Result{}, err
 	}
+	if err := p.async(ctx, in, nil); err != nil {
+		return engine.Result{}, err
+	}
 	return functionResult(aws.ToString(out.FunctionArn), in.Name), nil
+}
+
+// createDeadLetter and createFileSystems are what a create sends: nothing when the function has
+// none.
+func (in FunctionInputs) createDeadLetter() *types.DeadLetterConfig {
+	if in.DeadLetter == "" {
+		return nil
+	}
+	return in.deadLetter()
+}
+
+func (in FunctionInputs) createFileSystems() []types.FileSystemConfig {
+	if in.FileSystem == nil {
+		return nil
+	}
+	return in.fileSystems()
+}
+
+// async puts how lambda handles the events it is handed without waiting, or removes it when the
+// function no longer sets it.
+func (p Function) async(ctx context.Context, in FunctionInputs, prior *FunctionInputs) error {
+	if prior != nil && !changed(in.Async, prior.Async) {
+		return nil
+	}
+	if in.Async == nil {
+		if prior == nil {
+			return nil
+		}
+		_, err := p.Client.DeleteFunctionEventInvokeConfig(ctx, &lambda.DeleteFunctionEventInvokeConfigInput{FunctionName: &in.Name})
+		if err != nil && !awserr.Is(err, "ResourceNotFoundException") {
+			return fmt.Errorf("removing the async settings of %s: %w", in.Name, err)
+		}
+		return nil
+	}
+	put := &lambda.PutFunctionEventInvokeConfigInput{
+		FunctionName: &in.Name, MaximumRetryAttempts: in.Async.MaximumRetryAttempts, MaximumEventAgeInSeconds: in.Async.MaximumEventAge,
+	}
+	if in.Async.OnSuccess != "" || in.Async.OnFailure != "" {
+		put.DestinationConfig = &types.DestinationConfig{}
+		if in.Async.OnSuccess != "" {
+			put.DestinationConfig.OnSuccess = &types.OnSuccess{Destination: &in.Async.OnSuccess}
+		}
+		if in.Async.OnFailure != "" {
+			put.DestinationConfig.OnFailure = &types.OnFailure{Destination: &in.Async.OnFailure}
+		}
+	}
+	err := p.retry(ctx, func() error {
+		_, err := p.Client.PutFunctionEventInvokeConfig(ctx, put)
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("setting the async settings of %s: %w", in.Name, err)
+	}
+	return nil
 }
 
 func functionResult(arn, name string) engine.Result {
@@ -264,6 +402,8 @@ func configChanged(a, b FunctionInputs) bool {
 	a.Code, b.Code = Code{}, Code{}
 	a.Architecture, b.Architecture = "", ""
 	a.ReservedConcurrency, b.ReservedConcurrency = nil, nil
+	a.Async, b.Async = nil, nil
+	a.Tags, b.Tags = nil, nil
 	return changed(a, b)
 }
 
@@ -294,12 +434,15 @@ func (p Function) Update(ctx context.Context, req engine.Request) (engine.Result
 	if err := p.concurrency(ctx, in, prior); err != nil {
 		return engine.Result{}, err
 	}
+	if err := p.async(ctx, in, prior); err != nil {
+		return engine.Result{}, err
+	}
 	arn, err := p.arnOf(ctx, in.Name, req.Attributes)
 	if err != nil {
 		return engine.Result{}, err
 	}
-	if len(req.Tags) > 0 {
-		if _, err := p.Client.TagResource(ctx, &lambda.TagResourceInput{Resource: &arn, Tags: req.Tags}); err != nil {
+	if tags := in.tags(req.Tags); len(tags) > 0 {
+		if _, err := p.Client.TagResource(ctx, &lambda.TagResourceInput{Resource: &arn, Tags: tags}); err != nil {
 			return engine.Result{}, fmt.Errorf("tagging %s: %w", in.Name, err)
 		}
 	}
@@ -328,18 +471,22 @@ func (p Function) updateCode(ctx context.Context, in FunctionInputs) error {
 func (p Function) updateConfiguration(ctx context.Context, in FunctionInputs) error {
 	err := p.retry(ctx, func() error {
 		_, err := p.Client.UpdateFunctionConfiguration(ctx, &lambda.UpdateFunctionConfigurationInput{
-			FunctionName:     &in.Name,
-			Runtime:          in.runtime(),
-			Handler:          in.handler(),
-			ImageConfig:      in.imageConfig(),
-			Layers:           in.layers(),
-			Role:             &in.Role,
-			MemorySize:       &in.Memory,
-			Timeout:          &in.Timeout,
-			EphemeralStorage: &types.EphemeralStorage{Size: &in.EphemeralStorage},
-			Environment:      &types.Environment{Variables: in.Environment},
-			LoggingConfig:    &types.LoggingConfig{LogGroup: &in.LogGroup, LogFormat: types.LogFormatText},
-			VpcConfig:        vpcConfig(in.VPC),
+			FunctionName:      &in.Name,
+			Runtime:           in.runtime(),
+			Handler:           in.handler(),
+			ImageConfig:       in.imageConfig(),
+			Layers:            in.layers(),
+			Role:              &in.Role,
+			MemorySize:        &in.Memory,
+			Timeout:           &in.Timeout,
+			EphemeralStorage:  &types.EphemeralStorage{Size: &in.EphemeralStorage},
+			Environment:       &types.Environment{Variables: in.Environment},
+			LoggingConfig:     in.logging(),
+			VpcConfig:         vpcConfig(in.VPC),
+			TracingConfig:     in.tracing(),
+			KMSKeyArn:         in.kmsKey(),
+			DeadLetterConfig:  in.deadLetter(),
+			FileSystemConfigs: in.fileSystems(),
 		})
 		return err
 	})

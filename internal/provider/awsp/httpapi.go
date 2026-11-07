@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/apigatewayv2"
@@ -24,6 +25,23 @@ type HTTPAPIInputs struct {
 	Protocol       string `json:"protocol,omitempty"`
 	RouteSelection string `json:"routeSelection,omitempty"`
 	Stage          string `json:"stage,omitempty"`
+	// AccessLogs is left out when the api has none, so one deployed before them keeps its hash.
+	AccessLogs *AccessLogs `json:"accessLogs,omitempty"`
+}
+
+// AccessLogs are where the stage writes a line for every request, and what it writes.
+type AccessLogs struct {
+	// Destination is the log group's arn, which ends in :* as DescribeLogGroups gives it.
+	Destination string `json:"destination"`
+	Format      string `json:"format"`
+}
+
+// accessLogs is how the stage logs requests, or nil when it does not.
+func (in HTTPAPIInputs) accessLogs() *types.AccessLogSettings {
+	if in.AccessLogs == nil {
+		return nil
+	}
+	return &types.AccessLogSettings{DestinationArn: aws.String(strings.TrimSuffix(in.AccessLogs.Destination, ":*")), Format: &in.AccessLogs.Format}
 }
 
 // protocolWebSocket is the protocol of a websocket api.
@@ -98,7 +116,7 @@ func (p HTTPAPI) Create(ctx context.Context, req engine.Request) (engine.Result,
 	}
 	_, err = p.Client.CreateStage(ctx, &apigatewayv2.CreateStageInput{
 		ApiId: api.ApiId, StageName: aws.String(in.stage()), AutoDeploy: aws.Bool(true),
-		DefaultRouteSettings: in.routeSettings(), Tags: req.Tags,
+		DefaultRouteSettings: in.routeSettings(), AccessLogSettings: in.accessLogs(), Tags: req.Tags,
 	})
 	if err != nil {
 		return engine.Result{}, fmt.Errorf("creating the stage of the api %s: %w", in.Name, err)
@@ -150,14 +168,27 @@ func (p HTTPAPI) Update(ctx context.Context, req engine.Request) (engine.Result,
 	if err != nil {
 		return engine.Result{}, fmt.Errorf("updating the api %s: %w", in.Name, err)
 	}
-	_, err = p.Client.UpdateStage(ctx, &apigatewayv2.UpdateStageInput{ApiId: &id, StageName: aws.String(in.stage()), DefaultRouteSettings: in.routeSettings()})
+	_, err = p.Client.UpdateStage(ctx, &apigatewayv2.UpdateStageInput{
+		ApiId: &id, StageName: aws.String(in.stage()), DefaultRouteSettings: in.routeSettings(), AccessLogSettings: in.accessLogs(),
+	})
 	if awserr.Is(err, "NotFoundException") {
 		_, err = p.Client.CreateStage(ctx, &apigatewayv2.CreateStageInput{
-			ApiId: &id, StageName: aws.String(in.stage()), AutoDeploy: aws.Bool(true), DefaultRouteSettings: in.routeSettings(), Tags: req.Tags,
+			ApiId: &id, StageName: aws.String(in.stage()), AutoDeploy: aws.Bool(true), DefaultRouteSettings: in.routeSettings(),
+			AccessLogSettings: in.accessLogs(), Tags: req.Tags,
 		})
 	}
 	if err != nil {
 		return engine.Result{}, fmt.Errorf("updating the stage of the http api %s: %w", in.Name, err)
+	}
+	var prior HTTPAPIInputs
+	if err := decodeInputs(req.Prior, &prior); err != nil {
+		return engine.Result{}, err
+	}
+	if in.AccessLogs == nil && prior.AccessLogs != nil {
+		_, err := p.Client.DeleteAccessLogSettings(ctx, &apigatewayv2.DeleteAccessLogSettingsInput{ApiId: &id, StageName: aws.String(in.stage())})
+		if err != nil && !awserr.Is(err, "NotFoundException") {
+			return engine.Result{}, fmt.Errorf("removing the access logs of the http api %s: %w", in.Name, err)
+		}
 	}
 	arn := "arn:" + Partition(p.Region) + ":apigateway:" + p.Region + "::/apis/" + id
 	if _, err := p.Client.TagResource(ctx, &apigatewayv2.TagResourceInput{ResourceArn: &arn, Tags: req.Tags}); err != nil {

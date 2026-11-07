@@ -20,6 +20,12 @@ type access struct {
 	env map[string]string
 }
 
+// The actions several statements give.
+const (
+	actionInvoke     = "lambda:InvokeFunction"
+	actionListBucket = "s3:ListBucket"
+)
+
 // suffixARN ends the environment variable that holds a linked resource's arn, and attrArn is
 // the attribute it is read from.
 const (
@@ -41,8 +47,8 @@ var links = map[string]access{
 		env: map[string]string{suffixName: "TableName", suffixARN: attrArn},
 	},
 	"AWS::S3::Bucket": {
-		read:  []string{"s3:GetObject", "s3:ListBucket"},
-		write: []string{"s3:PutObject", "s3:DeleteObject", "s3:ListBucket"},
+		read:  []string{"s3:GetObject", actionListBucket},
+		write: []string{"s3:PutObject", "s3:DeleteObject", actionListBucket},
 		resources: func(node string) []any {
 			return []any{engine.Ref(node, attrArn), engine.Join(engine.Ref(node, attrArn), "/*")}
 		},
@@ -152,6 +158,7 @@ func (b *builder) permissions(name string, fn config.Function) (map[string]any, 
 	statements = append(statements, b.sourceStatements(fn)...)
 	statements = append(statements, b.runtimeSecrets(fn)...)
 	statements = append(statements, b.webSocketStatements(fn)...)
+	statements = append(statements, b.settingStatements(fn)...)
 	linked, err := b.linkStatements(fn)
 	if err != nil {
 		return nil, nil, err
@@ -162,7 +169,65 @@ func (b *builder) permissions(name string, fn config.Function) (map[string]any, 
 	if fn.VPC != nil {
 		managed = append(managed, "arn:"+awsp.Partition(b.target.Region)+":iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole")
 	}
+	if fn.FileSystem != nil {
+		managed = append(managed, "arn:"+awsp.Partition(b.target.Region)+":iam::aws:policy/AmazonElasticFileSystemClientReadWriteAccess")
+	}
 	return policy(statements...), managed, nil
+}
+
+// sendActions are what a function's role needs to send to a destination of each service.
+var sendActions = map[string][]string{
+	config.ServiceSQS:    {"sqs:SendMessage"},
+	config.ServiceSNS:    {"sns:Publish"},
+	config.ServiceEvents: {"events:PutEvents"},
+	config.ServiceLambda: {actionInvoke},
+	config.ServiceS3:     {"s3:PutObject", actionListBucket},
+}
+
+// sendStatement lets a function's role send to a destination, or is nil when its service cannot
+// be told before deploying: that one needs permissions of its own.
+func (b *builder) sendStatement(v config.Value) any {
+	service := b.project.Service(v)
+	actions, ok := sendActions[service]
+	if !ok {
+		return nil
+	}
+	resources := []any{b.value(v)}
+	if service == config.ServiceS3 {
+		resources = append(resources, engine.Join(b.value(v), "/*"))
+	}
+	return statement("Allow", actions, resources)
+}
+
+// settingStatements are what a function's role needs for its settings: writing traces,
+// decrypting its variables with its own key, and sending to its dead letter target, its async
+// destinations and the failure destinations of its streams.
+func (b *builder) settingStatements(fn config.Function) []any {
+	var out []any
+	if fn.Tracing {
+		out = append(out, statement("Allow", []string{"xray:PutTraceSegments", "xray:PutTelemetryRecords"}, []any{"*"}))
+	}
+	if fn.KMSKey.IsSet() {
+		out = append(out, statement("Allow", []string{"kms:Decrypt"}, []any{b.value(fn.KMSKey)}))
+	}
+	destinations := []config.Value{fn.DeadLetter}
+	if fn.Async != nil {
+		destinations = append(destinations, fn.Async.OnSuccess, fn.Async.OnFailure)
+	}
+	for _, e := range fn.Events {
+		if e.Type == config.EventStream {
+			destinations = append(destinations, e.OnFailure)
+		}
+	}
+	for _, d := range destinations {
+		if !d.IsSet() {
+			continue
+		}
+		if s := b.sendStatement(d); s != nil {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // linkAccess is what link knows of a resource a function links to, or an error for a type it

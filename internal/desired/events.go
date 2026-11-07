@@ -16,8 +16,9 @@ import (
 
 // The ids of the nodes events add.
 const (
-	HTTPAPIID = "httpapi"
-	DomainID  = "domain"
+	HTTPAPIID    = "httpapi"
+	DomainID     = "domain"
+	AccessLogsID = "accesslogs"
 )
 
 func integrationID(fn string) string        { return "integration/" + fn }
@@ -29,9 +30,10 @@ func eventID(kind, fn, key string) string   { return kind + "/" + fn + "/" + key
 
 // The kinds of the events' nodes, which start their ids.
 const (
-	kindSchedule     = "schedule"
-	kindMapping      = "mapping"
-	kindSubscription = "subscription"
+	kindSchedule        = "schedule"
+	kindMapping         = "mapping"
+	kindSubscription    = "subscription"
+	kindLogSubscription = "logsubscription"
 )
 
 // kindOf is the kind of a node, what its id starts with.
@@ -70,7 +72,7 @@ func (b *builder) permission(fn, source, principal string, sourceArn any, accoun
 	inputs := map[string]any{
 		inputFunction: engine.Ref(FunctionID(fn), "FunctionName"),
 		"statementId": b.statementID(id),
-		"action":      "lambda:InvokeFunction",
+		"action":      actionInvoke,
 		"principal":   principal,
 		"sourceArn":   sourceArn,
 	}
@@ -102,13 +104,22 @@ func (b *builder) httpAPI() []engine.Node {
 	}
 	inputs := map[string]any{inputName: Name(128, b.project.App, b.project.Stage), inputCORS: nil, "throttling": nil}
 	h := b.project.HTTP
+	var nodes []engine.Node
 	if h != nil {
 		inputs[inputCORS] = corsInputs(h.CORS)
 		if h.Throttling != nil {
 			inputs["throttling"] = map[string]any{"rate": h.Throttling.Rate, "burst": h.Throttling.Burst}
 		}
+		if h.AccessLogs != nil {
+			group := "/aws/http-api/" + Name(128, b.project.App, b.project.Stage)
+			nodes = append(nodes, engine.Node{
+				ID: AccessLogsID, Type: awsp.TypeLogGroup, Name: group,
+				Inputs: map[string]any{inputName: group, "retention": h.AccessLogs.Retention},
+			})
+			inputs["accessLogs"] = map[string]any{"destination": engine.Ref(AccessLogsID, attrArn), "format": h.AccessLogs.Format}
+		}
 	}
-	nodes := []engine.Node{{ID: HTTPAPIID, Type: awsp.TypeHTTPAPI, Name: Name(128, b.project.App, b.project.Stage), Inputs: inputs}}
+	nodes = append(nodes, engine.Node{ID: HTTPAPIID, Type: awsp.TypeHTTPAPI, Name: Name(128, b.project.App, b.project.Stage), Inputs: inputs})
 	if h == nil {
 		return nodes
 	}
@@ -141,7 +152,7 @@ func (b *builder) httpAPI() []engine.Node {
 // to notifications, which gathers the functions of each bucket.
 func (b *builder) events(name string, fn config.Function) []engine.Node {
 	var nodes []engine.Node
-	schedules, rules, balancers := 0, 0, 0
+	schedules, rules, balancers, logs := 0, 0, 0, 0
 	for _, e := range fn.Events {
 		switch e.Type {
 		case config.EventHTTPRoute:
@@ -159,6 +170,9 @@ func (b *builder) events(name string, fn config.Function) []engine.Node {
 			nodes = append(nodes, b.mapping(name, e))
 		case config.EventTopic:
 			nodes = append(nodes, b.subscription(name, e)...)
+		case config.EventLogs:
+			nodes = append(nodes, b.logSubscription(name, e, logs)...)
+			logs++
 		}
 	}
 	if hasEvent(fn, config.EventHTTPRoute) {
@@ -193,7 +207,7 @@ func (b *builder) schedulerRole(name string) engine.Node {
 		Inputs: map[string]any{
 			inputName:          role,
 			"assumeRolePolicy": trust("scheduler.amazonaws.com", map[string]any{"StringEquals": map[string]any{"aws:SourceAccount": b.target.Account}}),
-			"policy":           policy(statement("Allow", []string{"lambda:InvokeFunction"}, []any{engine.Ref(FunctionID(name), attrArn)})),
+			"policy":           policy(statement("Allow", []string{actionInvoke}, []any{engine.Ref(FunctionID(name), attrArn)})),
 			"managedPolicies":  nil,
 		},
 	}
@@ -205,13 +219,47 @@ func (b *builder) mapping(name string, e config.Event) engine.Node {
 	if e.Type == config.EventStream {
 		source, startingPosition = e.Stream, e.StartingPosition
 	}
+	inputs := map[string]any{
+		inputFunction: engine.Ref(FunctionID(name), "FunctionName"), "source": b.value(source),
+		"batchSize": e.BatchSize, "maximumBatchingWindow": e.MaximumBatchingWindow,
+		"reportBatchItemFailures": e.ReportBatchItemFailures, "filters": e.Filters, "startingPosition": startingPosition,
+	}
+	b.mappingSettings(e, inputs)
 	return engine.Node{
 		ID: eventID(kindMapping, name, sourceKey(source)), Type: awsp.TypeMapping, After: []string{RoleID(name)},
-		Inputs: map[string]any{
-			inputFunction: engine.Ref(FunctionID(name), "FunctionName"), "source": b.value(source),
-			"batchSize": e.BatchSize, "maximumBatchingWindow": e.MaximumBatchingWindow,
-			"reportBatchItemFailures": e.ReportBatchItemFailures, "filters": e.Filters, "startingPosition": startingPosition,
-		},
+		Inputs: inputs,
+	}
+}
+
+// mappingSettings adds how a mapping scales and handles failures, each left out when it is
+// lambda's default, so a mapping deployed before they were known keeps its hash.
+func (b *builder) mappingSettings(e config.Event, inputs map[string]any) {
+	if e.Enabled != nil && !*e.Enabled {
+		inputs["enabled"] = false
+	}
+	if e.MaximumConcurrency != nil {
+		inputs["maximumConcurrency"] = *e.MaximumConcurrency
+	}
+	if e.Type != config.EventStream {
+		return
+	}
+	if e.MaximumRetryAttempts != nil {
+		inputs["maximumRetryAttempts"] = *e.MaximumRetryAttempts
+	}
+	if e.MaximumRecordAge != nil {
+		inputs["maximumRecordAge"] = *e.MaximumRecordAge
+	}
+	if e.BisectBatchOnFunctionError {
+		inputs["bisectBatchOnFunctionError"] = true
+	}
+	if e.ParallelizationFactor > 1 {
+		inputs["parallelizationFactor"] = e.ParallelizationFactor
+	}
+	if e.TumblingWindow > 0 {
+		inputs["tumblingWindow"] = e.TumblingWindow
+	}
+	if e.OnFailure.IsSet() {
+		inputs["onFailure"] = b.value(e.OnFailure)
 	}
 }
 
@@ -223,6 +271,25 @@ func (b *builder) subscription(name string, e config.Event) []engine.Node {
 	return []engine.Node{permission, {
 		ID: eventID(kindSubscription, name, sourceKey(e.Topic)), Type: awsp.TypeSubscription, After: []string{permission.ID},
 		Inputs: map[string]any{"topic": topic, inputFunction: engine.Ref(FunctionID(name), attrArn), "filterPolicy": e.FilterPolicy},
+	}}
+}
+
+// logSubscription is the n-th subscription of a function to a log group, numbered among its
+// subscriptions, after the permission that lets cloudwatch logs invoke it.
+func (b *builder) logSubscription(name string, e config.Event, n int) []engine.Node {
+	key := fmt.Sprint(n)
+	group := b.value(e.LogGroup)
+	var arn any = engine.Join(b.arnPrefix("logs")+"log-group:", group, ":*")
+	if s, ok := group.(string); ok {
+		arn = b.arnPrefix("logs") + "log-group:" + s + ":*"
+	}
+	permission := b.permission(name, "logs-"+key, "logs.amazonaws.com", arn, true)
+	filter := Name(512, b.project.App, b.project.Stage, name, key)
+	return []engine.Node{permission, {
+		ID: eventID(kindLogSubscription, name, key), Type: awsp.TypeLogSubscription, Name: filter, After: []string{permission.ID},
+		Inputs: map[string]any{
+			inputName: filter, "logGroup": group, "pattern": e.Filter, inputFunction: engine.Ref(FunctionID(name), attrArn),
+		},
 	}}
 }
 
@@ -243,6 +310,9 @@ func (b *builder) route(fn string, e config.Event) engine.Node {
 		"authorizationType": authNone,
 		"authorizer":        "",
 		"scopes":            e.Scopes,
+	}
+	if e.IAM {
+		in["authorizationType"] = "AWS_IAM"
 	}
 	if e.Path == "$default" {
 		in["routeKey"] = "$default"
@@ -327,7 +397,7 @@ func Triggers(resources map[string]*state.Resource, fn string) []string {
 	for id, r := range resources {
 		kind, rest, _ := strings.Cut(id, "/")
 		switch {
-		case kind == kindSchedule || kind == kindMapping || kind == kindSubscription || kind == kindRule || kind == kindListenerRule:
+		case kind == kindSchedule || kind == kindMapping || kind == kindSubscription || kind == kindRule || kind == kindListenerRule || kind == kindLogSubscription:
 			if strings.HasPrefix(rest, fn+"/") {
 				out = append(out, id)
 			}
@@ -360,7 +430,7 @@ func Group(id string, deps []string) (kind, name string) {
 	switch kind {
 	case kindOf(FunctionID("")), kindOf(RoleID("")), kindOf(LogGroupID("")), kindOf(URLID("")), kindOf(integrationID("")),
 		kindOf(schedulerRoleID("")), kindOf(permissionID("", "")), kindSchedule, kindMapping, kindSubscription,
-		kindRule, kindWSIntegration, kindTargetGroup, kindTargets, kindListenerRule:
+		kindRule, kindWSIntegration, kindTargetGroup, kindTargets, kindListenerRule, kindLogSubscription:
 		return GroupFunction, first
 	case kindOf(ResourceID("")), kindOf(notificationID("")):
 		return GroupResource, rest
@@ -374,7 +444,7 @@ func Group(id string, deps []string) (kind, name string) {
 			}
 		}
 		return GroupHTTP, ""
-	case HTTPAPIID, DomainID, WebSocketID, kindOf(authorizerID("")):
+	case HTTPAPIID, DomainID, AccessLogsID, WebSocketID, kindOf(authorizerID("")):
 		return GroupHTTP, ""
 	}
 	return "", ""
