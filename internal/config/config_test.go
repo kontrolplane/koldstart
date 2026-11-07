@@ -286,6 +286,35 @@ func TestValidate(t *testing.T) {
 			want: "onFailure: it is in lambda, and takes sqs, sns, s3 alone",
 		},
 		{
+			name: "more provisioned than reserved",
+			change: func(p *Project) {
+				fn := p.Functions["worker"]
+				ten := 10
+				fn.ProvisionedConcurrency = &ten
+				p.Functions["worker"] = fn
+			},
+			want: "provisionedConcurrency 10 is more than the reservedConcurrency of 5",
+		},
+		{
+			name: "snapStart on node",
+			change: func(p *Project) {
+				fn := p.Functions["api"]
+				fn.SnapStart = true
+				p.Functions["api"] = fn
+			},
+			want: "lambda takes snapStart for python functions alone",
+		},
+		{
+			name: "snapStart with provisioned concurrency",
+			change: func(p *Project) {
+				fn := p.Functions["api"]
+				one := 1
+				fn.Runtime, fn.SnapStart, fn.ProvisionedConcurrency = RuntimePy313, true, &one
+				p.Functions["api"] = fn
+			},
+			want: "lambda takes snapStart or provisionedConcurrency, not both",
+		},
+		{
 			name: "output of itself",
 			change: func(p *Project) {
 				p.Outputs["self"] = Value{Output: &OutputRef{App: "orders", Stage: "dev", Output: "table"}}

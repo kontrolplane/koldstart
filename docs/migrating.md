@@ -52,6 +52,8 @@ koldstart does not read `serverless.yml` itself, and does not run serverless fra
 | `functions.<name>.handler`                                  | `handler`; for go, a placeholder package to build                    |
 | `functions.<name>.url`                                      | `url = new { auth = "none" }`, `"iam"` with `authorizer: aws_iam`, and its `cors` |
 | `functions.<name>.reservedConcurrency`, `ephemeralStorageSize` | `reservedConcurrency`, `ephemeralStorage`                        |
+| `functions.<name>.provisionedConcurrency`                   | `provisionedConcurrency`, on the function's `live` alias, which its events invoke |
+| `functions.<name>.snapStart`                                | `snapStart`, for python functions                                    |
 | `functions.<name>.tags`                                     | `tags` of the function                                               |
 | `functions.<name>.onError`                                  | `deadLetter`                                                         |
 | `functions.<name>.destinations`, `maximumRetryAttempts`, `maximumEventAge` | `async`; a destination that names a function is its `kdst.ref()` |
@@ -109,7 +111,7 @@ A variable inside a longer string becomes pkl interpolation: `orders-${sls:stage
 - `custom` and `plugins`. What refers to `custom` gets its value. Some plugins are no longer needed: koldstart bundles typescript itself, so `serverless-esbuild` and `serverless-plugin-typescript` can go, `serverless-offline` is `kdst offline`, and every function has its own role already.
 - runtimes other than node, go and python, which koldstart does not deploy: those functions are left out; and a function of a prebuilt image, given by its uri, which koldstart does not take, as it builds images itself.
 - `layers` that `serverless.yml` builds, which koldstart does not build: publish them, and give functions their arns. A go function's layers, which go functions do not take.
-- `provisionedConcurrency` and `snapStart`, which need published versions, which koldstart does not publish yet.
+- `snapStart` of a function that is not python, which lambda takes for java and .NET as well, runtimes koldstart does not build. `provider.versionFunctions`: koldstart publishes versions only of functions with `provisionedConcurrency` or `snapStart`.
 - `provider.logs.restApi` and `provider.logs.websocket`: the rest api's routes are on the http api, which takes `http.accessLogs`, and the websocket api has no access logs yet. `provider.tracing.apiGateway`: an http api has no x-ray tracing.
 - a kinesis stream's `consumer` and `startingPositionTimestamp`.
 - the policy of an `eventBridge` event's `deadLetterQueueArn`, which must let eventbridge send to it.

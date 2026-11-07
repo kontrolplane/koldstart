@@ -150,6 +150,16 @@ class Function {
 
   reservedConcurrency: Int(isPositive)?
 
+  /// Instances kept started, on the function's `live` alias. A function with it, or with
+  /// `snapStart`, gets a version on every change and the alias pointed at it, and its events
+  /// invoke the alias.
+  provisionedConcurrency: Int(isPositive)?
+
+  /// For python: start from a snapshot of the function taken when a version is published, rather
+  /// than from nothing. Takes no `provisionedConcurrency`, `fileSystem`, or more than 512
+  /// megabytes of `ephemeralStorage`.
+  snapStart: Boolean = false
+
   /// How many days the log group keeps logs.
   logRetention: LogRetention = 30
 

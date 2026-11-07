@@ -39,8 +39,11 @@ var functionTabs = []string{"overview", "logs", "invocations", "invoke"}
 // functionState is one function of the stage: what it is, what lambda says of it now and how it
 // did in the last hour, its logs and the invocations in them, and invoking it.
 type functionState struct {
-	name        string
-	lambdaName  string
+	name       string
+	lambdaName string
+	// invokedAs is what invoking it calls: its alias when it has one, as its events do, else its
+	// name.
+	invokedAs   string
 	logGroup    string
 	logGroupARN string
 	arn         string
@@ -132,6 +135,7 @@ func (m model) syncFunction() model {
 		return m
 	}
 	f.lambdaName, f.arn = fn.PhysicalID, fn.Attributes["Arn"]
+	f.invokedAs = cmpOr(fn.Attributes[awsp.AttrAliasName], fn.PhysicalID)
 	f.inputs = functionInputs(fn)
 	var in struct {
 		Environment map[string]any `json:"environment"`

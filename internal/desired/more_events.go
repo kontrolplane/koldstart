@@ -81,7 +81,7 @@ func (b *builder) webSocketRoutes(name string, fn config.Function) []engine.Node
 	}
 	api := engine.Ref(WebSocketID, "ApiId")
 	uri := engine.Join("arn:"+awsp.Partition(b.target.Region)+":apigateway:"+b.target.Region+":lambda:path/2015-03-31/functions/",
-		engine.Ref(FunctionID(name), attrArn), "/invocations")
+		b.invoked(name, attrArn), "/invocations")
 	nodes := []engine.Node{
 		{ID: wsIntegrationID(name), Type: awsp.TypeIntegration, Inputs: map[string]any{inputAPI: api, inputFunction: uri, "webSocket": true}},
 		b.permission(name, "websocket", "apigateway.amazonaws.com", engine.Join(b.arnPrefix("execute-api"), api, "/*"), false),
@@ -112,7 +112,7 @@ func (b *builder) rule(name string, e config.Event, n int) []engine.Node {
 		bus = "default"
 	}
 	inputs := map[string]any{
-		inputName: ruleName, "bus": bus, "pattern": pattern, inputFunction: engine.Ref(FunctionID(name), attrArn),
+		inputName: ruleName, "bus": bus, "pattern": pattern, inputFunction: b.invoked(name, attrArn),
 		"input": e.Input, "enabled": e.Enabled == nil || *e.Enabled,
 	}
 	if e.InputPath != "" {
@@ -157,7 +157,7 @@ func (b *builder) loadBalancer(name string, e config.Event, n int) []engine.Node
 		{ID: groupID, Type: awsp.TypeTargetGroup, Name: group, Inputs: map[string]any{inputName: group, "multiValueHeaders": e.MultiValueHeaders}},
 		permission,
 		{ID: targetsID, Type: awsp.TypeTargets, After: []string{permission.ID}, Inputs: map[string]any{
-			"targetGroup": engine.Ref(groupID, attrArn), inputFunction: engine.Ref(FunctionID(name), attrArn),
+			"targetGroup": engine.Ref(groupID, attrArn), inputFunction: b.invoked(name, attrArn),
 		}},
 		{ID: eventID(kindListenerRule, name, key), Type: awsp.TypeListenerRule, After: []string{targetsID}, Inputs: map[string]any{
 			"listener": b.value(e.Listener), "priority": e.Priority, "targetGroup": engine.Ref(groupID, attrArn),

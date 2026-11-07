@@ -70,7 +70,7 @@ func (b *builder) statementID(node string) string {
 func (b *builder) permission(fn, source, principal string, sourceArn any, account bool) engine.Node {
 	id := permissionID(fn, source)
 	inputs := map[string]any{
-		inputFunction: engine.Ref(FunctionID(fn), "FunctionName"),
+		inputFunction: b.invoked(fn, "FunctionName"),
 		"statementId": b.statementID(id),
 		"action":      actionInvoke,
 		"principal":   principal,
@@ -132,7 +132,7 @@ func (b *builder) httpAPI() []engine.Node {
 		} else {
 			in["type"], in["ttl"] = "REQUEST", a.TTL
 			in["uri"] = engine.Join("arn:"+awsp.Partition(b.target.Region)+":apigateway:"+b.target.Region+":lambda:path/2015-03-31/functions/",
-				engine.Ref(FunctionID(a.Function), attrArn), "/invocations")
+				b.invoked(a.Function, attrArn), "/invocations")
 			nodes = append(nodes, b.permission(a.Function, "authorizer-"+name, "apigateway.amazonaws.com",
 				engine.Join(b.arnPrefix("execute-api"), api, "/authorizers/*"), false))
 		}
@@ -193,7 +193,7 @@ func (b *builder) schedule(name string, e config.Event, n int) engine.Node {
 		ID: eventID(kindSchedule, name, fmt.Sprint(n)), Type: awsp.TypeSchedule, Name: scheduleName,
 		Inputs: map[string]any{
 			inputName: scheduleName, "expression": e.Expression, "timezone": e.Timezone,
-			inputFunction: engine.Ref(FunctionID(name), attrArn), "role": engine.Ref(schedulerRoleID(name), attrArn),
+			inputFunction: b.invoked(name, attrArn), "role": engine.Ref(schedulerRoleID(name), attrArn),
 			"input": e.Input, "enabled": e.Enabled == nil || *e.Enabled,
 		},
 	}
@@ -207,7 +207,7 @@ func (b *builder) schedulerRole(name string) engine.Node {
 		Inputs: map[string]any{
 			inputName:          role,
 			"assumeRolePolicy": trust("scheduler.amazonaws.com", map[string]any{"StringEquals": map[string]any{"aws:SourceAccount": b.target.Account}}),
-			"policy":           policy(statement("Allow", []string{actionInvoke}, []any{engine.Ref(FunctionID(name), attrArn)})),
+			"policy":           policy(statement("Allow", []string{actionInvoke}, []any{b.invoked(name, attrArn)})),
 			"managedPolicies":  nil,
 		},
 	}
@@ -220,7 +220,7 @@ func (b *builder) mapping(name string, e config.Event) engine.Node {
 		source, startingPosition = e.Stream, e.StartingPosition
 	}
 	inputs := map[string]any{
-		inputFunction: engine.Ref(FunctionID(name), "FunctionName"), "source": b.value(source),
+		inputFunction: b.invoked(name, "FunctionName"), "source": b.value(source),
 		"batchSize": e.BatchSize, "maximumBatchingWindow": e.MaximumBatchingWindow,
 		"reportBatchItemFailures": e.ReportBatchItemFailures, "filters": e.Filters, "startingPosition": startingPosition,
 	}
@@ -270,7 +270,7 @@ func (b *builder) subscription(name string, e config.Event) []engine.Node {
 	permission := b.permission(name, "topic-"+sourceKey(e.Topic), "sns.amazonaws.com", topic, false)
 	return []engine.Node{permission, {
 		ID: eventID(kindSubscription, name, sourceKey(e.Topic)), Type: awsp.TypeSubscription, After: []string{permission.ID},
-		Inputs: map[string]any{"topic": topic, inputFunction: engine.Ref(FunctionID(name), attrArn), "filterPolicy": e.FilterPolicy},
+		Inputs: map[string]any{"topic": topic, inputFunction: b.invoked(name, attrArn), "filterPolicy": e.FilterPolicy},
 	}}
 }
 
@@ -288,7 +288,7 @@ func (b *builder) logSubscription(name string, e config.Event, n int) []engine.N
 	return []engine.Node{permission, {
 		ID: eventID(kindLogSubscription, name, key), Type: awsp.TypeLogSubscription, Name: filter, After: []string{permission.ID},
 		Inputs: map[string]any{
-			inputName: filter, "logGroup": group, "pattern": e.Filter, inputFunction: engine.Ref(FunctionID(name), attrArn),
+			inputName: filter, "logGroup": group, "pattern": e.Filter, inputFunction: b.invoked(name, attrArn),
 		},
 	}}
 }
@@ -297,7 +297,7 @@ func (b *builder) logSubscription(name string, e config.Event, n int) []engine.N
 func (b *builder) integration(name string) []engine.Node {
 	api := engine.Ref(HTTPAPIID, "ApiId")
 	return []engine.Node{
-		{ID: integrationID(name), Type: awsp.TypeIntegration, Inputs: map[string]any{inputAPI: api, inputFunction: engine.Ref(FunctionID(name), attrArn)}},
+		{ID: integrationID(name), Type: awsp.TypeIntegration, Inputs: map[string]any{inputAPI: api, inputFunction: b.invoked(name, attrArn)}},
 		b.permission(name, "httpapi", "apigateway.amazonaws.com", engine.Join(b.arnPrefix("execute-api"), api, "/*/*"), false),
 	}
 }
@@ -359,7 +359,7 @@ func (b *builder) notifications() []engine.Node {
 				en.after = append(en.after, permission.ID)
 			}
 			en.functions = append(en.functions, map[string]any{
-				"id": fmt.Sprintf("%s%s-%d", prefix, name, seen[key]), inputFunction: engine.Ref(FunctionID(name), attrArn),
+				"id": fmt.Sprintf("%s%s-%d", prefix, name, seen[key]), inputFunction: b.invoked(name, attrArn),
 				"events": e.Events, "prefix": e.Prefix, "suffix": e.Suffix,
 			})
 			seen[key]++

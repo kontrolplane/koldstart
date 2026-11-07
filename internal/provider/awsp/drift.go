@@ -29,14 +29,17 @@ func (p Function) Drift(ctx context.Context, req engine.Request) ([]string, erro
 }
 
 // liveInputs are the inputs lambda says a function has, with what lambda does not return, such
-// as where its zip came from and its async settings, taken from in. Its tags are the ones of in
+// as where its zip came from, its async settings and its alias, taken from in. Its tags are the ones of in
 // that lambda has, as lambda's include koldstart's own.
 func liveInputs(in FunctionInputs, out *lambda.GetFunctionOutput) FunctionInputs {
 	c := out.Configuration
 	live := FunctionInputs{
 		Name: in.Name, Runtime: string(c.Runtime), Handler: aws.ToString(c.Handler),
 		Memory: aws.ToInt32(c.MemorySize), Timeout: aws.ToInt32(c.Timeout), Role: aws.ToString(c.Role),
-		Code: in.Code, Async: in.Async, KMSKey: aws.ToString(c.KMSKeyArn),
+		Code: in.Code, Async: in.Async, Alias: in.Alias, KMSKey: aws.ToString(c.KMSKeyArn),
+	}
+	if c.SnapStart != nil && c.SnapStart.ApplyOn == types.SnapStartApplyOnPublishedVersions {
+		live.SnapStart = true
 	}
 	if c.TracingConfig != nil && c.TracingConfig.Mode == types.TracingModeActive {
 		live.Tracing = string(types.TracingModeActive)

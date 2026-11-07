@@ -114,6 +114,20 @@ func NodeID(p *config.Project, name string) string {
 	return ResourceID(name)
 }
 
+// invoked is the attribute of what invokes a function: its arn or name, or those of its alias
+// when it has versions, so its events run on the version the alias points at.
+func (b *builder) invoked(fn, attribute string) any {
+	if b.project.Functions[fn].Versioned() {
+		switch attribute {
+		case attrArn:
+			attribute = awsp.AttrAliasArn
+		case "FunctionName":
+			attribute = awsp.AttrAliasName
+		}
+	}
+	return engine.Ref(FunctionID(fn), attribute)
+}
+
 // value turns a configuration value into an input.
 func (b *builder) value(v config.Value) any {
 	switch {
@@ -285,7 +299,7 @@ func (b *builder) functionNode(name string, fn config.Function, env map[string]a
 }
 
 // functionSettings adds what a function sets beyond its runtime, size and code: tracing, its kms
-// key, tags, dead letter target, async handling, file system and log format. Each is left out of
+// key, tags, dead letter target, async handling, file system, alias, snapStart and log format. Each is left out of
 // the inputs when the function does not set it, so a function deployed before they were known
 // keeps its hash.
 func (b *builder) functionSettings(fn config.Function, inputs map[string]any) {
@@ -319,6 +333,16 @@ func (b *builder) functionSettings(fn config.Function, inputs map[string]any) {
 	}
 	if fs := fn.FileSystem; fs != nil {
 		inputs["fileSystem"] = map[string]any{"accessPoint": b.value(fs.AccessPoint), "mountPath": fs.MountPath}
+	}
+	if fn.Versioned() {
+		alias := map[string]any{inputName: config.Alias}
+		if fn.ProvisionedConcurrency != nil {
+			alias["provisionedConcurrency"] = *fn.ProvisionedConcurrency
+		}
+		inputs["alias"] = alias
+	}
+	if fn.SnapStart {
+		inputs["snapStart"] = true
 	}
 	if fn.LogFormat == config.LogFormatJSON {
 		inputs["logFormat"] = "JSON"
@@ -361,10 +385,11 @@ func (b *builder) urlNode(name string, url *config.FunctionURL) engine.Node {
 	if url.Auth == "none" {
 		auth = authNone
 	}
-	return engine.Node{
-		ID: URLID(name), Type: awsp.TypeURL, Name: FunctionName(b.project, name),
-		Inputs: map[string]any{inputFunction: engine.Ref(FunctionID(name), "FunctionName"), "auth": auth, inputCORS: corsInputs(url.CORS)},
+	inputs := map[string]any{inputFunction: engine.Ref(FunctionID(name), "FunctionName"), "auth": auth, inputCORS: corsInputs(url.CORS)}
+	if b.project.Functions[name].Versioned() {
+		inputs["qualifier"] = config.Alias
 	}
+	return engine.Node{ID: URLID(name), Type: awsp.TypeURL, Name: FunctionName(b.project, name), Inputs: inputs}
 }
 
 // corsInputs are the inputs of a cross-origin configuration, of a function url or the http api.

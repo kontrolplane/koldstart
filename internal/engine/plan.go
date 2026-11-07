@@ -154,21 +154,19 @@ func (e *Engine) Plan(ctx context.Context, nodes []Node, st *state.State) (*Plan
 		return nil, err
 	}
 	plan := &Plan{App: st.App, Stage: st.Stage, Serial: st.Serial, Refreshed: e.Refresh}
-	unknownNodes := map[string]bool{}
+	changing := map[string]Action{}
 	desired := map[string]bool{}
 	var errs []error
 
 	for _, level := range levels {
 		for _, n := range level {
 			desired[n.ID] = true
-			c, err := e.planNode(ctx, n, st, unknownNodes)
+			c, err := e.planNode(ctx, n, st, changing)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("%s: %w", n.ID, err))
 				continue
 			}
-			if c.Action == Create || c.Action == Replace {
-				unknownNodes[n.ID] = true
-			}
+			changing[n.ID] = c.Action
 			plan.Changes = append(plan.Changes, c)
 		}
 	}
@@ -197,7 +195,7 @@ func retainedReplace(fields []string) error {
 }
 
 // planNode plans one node.
-func (e *Engine) planNode(ctx context.Context, n Node, st *state.State, unknownNodes map[string]bool) (Change, error) {
+func (e *Engine) planNode(ctx context.Context, n Node, st *state.State, changing map[string]Action) (Change, error) {
 	p, err := e.provider(n.Type)
 	if err != nil {
 		return Change{}, err
@@ -206,7 +204,7 @@ func (e *Engine) planNode(ctx context.Context, n Node, st *state.State, unknownN
 	if err != nil {
 		return Change{}, err
 	}
-	after, err := resolveRefs(inputs, st, unknownNodes)
+	after, err := resolveRefs(inputs, st, changing)
 	if err != nil {
 		return Change{}, err
 	}
@@ -304,14 +302,15 @@ func (e *Engine) Resolve(ctx context.Context, v any, st *state.State) (any, erro
 	return e.resolveExternal(ctx, resolved)
 }
 
-// resolveRefs replaces the refs in v with the attributes the state holds, or with unknown for
-// nodes in unknownNodes, which are created or replaced before.
-func resolveRefs(v any, st *state.State, unknownNodes map[string]bool) (any, error) {
+// resolveRefs replaces the refs in v with the attributes the state holds, or with unknown for the
+// nodes changing says are created or replaced before, and for the attributes the state does not
+// hold yet of those it says are updated, such as the alias of a function that gets one.
+func resolveRefs(v any, st *state.State, changing map[string]Action) (any, error) {
 	return transform(v, func(x any) (any, bool, error) {
 		if parts, ok := asJoin(x); ok {
 			var b strings.Builder
 			for _, part := range parts {
-				resolved, err := resolveRefs(part, st, unknownNodes)
+				resolved, err := resolveRefs(part, st, changing)
 				if err != nil {
 					return nil, true, err
 				}
@@ -330,7 +329,7 @@ func resolveRefs(v any, st *state.State, unknownNodes map[string]bool) (any, err
 		if !ok {
 			return nil, false, nil
 		}
-		if unknownNodes[r.Node] {
+		if action := changing[r.Node]; action == Create || action == Replace {
 			return unknown(), true, nil
 		}
 		res := st.Resources[r.Node]
@@ -338,6 +337,9 @@ func resolveRefs(v any, st *state.State, unknownNodes map[string]bool) (any, err
 			return unknown(), true, nil
 		}
 		val, ok := res.Attributes[r.Attribute]
+		if !ok && changing[r.Node] == Update {
+			return unknown(), true, nil
+		}
 		if !ok {
 			return nil, true, fmt.Errorf("%s has no attribute %s; it has %s", r.Node, r.Attribute, strings.Join(slices.Sorted(maps.Keys(res.Attributes)), ", "))
 		}

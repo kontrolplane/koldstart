@@ -358,7 +358,7 @@ func (m model) invoke(event string, payload []byte, local bool) (model, tea.Cmd)
 	r := f.results[event]
 	r.running, r.local = true, local
 	f.results[event] = r
-	ref, lambdaName, name := m.state.stage.ref, f.lambdaName, f.name
+	ref, lambdaName, name := m.state.stage.ref, f.invokedAs, f.name
 	ctx, cancel := m.withTimeout(invokeTimeout)
 	return m, func() tea.Msg {
 		defer cancel()

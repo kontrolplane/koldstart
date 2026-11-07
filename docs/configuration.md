@@ -85,6 +85,8 @@ functions {
 | `architecture`        | `"arm64"` | `arm64` or `x86_64`                                                                                |
 | `ephemeralStorage`    | `512`     | the size of `/tmp` in megabytes                                                                    |
 | `reservedConcurrency` |           | the concurrency kept for this function alone                                                        |
+| `provisionedConcurrency` |        | instances kept started, on the function's `live` alias, see [versions](#versions)                   |
+| `snapStart`           | `false`   | for python: start from a snapshot taken when a version is published, see [versions](#versions)      |
 | `logRetention`        | `30`      | days the log group keeps logs, one of the periods cloudwatch allows                                 |
 | `environment`         |           | variables: strings, `kdst.ref()` values, secrets or outputs of other stages                         |
 | `events`              |           | what invokes the function, see [events](#events)                                                    |
@@ -191,6 +193,21 @@ permissions {
   new { actions { "events:PutEvents" }; resources { kdst.ref("bus", "Arn") } }
 }
 ```
+
+### versions
+
+A function with `provisionedConcurrency` or `snapStart` gets a version on every deploy that changes it, and an alias, `live`, pointed at it. Its events, its url and `kdst invoke` call the alias, so they run what was deployed last, on the instances kept started for it, or from its snapshot:
+
+```pkl
+functions {
+  ["api"] { provisionedConcurrency = 2 }
+  ["report"] { snapStart = true }
+}
+```
+
+Lambda publishes no version when nothing changed since the last one. koldstart keeps the last three, to point the alias back at with `aws lambda update-alias`, and deletes the ones before. Other functions get no versions, and their events call the function itself.
+
+Giving an existing function either one moves its events to the alias, and its url to a new one, of the alias. Taking both away deletes the alias and moves them back. `snapStart` is for python, and takes no `provisionedConcurrency`, `fileSystem` or more than `512` megabytes of `ephemeralStorage`. `provisionedConcurrency` is at most the function's `reservedConcurrency`, when it has one. Instances kept started cost money while they wait, whether they are invoked or not.
 
 ### failures
 

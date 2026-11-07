@@ -668,3 +668,65 @@ func TestEventSettings(t *testing.T) {
 		t.Error("a log subscription is not among the function's triggers")
 	}
 }
+
+// TestVersions checks a function with provisioned concurrency or snapStart gets an alias in its
+// inputs, its events and url invoke the alias, and its role's statements and the scheduler's name
+// the alias's arn, while a function without either is as it was.
+func TestVersions(t *testing.T) {
+	p := project(t)
+	api := p.Functions["api"]
+	two := 2
+	api.ProvisionedConcurrency = &two
+	api.URL = &config.FunctionURL{Auth: "none"}
+	api.Events = append(api.Events,
+		config.Event{Type: config.EventSchedule, Expression: "rate(1 hour)", Timezone: "UTC"},
+		config.Event{Type: config.EventQueue, Queue: config.Value{Literal: "arn:aws:sqs:eu-west-1:1:other"}},
+	)
+	p.Functions["api"] = api
+	nodes, err := Build(p, target())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := byID(nodes)
+	if alias := js(t, got[FunctionID("api")].Inputs["alias"]); alias != `{"name":"live","provisionedConcurrency":2}` {
+		t.Errorf("alias = %s", alias)
+	}
+	aliasArn, aliasName := js(t, engine.Ref(FunctionID("api"), "AliasArn")), js(t, engine.Ref(FunctionID("api"), "AliasName"))
+	tests := []struct {
+		node, input, want string
+	}{
+		{node: "permission/api/httpapi", input: "function", want: aliasName},
+		{node: "integration/api", input: "function", want: aliasArn},
+		{node: "schedule/api/0", input: "function", want: aliasArn},
+		{node: "mapping/api/other", input: "function", want: aliasName},
+		{node: URLID("api"), input: "function", want: js(t, engine.Ref(FunctionID("api"), "FunctionName"))},
+		{node: URLID("api"), input: "qualifier", want: `"live"`},
+	}
+	for _, tt := range tests {
+		if got := js(t, got[tt.node].Inputs[tt.input]); got != tt.want {
+			t.Errorf("%s %s = %s, want %s", tt.node, tt.input, got, tt.want)
+		}
+	}
+	if policy := js(t, got["schedulerrole/api"].Inputs["policy"]); !strings.Contains(policy, "AliasArn") {
+		t.Errorf("the scheduler may not invoke the alias: %s", policy)
+	}
+	worker := got[FunctionID("worker")].Inputs
+	if _, ok := worker["alias"]; ok {
+		t.Error("a function without versions has an alias")
+	}
+	if js(t, got["mapping/worker/jobs"].Inputs["function"]) != js(t, engine.Ref(FunctionID("worker"), "FunctionName")) {
+		t.Errorf("a function without versions is invoked by its alias: %s", js(t, got["mapping/worker/jobs"].Inputs["function"]))
+	}
+
+	snap := p.Functions["worker"]
+	snap.SnapStart = true
+	p.Functions["worker"] = snap
+	nodes, err = Build(p, target())
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := byID(nodes)[FunctionID("worker")].Inputs
+	if js(t, in["alias"]) != `{"name":"live"}` || in["snapStart"] != true {
+		t.Errorf("snapStart inputs = alias %s, snapStart %v", js(t, in["alias"]), in["snapStart"])
+	}
+}

@@ -445,8 +445,6 @@ var unconverted = []struct {
 	key string
 	hint
 }{
-	{"provisionedConcurrency", hint{Add, "koldstart publishes no versions yet, which provisioned concurrency needs"}},
-	{"snapStart", hint{Add, "koldstart publishes no versions yet, which snapStart needs"}},
 	{"disableLogs", hint{Review, "koldstart always gives a function a log group: set logRetention for how long it keeps them"}},
 	{"role", hint{Review, "every function gets a role of its own: give it what it needs with permissions or link"}},
 	{"name", hint{Review, "koldstart names the function <app>-<stage>-<function>: update what calls it by name"}},
@@ -501,6 +499,11 @@ func (c *converter) function(w *writer, name string, fn, provider *yaml.Node) {
 		c.member(w, where+".layers", "layers", layers)
 	}
 	c.settings(w, where, fn, provider)
+	if snap := get(fn, "snapStart"); isTrue(snap) && strings.HasPrefix(runtime, "python") {
+		w.line("snapStart = true")
+	} else if isTrue(snap) {
+		c.leave(w, Add, where+".snapStart", "lambda takes snapStart for python alone of the runtimes koldstart builds", snap)
+	}
 	c.environment(w, where, fn, provider)
 	c.permissions(w, where, fn, provider)
 	c.url(w, where, get(fn, "url"))
@@ -601,6 +604,10 @@ func (c *converter) settings(w *writer, where string, fn, provider *yaml.Node) {
 	}
 	if reserved, ok := integer(get(fn, "reservedConcurrency")); ok {
 		w.line("reservedConcurrency = %d", reserved)
+	}
+	if provisioned, ok := integer(get(fn, "provisionedConcurrency")); ok && provisioned > 0 {
+		w.line("provisionedConcurrency = %d", provisioned)
+		c.todo(Review, where+".provisionedConcurrency", "it is on the function's live alias, which its events invoke: call the function as <name>:live to use it")
 	}
 	if days, ok := integer(either("logRetentionInDays")); ok {
 		w.line("logRetention = %d", days)
@@ -972,7 +979,7 @@ func (c *converter) plugin(name string) hint {
 	case "serverless-iam-roles-per-function":
 		return hint{Drop, "every function has a role of its own already"}
 	case "serverless-prune-plugin":
-		return hint{Drop, "koldstart keeps no old versions"}
+		return hint{Drop, "koldstart keeps the last 3 versions of a function with an alias, and publishes none for the rest"}
 	case "serverless-python-requirements":
 		return hint{Drop, "koldstart installs requirements.txt or pyproject.toml with uv itself"}
 	case "serverless-domain-manager":
@@ -1002,6 +1009,7 @@ var (
 	}{
 		{"apiGateway", hint{Add, "koldstart deploys an http api, not a rest api: set what it needs on http"}},
 		{"deploymentBucket", hint{Drop, "koldstart keeps its zips and state in a bucket of its own"}},
+		{"versionFunctions", hint{Drop, "koldstart publishes versions only of functions with provisionedConcurrency or snapStart"}},
 	}
 )
 

@@ -541,3 +541,32 @@ func TestFunctionError(t *testing.T) {
 		})
 	}
 }
+
+// TestInvokeAlias checks invoking a function with an alias calls the alias, as its events do,
+// and one without calls the function by its name.
+func TestInvokeAlias(t *testing.T) {
+	tests := []struct {
+		name  string
+		alias bool
+		want  string
+	}{
+		{name: "alias", alias: true, want: "-api:live"},
+		{name: "none", want: "-api"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFake(t)
+			if tt.alias {
+				for _, st := range f.states {
+					fn := st.Resources["function/api"]
+					fn.Attributes["AliasName"] = fn.PhysicalID + ":live"
+				}
+			}
+			m := invokeTabWith(t, f, nil)
+			pressKeys(t, m, "i")
+			if len(f.invokes) != 1 || !strings.HasSuffix(f.invokes[0], tt.want) {
+				t.Errorf("invoked %v, want a name ending in %s", f.invokes, tt.want)
+			}
+		})
+	}
+}
