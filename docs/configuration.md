@@ -79,10 +79,11 @@ functions {
 
 | property              | default   | description                                                                                       |
 | --------------------- | --------- | ------------------------------------------------------------------------------------------------- |
-| `runtime`             | inferred  | `nodejs22.x` or `nodejs24.x` for javascript and typescript, `provided.al2023` for go, `python3.12` or `python3.13` for python; none with an `image`; see [conventions](#conventions) |
-| `handler`             | inferred  | for node and python, the file and its function, `src/api.handler`; for go, the package to build, `./cmd/worker`; none with an `image`; see [conventions](#conventions) |
+| `runtime`             | inferred  | `nodejs22.x` or `nodejs24.x` for javascript and typescript, `provided.al2023` for go, rust and a `bootstrap`, `python3.12` or `python3.13` for python; none with an `image`; see [conventions](#conventions) |
+| `handler`             | inferred  | for node and python, the file and its function, `src/api.handler`; for go, the package to build, `./cmd/worker`; for rust, the directory of the crate's `Cargo.toml`, `./cmd/worker`; for a `bootstrap`, what lambda tells it as `_HANDLER`; none with an `image`; see [conventions](#conventions) |
+| `bootstrap`           |           | an executable built elsewhere, relative to the project, such as `dist/resize`, zipped as the `bootstrap` of `provided.al2023`; see [building](#building) |
 | `image`               |           | a container image to build and run instead, see [container images](#container-images)              |
-| `layers`              |           | lambda layers, by their version's arn, at most five; not for go or an image                         |
+| `layers`              |           | lambda layers, by their version's arn, at most five; not for go, rust or an image                   |
 | `memory`              | `1024`    | megabytes, from `128` to `10240`                                                                   |
 | `timeout`             | `6.s`     | a pkl duration, at most `15.min`                                                                   |
 | `architecture`        | `"arm64"` | `arm64` or `x86_64`                                                                                |
@@ -135,8 +136,9 @@ A function without an `image` that leaves out `runtime` and `handler` gets them 
 | `src/api.ts`, `.mts`, `.cts`, `.tsx`, `.js`, `.mjs`, `.cjs` or `.jsx` | `nodejs22.x`      | `src/api.handler` |
 | `src/api.py`                                                          | `python3.13`      | `src/api.handler` |
 | go files in `cmd/api/`                                                | `provided.al2023` | `./cmd/api`       |
+| a `Cargo.toml` in `cmd/api/`, a crate or a member of a workspace      | `provided.al2023` | `./cmd/api`       |
 
-A function that sets `runtime` alone gets that runtime's handler, so `runtime = "nodejs24.x"` runs `src/api.handler`. One that sets `handler` alone gets the runtime of what it names: go for `./services/api` or a directory of go files, otherwise node or python for the file that is there. A function's page in `kdst ui` shows the runtime it ends up with, and the handler lambda runs.
+A function that sets `runtime` alone gets that runtime's handler, so `runtime = "nodejs24.x"` runs `src/api.handler`. One that sets `handler` alone gets the runtime of what it names: `provided.al2023` for `./services/api`, a directory of go files or one with a `Cargo.toml`, otherwise node or python for the file that is there. One that sets `bootstrap` gets `provided.al2023`, and needs no handler. A function's page in `kdst ui` shows the runtime it ends up with, and the handler lambda runs.
 
 When none of the files is there, or more than one runtime fits, the configuration is refused before anything is built:
 
@@ -153,9 +155,20 @@ Typescript and javascript are bundled with the esbuild that is built into koldst
 
 Go is built with `CGO_ENABLED=0`, `-trimpath`, `-buildvcs=false`, the `lambda.norpc` tag and `-ldflags "-s -w -buildid="`, for the architecture of the function, into a binary named `bootstrap`, which is what the `provided.al2023` runtime runs.
 
+Rust is built with [cargo lambda](https://www.cargo-lambda.info/), `cargo lambda build --release --arm64`, or `--x86-64` for an `x86_64` function, in the directory of the crate's `Cargo.toml`, the handler's. A directory with a `Cargo.toml` is rust, even with go files beside it. The crate can be a member of a workspace, such as one at the root with `members = ["cmd/*"]`, which `kdst init --template rust` writes. Its binary becomes the `bootstrap`: the crate's only one, or the one named after the function or its directory. Without cargo lambda on the PATH, a build says how to install it: `brew install cargo-lambda/tap/cargo-lambda`, `pip3 install cargo-lambda`, or [the other ways](https://www.cargo-lambda.info/guide/installation.html).
+
+```pkl
+["resize"] {
+  bootstrap = "dist/resize"
+  architecture = "x86_64"
+}
+```
+
+A function with `bootstrap` runs an executable built elsewhere, by any language that compiles to one, or a script that starts with `#!`. koldstart builds nothing for it: build it first, then deploy, and it goes in the zip as `bootstrap`, as it is. A binary must be for linux and the function's architecture; one for macos or the other architecture, a file that is not there or one without its executable bit is refused before anything is deployed, with what to do. It has no `handler`, or one of your own, which lambda tells it as `_HANDLER`, and may have `layers`.
+
 Python goes in the zip as it is: the top directory of the handler's module, `src` for `src/api.handler` and for `src/jobs/api.handler`, or the module alone when it is at the root, or what `bundle.include` names instead. Its dependencies come from `requirements.txt`, or from `pyproject.toml` through `uv export`, locked by `uv.lock` when there is one, and are installed with [uv](https://docs.astral.sh/uv/) for the platform lambda runs: manylinux wheels for the function's architecture, so a package with native code works however you build it. Pin the versions, so every build installs the same.
 
-Zips are deterministic: the same code gives the same bytes, on a laptop and in ci, so the hash of the zip tells koldstart whether a function's code changed. Go binaries also depend on the version of go that builds them, so pin it with a `toolchain` line in `go.mod`, such as `toolchain go1.27.3`; otherwise a laptop and ci with different versions upload different code.
+Zips are deterministic: the same code gives the same bytes, on a laptop and in ci, so the hash of the zip tells koldstart whether a function's code changed. Go binaries also depend on the version of go that builds them, so pin it with a `toolchain` line in `go.mod`, such as `toolchain go1.27.3`; otherwise a laptop and ci with different versions upload different code. Rust's depend on the toolchain too, pinned with a `rust-toolchain.toml`, and on where the crate and cargo's registry are, which rust writes into panic messages: give `.cargo/config.toml` a `--remap-path-prefix` in `rustflags` for the same bytes on every machine.
 
 ### container images
 

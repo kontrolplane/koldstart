@@ -9,7 +9,7 @@ internal/cli/               the cobra commands, the global flags and the aws ses
 internal/tui/               kdst ui, with styles/ for relay's palette and keys/ for the key map
 internal/pkl/               finds or downloads pkl, and evaluates configuration to json in its pkl project, resolving it first
 internal/config/            decodes what pkl renders, and checks what the schema cannot
-internal/build/             node bundled with esbuild, go cross-compiled, python's dependencies installed by uv, container images built; deterministic zips
+internal/build/             node bundled with esbuild, go cross-compiled, rust built with cargo lambda, a bootstrap built elsewhere checked, python's dependencies installed by uv, container images built; deterministic zips
 internal/desired/           turns a configuration into nodes: names, policies, link, events, resources
 internal/engine/            plans and applies nodes in dependency order, recording every step in the state
 internal/state/             the state, locks and zips in a bucket of the account; a memory backend for tests
@@ -18,7 +18,7 @@ internal/provider/cloudcontrol/  everything in resources, through cloud control
 internal/resolve/           reads secrets from ssm and secrets manager, and outputs of other stages
 internal/local/             runs functions here against an emulator of the lambda runtime api; offline
 internal/migrate/           converts a serverless.yml into a koldstart.pkl
-internal/scaffold/          kdst init's templates: a koldstart.pkl, a handler in typescript, go or python, the .gitignore entries, and the PklProject beside them
+internal/scaffold/          kdst init's templates: a koldstart.pkl, a handler in typescript, go, python or rust, the .gitignore entries, and the PklProject beside them
 internal/awserr/            tells aws errors apart by their code, the one way every package does
 internal/awstest/           connects tests to the emulator
 hack/schema/                packages the schema in pkl/ with the pkl koldstart pins, for releases: the metadata at koldstart@<v> and the zip
