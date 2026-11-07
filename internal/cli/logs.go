@@ -30,7 +30,7 @@ const (
 	dateTimeLayout = "2006-01-02 15:04:05.000"
 )
 
-func logsCommand(name string, opts *Options) *cobra.Command {
+func logsCommand(name string, opts *Options, c completer) *cobra.Command {
 	var function, filter, output string
 	var tail bool
 	var since time.Duration
@@ -89,12 +89,11 @@ its log stream, its message, and the fields of a message that is a json object:
 			return s.tailLogs(ctx, p, group.Attributes["Arn"], group.PhysicalID, filter, last)
 		},
 	}
-	cmd.Flags().StringVarP(&function, "function", "f", "", "the function whose logs to print")
+	functionFlag(cmd, &function, "the function whose logs to print", opts, c)
 	cmd.Flags().BoolVarP(&tail, "tail", "t", false, "follow the logs as they come")
 	cmd.Flags().DurationVar(&since, "since", 10*time.Minute, "how far back to start")
 	cmd.Flags().StringVar(&filter, "filter", "", "a cloudwatch logs filter pattern")
 	outputFlag(cmd, &output)
-	_ = cmd.MarkFlagRequired("function")
 	return cmd
 }
 

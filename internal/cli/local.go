@@ -222,7 +222,7 @@ func confirmProd(cmd *cobra.Command, s *stage, yes bool) error {
 	return confirm(cmd, yes, fmt.Sprintf("this runs on this machine against what %s deployed, its data included. go on?", s.Stage))
 }
 
-func invokeCommand(name string, opts *Options) *cobra.Command {
+func invokeCommand(name string, opts *Options, c completer) *cobra.Command {
 	var function, data, path string
 	var runLocal, yes bool
 	cmd := &cobra.Command{
@@ -267,12 +267,12 @@ deployed; .koldstart/local.<stage>.pkl overrides variables, and prod or producti
 			return s.invokeLocal(ctx, cmd, function, payload)
 		},
 	}
-	cmd.Flags().StringVarP(&function, "function", "f", "", "the function to invoke")
+	functionFlag(cmd, &function, "the function to invoke", opts, c)
 	cmd.Flags().StringVarP(&data, "data", "d", "", "the event, as json")
 	cmd.Flags().StringVarP(&path, "path", "p", "", "a file with the event")
 	cmd.Flags().BoolVar(&runLocal, "local", false, "run the function on this machine")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "run against prod or production without asking")
-	_ = cmd.MarkFlagRequired("function")
+	_ = cmd.MarkFlagFilename("path", "json")
 	return cmd
 }
 

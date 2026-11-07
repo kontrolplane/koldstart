@@ -40,7 +40,8 @@ profile, or %[2]s.`, name, defaultRegion),
 		Example: fmt.Sprintf(`  %[1]s init
   %[1]s init orders --template go --region eu-west-1
   %[1]s init --app orders --template python`, name),
-		Args: cobra.MaximumNArgs(1),
+		Args:              cobra.MaximumNArgs(1),
+		ValidArgsFunction: fileArgument(),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !slices.Contains(scaffold.Templates, template) {
 				return usage(cmd, fmt.Errorf("-t %q: want %s", template, orList(scaffold.Templates)))
