@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -70,14 +71,139 @@ func TestRemoveConfirmTypedAgain(t *testing.T) {
 	}
 }
 
-// TestUnlockWithoutDetails checks a lock that does not say what took it, or where, reads without
+// TestUnlockSays checks the unlock dialog says who holds the lock and what to make sure has
+// stopped, by its operation, and a lock that does not say what took it, or where, reads without
 // gaps.
-func TestUnlockWithoutDetails(t *testing.T) {
-	f := newFake(t)
-	f.locks[ordersDev] = &state.LockInfo{Who: "ci"}
-	v := screen(pressKeys(t, started(t, f), "ctrl+x"))
-	if !strings.Contains(v, "ci has held it, since a time it did not record") {
-		t.Errorf("a lock without details:\n%s", v)
+func TestUnlockSays(t *testing.T) {
+	tests := []struct {
+		name string
+		lock state.LockInfo
+		want []string
+	}{
+		{name: "a deploy", lock: state.LockInfo{Who: "ci", Where: "github", Operation: "deploy", Since: time.Now()},
+			want: []string{"ci on github has been running deploy since", "make sure that deploy has stopped"}},
+		{name: "a remove", lock: state.LockInfo{Who: "levi", Operation: "remove", Since: time.Now()},
+			want: []string{"make sure that remove has stopped"}},
+		{name: "without details", lock: state.LockInfo{Who: "ci"},
+			want: []string{"ci has held it, since a time it did not record", "make sure what took it has stopped"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFake(t)
+			f.locks[ordersDev] = &tt.lock
+			v := screen(pressKeys(t, started(t, f), "ctrl+x"))
+			for _, want := range tt.want {
+				if !strings.Contains(v, want) {
+					t.Errorf("want %q in:\n%s", want, v)
+				}
+			}
+		})
+	}
+}
+
+// TestRemoveSays checks the remove dialog counts what it deletes and what it leaves in place,
+// and says when it deletes nothing.
+func TestRemoveSays(t *testing.T) {
+	tests := []struct {
+		name    string
+		actions []engine.Action
+		want    []string
+		not     string
+	}{
+		{name: "deletes and keeps", actions: []engine.Action{engine.Delete, engine.Delete, engine.Keep},
+			want: []string{"deletes 2 resources of orders/dev in eu-west-1", "and leaves 1 resource that holds data in place"}},
+		{name: "deletes only", actions: []engine.Action{engine.Delete}, want: []string{"deletes 1 resource of"}, not: "leaves"},
+		{name: "keeps only", actions: []engine.Action{engine.Keep, engine.Keep},
+			want: []string{"deletes nothing of orders/dev", "and leaves 2 resources that hold data in place"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := pressKeys(t, started(t, newFake(t)), "ctrl+d")
+			plan := &engine.Plan{App: "orders", Stage: "dev"}
+			for i, a := range tt.actions {
+				plan.Changes = append(plan.Changes, engine.Change{ID: fmt.Sprintf("resource/r%d", i), Action: a})
+			}
+			m.state.plan.plan = plan
+			v := ansi.Strip(m.removeView())
+			for _, want := range tt.want {
+				if !strings.Contains(v, want) {
+					t.Errorf("want %q in:\n%s", want, v)
+				}
+			}
+			if tt.not != "" && strings.Contains(v, tt.not) {
+				t.Errorf("want no %q in:\n%s", tt.not, v)
+			}
+		})
+	}
+}
+
+// TestDialogKeepsTheAnswer checks a dialog too tall for the terminal cuts its longest block,
+// marking the cut, and keeps its heading and the answer below: the buttons, what enter does, or
+// what closes it.
+func TestDialogKeepsTheAnswer(t *testing.T) {
+	long := strings.Repeat("very-long-name-", 12)
+	tests := []struct {
+		name string
+		open func(*testing.T, model) model
+		want []string
+	}{
+		{name: "unlock", want: []string{"release the lock of orders/dev?", "make sure that deploy has stopped", "yes", "…"},
+			open: func(t *testing.T, m model) model { return pressKeys(t, m, "ctrl+x") }},
+		{name: "remove", want: []string{"remove orders/dev?", "type dev to confirm", "esc cancels"},
+			open: func(t *testing.T, m model) model { return pressKeys(t, m, "ctrl+d") }},
+		{name: "error", want: []string{"error", "press any key to close", "…"},
+			open: func(_ *testing.T, m model) model {
+				m.error = strings.Repeat("the deploy failed ", 80)
+				return m
+			}},
+	}
+	for _, size := range [][2]int{{78, 22}, {80, 24}} {
+		for _, tt := range tests {
+			t.Run(fmt.Sprintf("%s %dx%d", tt.name, size[0], size[1]), func(t *testing.T) {
+				f := newFake(t)
+				f.locks[ordersDev] = &state.LockInfo{Who: long, Where: long, Operation: "deploy", Since: time.Now()}
+				m := started(t, f)
+				m, _ = update(t, m, tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+				v := screen(tt.open(t, m))
+				for _, want := range tt.want {
+					if !strings.Contains(v, want) {
+						t.Errorf("want %q in:\n%s", want, v)
+					}
+				}
+			})
+		}
+	}
+}
+
+// TestWrapEven checks a line too wide wraps into as many lines as lipgloss wraps it into, none
+// wider than the width, and none much shorter than the others, so no word is left on its own.
+func TestWrapEven(t *testing.T) {
+	tests := []struct {
+		name  string
+		line  string
+		width int
+		lines int
+	}{
+		{name: "fits", line: "release the lock", width: 20, lines: 1},
+		{name: "a word over", line: "make sure that deploy is really gone: two deploys at once can leave its state wrong.", width: 80, lines: 2},
+		{name: "three lines", line: strings.Repeat("the deploy failed ", 10), width: 70, lines: 3},
+		{name: "no spaces", line: strings.Repeat("x", 100), width: 60, lines: 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := wrapEven(tt.line, tt.width)
+			if len(got) != tt.lines {
+				t.Fatalf("wrapEven = %q, want %d lines", got, tt.lines)
+			}
+			widest, narrowest := 0, tt.width
+			for _, l := range got {
+				w := ansi.StringWidth(strings.TrimSpace(l))
+				widest, narrowest = max(widest, w), min(narrowest, w)
+			}
+			if widest > tt.width || (len(got) > 1 && narrowest < widest/2) {
+				t.Errorf("wrapEven = %q: lines from %d to %d wide, in %d", got, narrowest, widest, tt.width)
+			}
+		})
 	}
 }
 

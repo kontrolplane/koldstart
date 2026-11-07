@@ -65,30 +65,84 @@ func dialogTextWidth() int {
 }
 
 // dialog renders a card with a toned edge, for confirmations and errors, to be set over the page
-// with overlay. Lines wider than the card wrap, and the card gives up its inner margin when it
-// would not fit the height.
+// with overlay. Lines wider than the card wrap evenly, and the card gives up its inner margin when
+// it would not fit the height. Should it still not fit, the longest block of the body is cut, so
+// the heading and the answer below, its buttons or what closes it, stay in sight.
 func dialog(title string, tone styles.Tone, body ...string) string {
-	heading := styles.Render(styles.B("▲ ", tone), styles.B(title, tone))
 	width := dialogTextWidth()
-	lines := []string{heading, ""}
-	for _, block := range body {
+	heading := append(wrapEven(styles.Render(styles.B("▲ ", tone), styles.B(title, tone)), width), "")
+	blocks := make([][]string, len(body))
+	height := len(heading)
+	for i, block := range body {
 		for line := range strings.SplitSeq(block, "\n") {
-			if ansi.StringWidth(line) > width {
-				line = lipgloss.Wrap(line, width, "")
-			}
-			lines = append(lines, line)
+			blocks[i] = append(blocks[i], wrapEven(line, width)...)
 		}
+		height += len(blocks[i])
 	}
-	content := lipgloss.JoinVertical(lipgloss.Center, lines...)
 	padY := 1
-	if lipgloss.Height(content)+2+2*padY > contentHeight {
+	if height+2+2*padY > contentHeight {
 		padY = 0
+	}
+	room := contentHeight - 2 - 2*padY
+	lines := heading
+	for _, block := range fitBlocks(blocks, room-len(heading), width) {
+		lines = append(lines, block...)
 	}
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(styles.P.Color(tone)).
 		Padding(padY, dialogPadX).
-		Render(clip(content, width, contentHeight-2-2*padY))
+		Render(clip(lipgloss.JoinVertical(lipgloss.Center, lines...), width, room))
+}
+
+// wrapEven wraps a line wider than width into as few lines as lipgloss would, each about as wide
+// as the others, so a centred paragraph does not end on a lone word.
+func wrapEven(line string, width int) []string {
+	if ansi.StringWidth(line) <= width {
+		return []string{line}
+	}
+	wrap := func(w int) []string { return strings.Split(lipgloss.Wrap(line, w, ""), "\n") }
+	n := len(wrap(width))
+	lo, hi := max(1, (ansi.StringWidth(line)+n-1)/n), width
+	for lo < hi {
+		if mid := (lo + hi) / 2; len(wrap(mid)) <= n {
+			hi = mid
+		} else {
+			lo = mid + 1
+		}
+	}
+	return wrap(lo)
+}
+
+// fitBlocks cuts lines from the end of the longest block until the blocks fit in room, ending
+// what is left of a cut block in an ellipsis.
+func fitBlocks(blocks [][]string, room, width int) [][]string {
+	height := 0
+	for _, b := range blocks {
+		height += len(b)
+	}
+	cut := -1
+	for height > room {
+		longest := 0
+		for i, b := range blocks {
+			if len(b) > len(blocks[longest]) {
+				longest = i
+			}
+		}
+		if len(blocks[longest]) <= 1 {
+			break
+		}
+		blocks[longest] = blocks[longest][:len(blocks[longest])-1]
+		height--
+		cut = longest
+	}
+	if cut >= 0 {
+		b := blocks[cut]
+		last := b[len(b)-1]
+		keep := min(ansi.StringWidth(strings.TrimRight(ansi.Strip(last), " ")), width-1)
+		b[len(b)-1] = ansi.Truncate(last, keep, "") + styles.Faint("…")
+	}
+	return blocks
 }
 
 // overlay sets card in the middle of the content area, over the page, which recedes behind it so

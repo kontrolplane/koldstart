@@ -587,9 +587,11 @@ func (m model) trail(p page) []string {
 		return []string{crumbStages}
 	case stagePage:
 		return append(stage(ref), stageTabs[m.state.stage.tab])
-	case functionPage, runLocalPage:
+	case functionPage:
 		f := m.state.function
 		return append(stage(ref), crumb(functionWord, f.name), functionTabs[f.tab])
+	case runLocalPage:
+		return append(m.trail(functionPage), m.keys.RunLocal.Help().Desc)
 	case resourcePage:
 		if m.state.resource.fromFunction {
 			return append(m.trail(functionPage), nodeCrumb(m.state.resource.res.id))

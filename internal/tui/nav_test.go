@@ -424,7 +424,7 @@ func TestNavBreadcrumb(t *testing.T) {
 		{page: "plan", want: "stages › app orders › stage dev › deploy ─"},
 		{page: "diff", want: "stages › app orders › stage dev › deploy › function/api ─"},
 		{page: "unlock", want: "stages › app orders › stage dev › unlock ─"},
-		{page: "run here", want: "stages › app orders › stage prod › function api › invoke ─"},
+		{page: "run here", want: "stages › app orders › stage prod › function api › invoke › run here ─"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.page, func(t *testing.T) {
