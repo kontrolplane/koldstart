@@ -120,7 +120,7 @@ func TestToneRules(t *testing.T) {
 		{name: "a running invocation", c: running[0], part: "● running", want: styles.ToneAccent},
 		{name: "the time of an invocation", c: running[1], part: ":", want: styles.ToneBody},
 		{name: "a request id", c: running[2], part: "r1", want: styles.ToneFaint},
-		{name: "a cold start", c: cold[6], part: "ms", want: styles.ToneInfo},
+		{name: "a cold start", c: cold[6], part: "120", want: styles.ToneInfo},
 		{name: "a pending function", c: cell{styles.S("pending", stateTone("Pending"))}, part: "pending", want: styles.ToneAccent},
 		{name: "an inactive function", c: cell{styles.S("inactive", stateTone("Inactive"))}, part: "inactive", want: styles.ToneWarning},
 		{name: "a retained resource", c: resourceNote(&state.Resource{DeletionPolicy: "retain"}, false, false), part: "retained", want: styles.ToneMuted},

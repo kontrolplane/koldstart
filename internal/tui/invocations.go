@@ -26,10 +26,13 @@ var invocationColumns = []column{
 	{title: "request", width: 8, drop: 2},
 	{title: "duration", width: 8, right: true},
 	{title: "billed", width: 8, right: true, drop: 4},
-	{title: "memory", width: 12, right: true, drop: 1},
+	{title: "memory", width: memoryWidth, right: true, drop: 1},
 	{title: "cold start", width: 10, right: true, drop: 3},
 	{title: errorLabel, width: 10, grow: 1, drop: 5},
 }
+
+// memoryWidth is how wide the column of the memory an invocation used is.
+const memoryWidth = 12
 
 // invocationsTableHeight is how many rows the invocations table shows, below the line that sums
 // them up.
@@ -58,9 +61,9 @@ func (m model) updateRequests() model {
 	return m
 }
 
-// requestStatus is how an invocation ended, its symbol first. One without a report is running
-// while it is within the function's timeout, and has no report after it, as on an emulator that
-// writes none.
+// requestStatus is how an invocation ended, its symbol first, so the words line up in a column.
+// One without a report is running while it is within the function's timeout, and has no report
+// after it, as on an emulator that writes none.
 func requestStatus(r request, timeout time.Duration) cell {
 	switch {
 	case r.timedOut:
@@ -70,7 +73,7 @@ func requestStatus(r request, timeout time.Duration) cell {
 	case !r.reported && time.Since(r.last) < timeout+5*time.Second:
 		return text("● running", styles.ToneAccent)
 	case !r.reported:
-		return text("no report", styles.ToneFaint)
+		return text("○ no report", styles.ToneFaint)
 	}
 	return text("✓ ok", styles.ToneSuccess)
 }
@@ -79,17 +82,17 @@ func requestStatus(r request, timeout time.Duration) cell {
 func requestRow(r request, timeout time.Duration) tableRow {
 	memory := text("-", styles.ToneFaint)
 	if r.memory > 0 {
-		memory = cell{styles.S(formatInt(r.maxMemory), styles.ToneBody), styles.S("/"+formatInt(r.memory)+" mb", styles.ToneFaint)}
+		memory = memoryCell(r.maxMemory, r.memory)
 	}
-	cold := text("", styles.ToneFaint)
+	var cold cell
 	if r.init > 0 {
-		cold = text(formatMillis(r.init), styles.ToneInfo)
+		cold = millisCell(r.init, styles.ToneInfo)
 	}
-	duration := text("-", styles.ToneFaint)
+	duration := noMillis()
 	if r.reported {
 		duration = millisCell(r.duration, styles.ToneBody)
 	}
-	billed := text("-", styles.ToneFaint)
+	billed := noMillis()
 	if r.billed > 0 {
 		billed = millisCell(r.billed, styles.ToneMuted)
 	}
@@ -97,6 +100,16 @@ func requestRow(r request, timeout time.Duration) tableRow {
 		requestStatus(r, timeout), text(r.start.Local().Format("15:04:05.000"), styles.ToneBody), text(shortRequest(r.id), styles.ToneFaint),
 		duration, billed, memory, cold, causeCell(r.cause, styles.ToneMuted),
 	}
+}
+
+// memoryCell is the memory an invocation used of what it has, as 80/256 mb, without the unit
+// where it would not fit the column, as 1,024/1,024 does not.
+func memoryCell(used, size int) cell {
+	c := cell{styles.S(formatInt(used), styles.ToneBody), styles.S("/"+formatInt(size)+" mb", styles.ToneFaint)}
+	if cellWidth(c) > memoryWidth {
+		c[1].Text = "/" + formatInt(size)
+	}
+	return c
 }
 
 // millisCell is a duration in a column of them, its number in tone and its unit faint, and the
@@ -112,6 +125,12 @@ func millisCell(ms float64, tone styles.Tone) cell {
 		unit += " "
 	}
 	return cell{styles.S(s[:n], tone), styles.S(unit, styles.ToneFaint)}
+}
+
+// noMillis is a faint dash in a column of durations, where their numbers end, as a duration not
+// reported.
+func noMillis() cell {
+	return cell{styles.S("-", styles.ToneFaint), styles.S("  ", styles.ToneFaint)}
 }
 
 // causeCell is what an invocation failed with on one line: the type of its error in the body ink
@@ -177,6 +196,15 @@ func invocationsSummary(rs []request) cell {
 func percentile(sorted []float64, p float64) float64 {
 	i := int(math.Ceil(p/100*float64(len(sorted)))) - 1
 	return sorted[max(0, min(i, len(sorted)-1))]
+}
+
+// invocationsHints are the keys of the invocations: enter and the cursor, once there are
+// invocations to open.
+func (m model) invocationsHints() [][2]string {
+	if len(m.state.function.requests) == 0 {
+		return nil
+	}
+	return [][2]string{hint(m.keys.View, "open"), chooseHint}
 }
 
 func (m model) invocationsUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {

@@ -5,8 +5,39 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/kontrolplane/koldstart/internal/cli"
 )
+
+// TestRequestRow checks a row of the invocations lines up: every status after a symbol, the
+// numbers of durations and of a missing one in one column, and memory without its unit where the
+// unit would not fit.
+func TestRequestRow(t *testing.T) {
+	old := time.Now().Add(-time.Hour)
+	tests := []struct {
+		name string
+		req  request
+		col  int
+		want string
+	}{
+		{name: "no report", req: request{start: old, last: old}, col: 0, want: "○ no report"},
+		{name: "a duration in ms", req: request{start: old, reported: true, duration: 30}, col: 3, want: "    30ms"},
+		{name: "a duration in s", req: request{start: old, reported: true, duration: 6000}, col: 3, want: "     6s "},
+		{name: "no duration", req: request{start: old, last: old}, col: 3, want: "     -  "},
+		{name: "a cold start in s", req: request{start: old, reported: true, init: 1234}, col: 6, want: "     1.2s "},
+		{name: "memory", req: request{start: old, reported: true, memory: 256, maxMemory: 80}, col: 5, want: "   80/256 mb"},
+		{name: "memory too wide for its unit", req: request{start: old, reported: true, memory: 1024, maxMemory: 1024}, col: 5, want: " 1,024/1,024"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			row := requestRow(tt.req, 6*time.Second)
+			if got := ansi.Strip(renderCell(row[tt.col], invocationColumns[tt.col], nil)); got != tt.want {
+				t.Errorf("%q, want %q", got, tt.want)
+			}
+		})
+	}
+}
 
 // TestFailure checks which lines say an invocation failed or timed out.
 func TestFailure(t *testing.T) {
