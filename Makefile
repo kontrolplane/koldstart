@@ -27,6 +27,9 @@ test:
 lint:
 	go mod tidy -diff
 	cd examples/full-featured && go mod tidy -diff
+	cd examples/go-api && go mod tidy -diff
+	cd examples/container-image && go mod tidy -diff
+	cd examples/websocket-chat && go mod tidy -diff
 	$(golangci-lint) run
 	$(golangci-lint) run --build-tags e2e ./test/...
 	$(actionlint)
