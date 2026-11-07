@@ -495,7 +495,7 @@ func layoutPages(t *testing.T, w, h int) map[string]model {
 	m = pressKeys(t, m, "q", "tab", "tab", "enter")
 	pages["resource"] = m
 	pages["resource in aws"] = pressKeys(t, m, "tab")
-	m = pressKeys(t, m, "q", "tab", "enter")
+	m = pressKeys(t, pages["stage"], "enter")
 	pages["function"] = m
 	m = pressKeys(t, m, "tab")
 	pages["logs"] = m
