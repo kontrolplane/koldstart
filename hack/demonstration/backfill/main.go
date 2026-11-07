@@ -244,7 +244,7 @@ func parameters(ctx context.Context, client *ssm.Client) error {
 	for _, stage := range stages {
 		values := map[string]string{
 			"stripe-webhook-secret": webhookSecret,
-			"sentry-dsn":            "https://4f1c9a2e7b3d4086@o451207.ingest.sentry.io/6312447",
+			"sentry-dsn":            "https://examplePublicKey@o0.ingest.sentry.io/0",
 		}
 		for name, value := range values {
 			_, err := client.PutParameter(ctx, &ssm.PutParameterInput{
@@ -271,8 +271,8 @@ func lock(ctx context.Context, cfg aws.Config) error {
 		return err
 	}
 	return backend.Lock(ctx, app, "staging", state.LockInfo{
-		Who:       "lotte-mulder",
-		Where:     "https://github.com/acme/checkout/actions/runs/11873520113",
+		Who:       "lotte-de-graaf",
+		Where:     "https://github.com/voorbeeld-winkel/checkout/actions/runs/11873520113",
 		Operation: "deploy",
 		Since:     time.Now().Add(-4 * time.Minute).UTC(),
 	})

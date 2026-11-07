@@ -1,8 +1,8 @@
 // Package styles holds the kontrolplane palette as it applies to the terminal, as relay paints it.
 //
-// The values come from the brand tokens (github.com/kontrolplane/assets, tokens/color.json and
-// tokens/semantic.json). Terminals cannot blend alpha, so every rule and tint is the solid mix the
-// token describes. A detected theme keeps the terminal's own background; both themes paint cornsilk
+// The values come from kontrolplane's brand tokens, its colours and their semantic roles.
+// Terminals cannot blend alpha, so every rule and tint is the solid mix the token describes. A
+// detected theme keeps the terminal's own background; both themes paint cornsilk
 // and black forest text with olive accents on top of it. A theme chosen with --theme paints its own
 // background as well (see Paint and Ground).
 //

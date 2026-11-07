@@ -26,7 +26,7 @@ deploy() {
   stage=$2
   config=$3
   run=$((11873519000 + $(date +%s) % 1000))
-  GITHUB_ACTIONS=true GITHUB_ACTOR="$who" GITHUB_SERVER_URL=https://github.com GITHUB_REPOSITORY=acme/checkout GITHUB_RUN_ID=$run \
+  GITHUB_ACTIONS=true GITHUB_ACTOR="$who" GITHUB_SERVER_URL=https://github.com GITHUB_REPOSITORY=voorbeeld-winkel/checkout GITHUB_RUN_ID=$run \
     $kdst deploy --stage "$stage" --config "$config" --yes
 }
 
@@ -90,7 +90,7 @@ deploy sanne-visser production koldstart.monitoring.pkl || true
 # Thijs reverts the layer, and his merge deploys production again.
 later
 say "release 3 of 3 again, to production, without the layer"
-deploy thijs-de-boer production koldstart.pkl
+deploy thijs-van-dam production koldstart.pkl
 
 say "invoking production, the customers' traffic"
 {

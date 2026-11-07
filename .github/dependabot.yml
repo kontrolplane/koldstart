@@ -39,7 +39,9 @@ updates:
       prefix: chore(deps)
 
   - package-ecosystem: docker-compose
-    directory: /
+    directories:
+      - /
+      - /vhs
     schedule:
       interval: weekly
     commit-message:

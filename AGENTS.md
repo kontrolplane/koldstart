@@ -29,7 +29,7 @@ examples/                   example projects, each a go module of its own; examp
 test/e2e/                   deploys examples/full-featured to a real account, behind the e2e build tag
 vhs/                        make vhs: the tape that records kdst ui for the README, its gif and a screenshot of each page, and the floci and profile it records against
 assets/                     the README's header, footer and cassette.gif, and the screenshots make vhs takes in pages/
-internal/version/           the build's version, stamped by the linker, in route's shape
+internal/version/           the build's version, stamped by the linker: version, commit, date, go and platform
 docs/                       the user documentation, which the README links to
 ```
 
@@ -65,7 +65,7 @@ docs/                       the user documentation, which the README links to
 
 `kdst ui` follows relay (kontrolplane/relay), the newest of the kontrolplane tuis. read its `pkg/tui` before adding a view.
 
-- it lives in `internal/tui`, with `internal/tui/styles` and `internal/tui/keys`. cobra never imports it: `cli.Root` takes `tui.Run`, as konverge does, which runs it with `tea.WithContext`. everything it reads and changes goes through `cli.Console`, behind the tui's `backend` interface.
+- it lives in `internal/tui`, with `internal/tui/styles` and `internal/tui/keys`. cobra never imports it: `cli.Root` takes `tui.Run`, which runs it with `tea.WithContext`. everything it reads and changes goes through `cli.Console`, behind the tui's `backend` interface.
 - charm.land v2: bubbletea, bubbles and lipgloss.
 - one model with a `page` enum and a state struct per page, each with its switch, update, view and go back. a confirmation is a page drawn over the one it came from.
 - keys are `key.Binding`s in one key map. `ctrl+c` quits, `q` goes back and quits only on the app overview, `esc` goes back or cancels and never quits. letters are off while a text input has focus.
