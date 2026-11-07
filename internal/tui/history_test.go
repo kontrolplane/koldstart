@@ -196,3 +196,33 @@ func TestChangesCell(t *testing.T) {
 		t.Errorf("unread changes %q, want …", got)
 	}
 }
+
+// TestDeployNote checks the note of a deploy: current, failed, both, and that its versions
+// could not be read, which beside current is short enough that both fit the column.
+func TestDeployNote(t *testing.T) {
+	tests := []struct {
+		name   string
+		sum    deploySummary
+		latest bool
+		want   string
+	}{
+		{name: "nothing to say", want: ""},
+		{name: "current", latest: true, want: "current"},
+		{name: "failed", sum: deploySummary{failed: true}, want: "✗ failed"},
+		{name: "failed and current", sum: deploySummary{failed: true}, latest: true, want: "✗ failed · current"},
+		{name: "not read", sum: deploySummary{err: "aws said no"}, want: "could not read it"},
+		{name: "not read and current", sum: deploySummary{err: "aws said no"}, latest: true, want: "current · not read"},
+	}
+	width := historyColumns[4].width
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			note := deployNote(tt.sum, tt.latest)
+			if got := plainText(note); got != tt.want {
+				t.Errorf("deployNote = %q, want %q", got, tt.want)
+			}
+			if w := cellWidth(note); w > width {
+				t.Errorf("%q is %d wide, wider than its column of %d", plainText(note), w, width)
+			}
+		})
+	}
+}
