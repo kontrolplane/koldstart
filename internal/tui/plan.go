@@ -214,9 +214,32 @@ func withoutCLIHint(err string) string {
 // planAgain says how to finish an apply that failed part way.
 func (m model) planAgain() string {
 	if m.state.plan.remove {
-		return "what was done is in the state: fix the cause, then ctrl+d removes what is left"
+		return "what was done is in the state: fix the cause, then " + m.keys.Remove.Help().Key + " removes what is left"
 	}
-	return "what was done is in the state: fix the cause, then d plans what is left"
+	return "what was done is in the state: fix the cause, then " + m.keys.Deploy.Help().Key + " plans what is left"
+}
+
+// planAgainKey is the key planAgain names: remove after a remove, deploy after a deploy.
+func (m model) planAgainKey() key.Binding {
+	if m.state.plan.remove {
+		return m.keys.Remove
+	}
+	return m.keys.Deploy
+}
+
+// planLeft plans again what an apply that failed left, as planAgain says, on this page, so the
+// key it names works where it is read. Going back still goes to where the first plan was asked
+// from.
+func (m model) planLeft() (model, tea.Cmd) {
+	p := m.state.plan
+	var cmd tea.Cmd
+	if p.remove {
+		m, cmd = m.planRemove(p.ref)
+	} else {
+		m, cmd = m.planDeploy(p.ref, p.function)
+	}
+	m.state.plan.from = p.from
+	return m, cmd
 }
 
 func (m model) planUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
@@ -238,6 +261,8 @@ func (m model) planUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 			return m.startApply()
 		}
 		return m, nil
+	case p.failed && !p.applying && key.Matches(msg, m.planAgainKey()):
+		return m.planLeft()
 	case key.Matches(msg, m.keys.Refresh):
 		if p.plan == nil || p.applying || p.done || p.remove || p.function != "" {
 			return m, nil
@@ -263,7 +288,7 @@ func (m model) planUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 			if c.Action == engine.Keep {
 				after = c.Before
 			}
-			return m.openDiff(c.ID, cli.Verb(c.Action)+" "+shortType(c.Type), c.Before, after)
+			return m.openDiff(c.ID, cli.Verb(c.Action)+" "+typeName(c.Type), c.Before, after)
 		}
 		return m, nil
 	}
@@ -418,7 +443,8 @@ func (p planState) planTitle() string {
 }
 
 // planHead is the lines above the changes, which stay in place: what the plan is of, its counts,
-// with what it compared and when it was made, and how the apply goes.
+// with what it compared and when it was made, and how the apply goes, wrapped rather than cut
+// in a narrow terminal.
 func (m model) planHead(width int) []string {
 	p := m.state.plan
 	summary := planSummary(p.plan)
@@ -433,22 +459,24 @@ func (m model) planHead(width int) []string {
 		made := "planned at " + p.madeAt.Local().Format(time.TimeOnly)
 		title = styles.SectionHeader(p.planTitle(), width-len(made)-1) + " " + styles.Faint(made)
 	}
-	head := make([]string, 0, 5)
-	head = append(head, title, renderCell(summary, column{width: width}, nil))
+	head := make([]string, 0, 6)
+	head = append(head, title)
+	head = append(head, cellLines(summary, width)...)
 	head = append(head, m.applyLines(width)...)
 	return append(head, "")
 }
 
-// noChanges are the lines of a plan with nothing to do: what it compared, as the commands say,
-// and with what else it could compare.
+// noChanges are the lines of a plan with nothing to do, wrapped to width: what it compared, as
+// the commands say but for the no changes the head says already, and with what else it could
+// compare.
 func (p planState) noChanges(width int) []string {
-	say := cli.NoChanges(p.plan)
+	say := strings.TrimPrefix(cli.NoChanges(p.plan), "no changes: ")
 	if p.function != "" {
 		say = cli.UpToDate(p.function, p.ref.App, p.ref.Stage)
 	}
-	lines := []string{renderCell(text(say, styles.ToneMuted), column{width: width}, nil)}
+	lines := cellLines(text(say, styles.ToneMuted), width)
 	if !p.remove && p.function == "" && !p.plan.Refreshed {
-		lines = append(lines, renderCell(text("r reads every resource as it is in aws, to find what was changed outside koldstart", styles.ToneFaint), column{width: width}, nil))
+		lines = append(lines, cellLines(text("r reads every resource as it is in aws, to find what was changed outside koldstart", styles.ToneFaint), width)...)
 	}
 	return lines
 }
@@ -466,8 +494,8 @@ func errorLines(id string, err error, width int) []string {
 	return wrapped(msg, styles.ToneDanger, max(10, width), maxErrorLines)
 }
 
-// applyLines say how the apply goes: how many nodes are done and for how long, and once it ended,
-// what it did and whether it failed, in the words deploy and remove end with.
+// applyLines say how the apply goes, wrapped to width: how many nodes are done and for how long,
+// and once it ended, what it did and whether it failed, in the words deploy and remove end with.
 func (m model) applyLines(width int) []string {
 	p := m.state.plan
 	if p.progress == nil {
@@ -500,7 +528,7 @@ func (m model) applyLines(width int) []string {
 	case p.failed:
 		summary := cli.ApplySummary(finished, failed, stopped, max(len(m.planChanges())-len(p.progress), 0))
 		line = cell{styles.S("✗ ", styles.ToneDanger), styles.S("failed after "+cli.Duration(p.finishedAt.Sub(p.startedAt))+" · "+summary, styles.ToneDanger)}
-		return []string{renderCell(line, column{width: width}, nil), renderCell(text(m.planAgain(), styles.ToneFaint), column{width: width}, nil)}
+		return append(cellLines(line, width), cellLines(text(m.planAgain(), styles.ToneFaint), width)...)
 	default:
 		what := "deployed"
 		if p.remove {
@@ -509,7 +537,7 @@ func (m model) applyLines(width int) []string {
 		line = cell{styles.S("✓ ", styles.ToneSuccess), styles.S(what+" in "+cli.Duration(p.finishedAt.Sub(p.startedAt)), styles.ToneSuccess),
 			styles.S(" · "+cli.ApplySummary(finished, failed, stopped, 0), styles.ToneFaint)}
 	}
-	return []string{renderCell(line, column{width: width}, nil)}
+	return cellLines(line, width)
 }
 
 // applyingWord names an apply in flight.
@@ -531,7 +559,7 @@ func (m model) progressCell(c engine.Change) cell {
 	case !ok && p.applying:
 		return text("waiting", styles.ToneFaint)
 	case !ok && p.failed:
-		return text("not applied", styles.ToneFaint)
+		return text("not started", styles.ToneFaint)
 	case !ok:
 		return text("unchanged", styles.ToneFaint)
 	case pr.err != nil && !pr.started:
@@ -602,6 +630,12 @@ func (m model) planHints() [][2]string {
 		return [][2]string{hint(k.View, "diff"), chooseHint, hint(k.Fold), hint(k.ForceQuit, "stop and quit")}
 	case p.plan == nil:
 		return [][2]string{hint(k.Help), hint(k.Quit)}
+	case p.done && p.failed:
+		left := "plan what is left"
+		if p.remove {
+			left = "remove what is left"
+		}
+		return [][2]string{hint(m.planAgainKey(), left), hint(k.View, "diff"), chooseHint, hint(k.Fold), hint(k.GroupBy, other), hint(k.Help), hint(k.Quit)}
 	case p.done:
 		return [][2]string{hint(k.View, "diff"), chooseHint, hint(k.Fold), hint(k.GroupBy, other), hint(k.Help), hint(k.Quit)}
 	}

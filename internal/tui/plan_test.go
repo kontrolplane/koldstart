@@ -83,7 +83,8 @@ func TestPlanSummary(t *testing.T) {
 }
 
 // TestApplyProgress checks each change says how far it got: waiting, in flight with what it is
-// doing, done with how long it took, failed, and once the apply ended, stopped or not applied.
+// doing, done with how long it took, failed, and once the apply ended, stopped or not started, as
+// the head counts them.
 func TestApplyProgress(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -100,7 +101,7 @@ func TestApplyProgress(t *testing.T) {
 		{name: "failed", events: []engine.Event{{ID: "function/worker", Action: engine.Replace}, {ID: "function/worker", Action: engine.Replace, Done: true, Err: errAWS, Duration: time.Second}}, id: "function/worker", want: "✗ failed after 1s"},
 		{name: "failed before starting", events: []engine.Event{{ID: "function/worker", Action: engine.Replace, Done: true, Err: errAWS}}, id: "function/worker", want: "✗ failed before starting"},
 		{name: "stopped by a failure", events: []engine.Event{{ID: "function/api", Action: engine.Update}}, ended: true, end: errAWS, id: "function/api", want: "✗ stopped"},
-		{name: "not applied after a failure", ended: true, end: errAWS, id: "queue/old", want: "not applied"},
+		{name: "not started after a failure", ended: true, end: errAWS, id: "queue/old", want: "not started"},
 		{name: "nothing to do after all", ended: true, id: "queue/old", want: "unchanged"},
 	}
 	for _, tt := range tests {
@@ -172,6 +173,43 @@ func TestApplyFailsPartWay(t *testing.T) {
 	}
 	if m = pressKeys(t, m, "ctrl+s"); m.state.plan.applying {
 		t.Error("ctrl+s applied a plan that failed, without planning again")
+	}
+}
+
+// TestPlanWhatIsLeft checks the key a failed apply names, d after a deploy and ctrl+d after a
+// remove, works on the plan's page as the footer says: it plans again what is left, and going
+// back still goes to where the first plan was asked from.
+func TestPlanWhatIsLeft(t *testing.T) {
+	tests := []struct {
+		name string
+		open string
+		key  string
+		hint string
+		page page
+	}{
+		{name: "a deploy", open: "d", key: "d", hint: "d plan what is left", page: planPage},
+		{name: "a remove", open: "ctrl+d", key: "ctrl+d", hint: "ctrl+d remove what is left", page: removePage},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFake(t)
+			m := pressKeys(t, started(t, f), tt.open)
+			from := m.state.plan.from
+			if m.page == removePage {
+				m.page = planPage
+			}
+			first := m.planChanges()[0]
+			m = applying(t, m, engine.Event{ID: first.ID, Action: first.Action, Done: true, Err: errAWS})
+			m, _ = update(t, m, appliedMsg{plan: m.state.plan.plan, applied: true, err: errAWS})
+			m.error = ""
+			if v := screen(m); !strings.Contains(v, tt.hint) {
+				t.Errorf("the footer does not say %q:\n%s", tt.hint, v)
+			}
+			m = pressKeys(t, m, tt.key)
+			if m.page != tt.page || m.state.plan.failed || m.state.plan.from != from {
+				t.Errorf("after %s: page %v, failed %v, from %v; want page %v from %v", tt.key, m.page, m.state.plan.failed, m.state.plan.from, tt.page, from)
+			}
+		})
 	}
 }
 
@@ -335,7 +373,8 @@ func TestLeavePlanning(t *testing.T) {
 }
 
 // TestNothingToDeploy checks a plan with no changes says what it compared, as the commands say,
-// offers to compare with aws when it did not, and offers nothing to apply.
+// with no changes said once, in the head, offers to compare with aws when it did not, and offers
+// nothing to apply.
 func TestNothingToDeploy(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -344,8 +383,8 @@ func TestNothingToDeploy(t *testing.T) {
 		want      string
 		offer     bool
 	}{
-		{name: "the stage", keys: []string{"d"}, want: "no changes: what the state says is deployed matches the configuration", offer: true},
-		{name: "read from aws", keys: []string{"d"}, refreshed: true, want: "no changes: what is in aws matches the configuration"},
+		{name: "the stage", keys: []string{"d"}, want: "what the state says is deployed matches the configuration", offer: true},
+		{name: "read from aws", keys: []string{"d"}, refreshed: true, want: "what is in aws matches the configuration"},
 		{name: "a function's code", keys: []string{"enter", "d"}, want: "api is up to date: its code is the code deployed to orders/dev"},
 	}
 	for _, tt := range tests {
@@ -356,6 +395,9 @@ func TestNothingToDeploy(t *testing.T) {
 			v := screen(m)
 			if !strings.Contains(v, tt.want) || strings.Contains(v, "ctrl+s") {
 				t.Errorf("a plan without changes does not say %q:\n%s", tt.want, v)
+			}
+			if n := strings.Count(v, "no changes"); n != 1 {
+				t.Errorf("says no changes %d times, want once:\n%s", n, v)
 			}
 			if offers := strings.Contains(v, "r reads every resource"); offers != tt.offer {
 				t.Errorf("offers to read aws %v, want %v:\n%s", offers, tt.offer, v)
@@ -383,6 +425,27 @@ func TestPlanHeadStays(t *testing.T) {
 		if w := ansi.StringWidth(line); w > contentWidth {
 			t.Errorf("line %d is %d wide, the content %d", i, w, contentWidth)
 		}
+	}
+}
+
+// TestPlanDiffDetail checks the diff of a change says what it does to what type, the type named
+// as the plan and the inputs of a create name it.
+func TestPlanDiffDetail(t *testing.T) {
+	tests := []struct {
+		name   string
+		change engine.Change
+		want   string
+	}{
+		{name: "a function", change: engine.Change{ID: "function/api", Action: engine.Update, Type: "koldstart::Lambda::Function", Before: map[string]any{"memory": 1.0}, After: map[string]any{"memory": 2.0}}, want: "update lambda function"},
+		{name: "a queue left in place", change: engine.Change{ID: "resource/q", Action: engine.Keep, Type: "AWS::SQS::Queue", Before: map[string]any{"name": "q"}}, want: "leave in place sqs queue"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := pressKeys(t, pdPlanned(t, tt.change), "enter")
+			if m.page != diffPage || m.state.diff.detail != tt.want {
+				t.Errorf("page %v with %q, want the diff with %q", m.page, m.state.diff.detail, tt.want)
+			}
+		})
 	}
 }
 

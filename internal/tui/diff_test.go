@@ -311,7 +311,7 @@ func TestDiffNavigation(t *testing.T) {
 		if foot := navFoot(m); !strings.Contains(foot, tt.want) {
 			t.Errorf("%d: %s: the foot is %q, want %q", i, tt.key, foot, tt.want)
 		}
-		if !strings.Contains(v, "▌"+tt.line) {
+		if !strings.Contains(v, "▌ "+tt.line) {
 			t.Errorf("%d: %s: %q is not in sight and marked:\n%s", i, tt.key, tt.line, v)
 		}
 	}
@@ -329,6 +329,33 @@ func TestDiffNavigation(t *testing.T) {
 	}
 }
 
+// TestDiffRowsInset checks the gutter of + and - starts rowInset past the page's column, as the
+// rows of every page do, with the marker of the change navigated to in the cursor's column, and a
+// note in place of a diff starts there too.
+func TestDiffRowsInset(t *testing.T) {
+	tests := []struct {
+		name          string
+		before, after any
+		want          string
+	}{
+		{name: "the change navigated to", before: dvKeys(10), after: dvKeys(10, 2, 7), want: ` ▌ +   "key002": "changed"`},
+		{name: "another change", before: dvKeys(10), after: dvKeys(10, 2, 7), want: `   +   "key007": "changed"`},
+		{name: "no inputs", want: "   no inputs on either side"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v := screen(dvDiff(t, 80, 30, tt.before, tt.after))
+			found := false
+			for line := range strings.SplitSeq(v, "\n") {
+				found = found || strings.HasPrefix(strings.TrimPrefix(line, "│"), tt.want)
+			}
+			if !found {
+				t.Errorf("no line starts %q:\n%s", tt.want, v)
+			}
+		})
+	}
+}
+
 // TestDiffWrapsUnderItsKey checks a long value changed wraps under its key, every part of it with
 // the gutter of its line, and nothing past the width.
 func TestDiffWrapsUnderItsKey(t *testing.T) {
@@ -336,7 +363,7 @@ func TestDiffWrapsUnderItsKey(t *testing.T) {
 	m := dvDiff(t, 80, 40, map[string]any{"description": long + "old"}, map[string]any{"description": long + "new"})
 	var removed, added int
 	for line := range strings.SplitSeq(screen(m), "\n") {
-		inner := strings.TrimPrefix(strings.TrimSpace(strings.Trim(line, "│")), "▌")
+		inner := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(strings.Trim(line, "│")), "▌"))
 		switch {
 		case strings.HasPrefix(inner, "-     "):
 			removed++
