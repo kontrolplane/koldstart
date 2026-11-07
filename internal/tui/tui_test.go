@@ -499,9 +499,11 @@ func layoutPages(t *testing.T, w, h int) map[string]model {
 	}
 	m = pressKeys(t, m, "enter")
 	pages["version"] = m
-	m = pressKeys(t, m, "q", "tab", "tab", "enter")
-	pages["resource"] = m
-	pages["resource in aws"] = pressKeys(t, m, "tab")
+	if rs, ok := pages["stage resources"]; ok {
+		res := pressKeys(t, rs, "j", "j", "j", "enter")
+		pages["resource"] = res
+		pages["resource in aws"] = pressKeys(t, res, "tab")
+	}
 	m = pressKeys(t, pages["stage"], "enter")
 	pages["function"] = m
 	m = pressKeys(t, m, "tab")
