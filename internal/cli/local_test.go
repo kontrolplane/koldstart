@@ -150,3 +150,25 @@ func TestPrintPayload(t *testing.T) {
 		})
 	}
 }
+
+// TestProduction checks prod and production are the stages running here asks before, and no other.
+func TestProduction(t *testing.T) {
+	tests := []struct {
+		stage string
+		want  bool
+	}{
+		{stage: "prod", want: true},
+		{stage: "production", want: true},
+		{stage: "staging", want: false},
+		{stage: "dev", want: false},
+		{stage: "Production", want: false},
+		{stage: "prod-eu", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.stage, func(t *testing.T) {
+			if got := Production(tt.stage); got != tt.want {
+				t.Errorf("Production(%q) = %v, want %v", tt.stage, got, tt.want)
+			}
+		})
+	}
+}

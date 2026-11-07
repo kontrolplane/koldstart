@@ -368,7 +368,7 @@ func (m model) applyEventEdited(msg eventEditedMsg) (model, tea.Cmd) {
 }
 
 // startInvoke invokes the function with the selected event, in aws or on this machine, and shows
-// the result. Against prod, running here asks first. An event that is not json is not sent.
+// the result. Against prod or production, running here asks first. An event that is not json is not sent.
 func (m model) startInvoke(local bool) (model, tea.Cmd) {
 	f := &m.state.function
 	ref := m.state.stage.ref
@@ -390,7 +390,7 @@ func (m model) startInvoke(local bool) (model, tea.Cmd) {
 		m.error = err.Error()
 		return m, nil
 	}
-	if local && ref.Stage == "prod" {
+	if local && cli.Production(ref.Stage) {
 		m.state.runLocal = runLocalState{event: m.selectedEvent(), payload: payload, tab: from}
 		return m.switchPage(runLocalPage), nil
 	}

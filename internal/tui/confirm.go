@@ -25,7 +25,7 @@ type removeState struct {
 	confirm typedConfirm
 }
 
-// runLocalState asks before a function runs here against what prod deployed. tab is the tab of
+// runLocalState asks before a function runs here against what prod or production deployed. tab is the tab of
 // the function it was asked from, which no goes back to.
 type runLocalState struct {
 	event    string
@@ -150,7 +150,7 @@ func (m model) runLocalUpdate(msg tea.Msg) (model, tea.Cmd) {
 	return m, nil
 }
 
-// runLocalView asks before running the function here against prod, naming the event it sends:
+// runLocalView asks before running the function here against prod or production, naming the event it sends:
 // the file of one kept for it, or {} without any.
 func (m model) runLocalView() string {
 	r := m.state.runLocal

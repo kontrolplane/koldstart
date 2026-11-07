@@ -449,7 +449,7 @@ func (f fact) render(width int) string {
 // stageTone is the tone of a stage's badge: the warning for production, where a deploy is felt,
 // and the accent for any other.
 func stageTone(stage string) styles.Tone {
-	if stage == "production" || stage == "prod" {
+	if cli.Production(stage) {
 		return styles.ToneWarning
 	}
 	return styles.ToneAccent

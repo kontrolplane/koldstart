@@ -198,7 +198,7 @@ functions {
 }
 ```
 
-Running against `prod` asks first, since the function then works with prod's data; `--yes` skips the question.
+Running against `prod` or `production` asks first, since the function then works with its data; `--yes` skips the question.
 
 ## deploying from ci
 

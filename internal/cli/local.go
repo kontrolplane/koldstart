@@ -208,12 +208,18 @@ func checkEvent(b []byte) error {
 	return json.Unmarshal(b, &v)
 }
 
-// confirmProd asks before code on this machine works with what prod deployed.
+// Production says whether a stage is the one customers use, prod or production, where running
+// code here asks first and kdst ui warns.
+func Production(stage string) bool {
+	return stage == "prod" || stage == "production"
+}
+
+// confirmProd asks before code on this machine works with what production deployed.
 func confirmProd(cmd *cobra.Command, s *stage, yes bool) error {
-	if s.Stage != "prod" {
+	if !Production(s.Stage) {
 		return nil
 	}
-	return confirm(cmd, yes, "this runs on this machine against what prod deployed, its data included. go on?")
+	return confirm(cmd, yes, fmt.Sprintf("this runs on this machine against what %s deployed, its data included. go on?", s.Stage))
 }
 
 func invokeCommand(name string, opts *Options) *cobra.Command {
@@ -230,7 +236,7 @@ with its stack trace under them, and invoke exits with 1.
 
 With --local, it is built and run here against an emulator of the lambda runtime api, with the
 variables the stage deployed and your credentials, so it reads and writes what the stage
-deployed; .koldstart/local.<stage>.pkl overrides variables, and prod asks first.`,
+deployed; .koldstart/local.<stage>.pkl overrides variables, and prod or production asks first.`,
 		Example: fmt.Sprintf(`  %[1]s invoke -f api --path events/get-order.json
   %[1]s invoke -f api --local --path event.json
   %[1]s invoke -f worker --local --data '{"job": 1}'
@@ -265,7 +271,7 @@ deployed; .koldstart/local.<stage>.pkl overrides variables, and prod asks first.
 	cmd.Flags().StringVarP(&data, "data", "d", "", "the event, as json")
 	cmd.Flags().StringVarP(&path, "path", "p", "", "a file with the event")
 	cmd.Flags().BoolVar(&runLocal, "local", false, "run the function on this machine")
-	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "run against prod without asking")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "run against prod or production without asking")
 	_ = cmd.MarkFlagRequired("function")
 	return cmd
 }

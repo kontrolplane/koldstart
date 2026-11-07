@@ -30,7 +30,7 @@ func offlineCommand(name string, opts *Options) *cobra.Command {
 		Long: `offline serves every http route of the stage on 127.0.0.1:3000, or --port, each request an
 invocation of its function on this machine, as invoke --local runs it, until ctrl+c. A change to a
 source file of the project rebuilds the functions, and the next request runs the new code. Against
-prod it asks first.`,
+prod or production it asks first.`,
 		Example: fmt.Sprintf(`  %[1]s offline
   %[1]s offline --port 8080
   %[1]s offline --stage pr-12`, name),
@@ -52,7 +52,7 @@ prod it asks first.`,
 		},
 	}
 	cmd.Flags().IntVar(&port, "port", 3000, "the port to listen on")
-	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "run against prod without asking")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "run against prod or production without asking")
 	return cmd
 }
 

@@ -19,7 +19,7 @@ koldstart runs with credentials that can create, change and delete what a config
 - every call to the state bucket passes the expected bucket owner, so a bucket of the same name in another account is refused, not used.
 - the values of secrets never go into the state, only references to them and a hash of their values. `.readAtRuntime()` keeps a secret out of the function's configuration too.
 - every write of the state is conditional on the version the deploy last read, so a deploy that lost its lock cannot overwrite another's state.
-- `invoke --local`, `offline` and `shift+i` in `ui` run your functions on your machine with your aws credentials, against what the stage deployed. against `prod` they ask first.
+- `invoke --local`, `offline` and `shift+i` in `ui` run your functions on your machine with your aws credentials, against what the stage deployed. against `prod` or `production` they ask first.
 
 ## verifying releases
 

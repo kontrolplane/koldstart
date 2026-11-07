@@ -85,7 +85,7 @@ The stages, a stage and a function are read again every five seconds, and `p` pa
 - `s`: on the logs, show the lines from info, warn or error, or every line again
 - `b`: on the logs, group the lines of each request together, or not
 - `t`: on the logs, show the time of each line, how long ago it was, or nothing
-- `y`, `n`: answer the dialog to release a lock or to run here against prod
+- `y`, `n`: answer the dialog to release a lock or to run here against prod or production
 - `n`, `p`: on an invocation, the next and the previous one, as the invocations list them; on a line of the logs, the next and the previous line the logs tab shows
 - `c`: copy what is under the cursor: an app and stage, a function's arn, the whole value of a row of its overview, the value of a line of json, or a resource's id in aws, or its arn, on a tab without json, an output's value as it is, a version, a request id, a line of the logs as it was logged, or on the invoke tab the payload or the result shown
 - `shift+c`: copy the path of the line of json under the cursor; on the invoke tab, from the events, the request id of the result
@@ -95,7 +95,7 @@ The stages, a stage and a function are read again every five seconds, and `p` pa
 
 While a filter, a search, or the stage's name to remove it, has focus, letters, `?`, `p` and `q` included, are typed into it.
 
-`ctrl+s` applies the plan on screen. It takes the stage's lock and plans again first: when the configuration or the state changed since, nothing is applied, and the new plan is shown to apply instead. Removing a stage shows the plan of the remove, and asks to type the stage's name, such as `dev`. Releasing a lock shows who took it, for what, from where, and when, and asks to make sure that deploy has stopped first. Running a function of `prod` on this machine asks first, as `run storefront here against orders/prod?`, naming the event it sends, and that it runs with prod's environment and your aws credentials, so it works on prod's data; yes shows the result on the invoke tab, and no goes back to the tab it was asked from.
+`ctrl+s` applies the plan on screen. It takes the stage's lock and plans again first: when the configuration or the state changed since, nothing is applied, and the new plan is shown to apply instead. Removing a stage shows the plan of the remove, and asks to type the stage's name, such as `dev`. Releasing a lock shows who took it, for what, from where, and when, and asks to make sure that deploy has stopped first. Running a function of `prod` or `production` on this machine asks first, as `run storefront here against orders/prod?`, naming the event it sends, and that it runs with that stage's environment and your aws credentials, so it works on its data; yes shows the result on the invoke tab, and no goes back to the tab it was asked from.
 
 While a deploy or remove runs, `q` and `esc` stay on the plan. `ctrl+c` stops it, as it does on the command line: the lock is released, and the state says what was done, so running it again finishes it.
 

@@ -353,7 +353,7 @@ func TestInvoke(t *testing.T) {
 }
 
 // TestRunLocal checks shift+i runs the function here and shows what it returned, asking first
-// against prod; no goes back to the tab it was asked from.
+// against prod or production; no goes back to the tab it was asked from.
 func TestRunLocal(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -366,10 +366,13 @@ func TestRunLocal(t *testing.T) {
 		{name: "prod asks, no", stage: ordersProd, keys: []string{"I", "n"}, tab: overviewTab},
 		{name: "prod asks from the logs, esc", stage: ordersProd, keys: []string{"tab", "I", "esc"}, tab: logsTab},
 		{name: "prod asks, yes", stage: ordersProd, keys: []string{"I", "y"}, local: 1, tab: invokeTab},
+		{name: "production asks, no", stage: ordersProduction, keys: []string{"I", "n"}, tab: overviewTab},
+		{name: "staging runs at once", stage: ordersStaging, keys: []string{"I"}, local: 1, tab: invokeTab},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newFake(t)
+			f.states[tt.stage] = testState(tt.stage)
 			m := started(t, f)
 			m, cmd := m.openStage(tt.stage)
 			m = settle(t, m, cmd)
@@ -385,6 +388,12 @@ func TestRunLocal(t *testing.T) {
 		})
 	}
 }
+
+// ordersProduction and ordersStaging are stages the fake serves only to the tests that add them.
+var (
+	ordersProduction = cli.StageRef{Region: "eu-west-1", App: "orders", Stage: "production"}
+	ordersStaging    = cli.StageRef{Region: "eu-west-1", App: "orders", Stage: "staging"}
+)
 
 // TestLogs checks the logs tab shows the lines, f stops following, and scrolling up does too.
 func TestLogs(t *testing.T) {
