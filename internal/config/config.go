@@ -18,7 +18,42 @@ type Project struct {
 	Outputs   map[string]Value    `json:"outputs"`
 	Tags      map[string]string   `json:"tags"`
 	HTTP      *HTTP               `json:"http"`
+	REST      *REST               `json:"rest"`
 	WebSocket *WebSocket          `json:"websocket"`
+}
+
+// REST is the stage's rest api.
+type REST struct {
+	Authorizers map[string]RESTAuthorizer `json:"authorizers"`
+	Throttling  *Throttling               `json:"throttling"`
+}
+
+// The types of an authorizer of the rest api.
+const (
+	RESTAuthorizerToken   = "token"
+	RESTAuthorizerRequest = "request"
+	RESTAuthorizerCognito = "cognito"
+)
+
+// RESTAuthorizer guards rest routes: a function of the project handed a token or the request,
+// or cognito user pools.
+type RESTAuthorizer struct {
+	// Type is token, request or cognito.
+	Type     string `json:"type"`
+	Function string `json:"functionName"`
+	// Header is where a token authorizer or a cognito one finds the token.
+	Header     string `json:"header"`
+	Validation string `json:"validation"`
+	// Identity is what a request authorizer takes, as method.request.header.X.
+	Identity []string `json:"identity"`
+	// TTL is in seconds.
+	TTL       int     `json:"ttl"`
+	UserPools []Value `json:"userPools"`
+}
+
+// IsLambda reports whether the authorizer is a function of the project.
+func (a RESTAuthorizer) IsLambda() bool {
+	return a.Type == RESTAuthorizerToken || a.Type == RESTAuthorizerRequest
 }
 
 // WebSocket is the stage's websocket api.
@@ -210,7 +245,7 @@ type Authorizer struct {
 	TTL int `json:"ttl"`
 }
 
-// Throttling is the stage-wide request limit of the http api.
+// Throttling is the stage-wide request limit of the http api or the rest api, or one route's.
 type Throttling struct {
 	Rate  float64 `json:"rate"`
 	Burst int     `json:"burst"`
@@ -413,6 +448,7 @@ func AsRef(value any) (Ref, bool) {
 // The types of event.
 const (
 	EventHTTPRoute = "httpRoute"
+	EventRESTRoute = "restRoute"
 	EventSchedule  = "schedule"
 	EventQueue     = "queue"
 	EventTopic     = "topic"
@@ -428,12 +464,19 @@ const (
 type Event struct {
 	Type string `json:"type"`
 
-	// httpRoute
+	// httpRoute and restRoute
 	Method     string   `json:"method"`
 	Path       string   `json:"path"`
 	Authorizer string   `json:"authorizer"`
 	Scopes     []string `json:"scopes"`
 	IAM        bool     `json:"iam"`
+
+	// restRoute: whether it needs the api key, what a request must have, and how long api
+	// gateway waits for the function, when not its default
+	Private         bool     `json:"private"`
+	RequiredQuery   []string `json:"requiredQuery"`
+	RequiredHeaders []string `json:"requiredHeaders"`
+	TimeoutMillis   *int     `json:"timeoutMillis"`
 
 	// schedule
 	Expression string `json:"expression"`

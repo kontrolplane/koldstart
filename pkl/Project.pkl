@@ -47,8 +47,11 @@ outputs: Mapping<String, Value>
 /// Tags added to everything koldstart creates, next to its own.
 tags: Mapping<String, String>
 
-/// The stage's http api, which all `Events.HttpRoute`s share.
+/// The stage's http api, which all `kdst.HttpRoute`s share.
 http: Http
+
+/// The stage's rest api, api gateway's first kind of api, which all `kdst.RestRoute`s share.
+rest: Rest
 
 /// The stage's websocket api, for the functions with a `kdst.WebSocketRoute`.
 websocket: WebSocket
@@ -317,6 +320,14 @@ class AccessLogs {
   retention: LogRetention = 30
 }
 
+class Rest {
+  /// Authorizers routes pick with `authorizer = "name"`: `kdst.TokenAuthorizer`,
+  /// `kdst.RequestAuthorizer` and `kdst.CognitoAuthorizer`.
+  authorizers: Mapping<String, RestAuthorizer>
+  /// The stage-wide request limit.
+  throttling: Throttling?
+}
+
 class WebSocket {
   /// What picks the route of a message: a field of its json body, by default `action`.
   routeSelection: String = "$request.body.action"
@@ -324,6 +335,9 @@ class WebSocket {
 
 /// Base class of `kdst.JwtAuthorizer` and `kdst.LambdaAuthorizer`.
 abstract class Authorizer
+
+/// Base class of `kdst.TokenAuthorizer`, `kdst.RequestAuthorizer` and `kdst.CognitoAuthorizer`.
+abstract class RestAuthorizer
 
 class Throttling {
   /// Requests per second.
