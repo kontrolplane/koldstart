@@ -4,6 +4,7 @@ provider:
   name: aws
   runtime: nodejs22.x
   region: eu-west-1
+  versionFunctions: false
   kmsKeyArn: arn:aws:kms:eu-west-1:123456789012:key/1111-2222
   tracing:
     lambda: true
@@ -119,6 +120,10 @@ functions:
               format: json
             ip:
               - 10.0.0.0/8
+  report:
+    handler: src/report.main
+    runtime: python3.13
+    snapStart: true
 
 resources:
   Resources:
