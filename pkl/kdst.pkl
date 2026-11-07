@@ -96,6 +96,12 @@ function any(path: String): HttpRoute = route("ANY", path)
 local function route(routeMethod: String, routePath: String): HttpRoute =
   new { method = routeMethod; path = routePath }
 
+/// A route of the stage's rest api for [routeMethod] requests to [routePath]:
+/// `kdst.rest("GET", "/orders/{id}")`, or `"ANY"` for every method. The rest of a `RestRoute`
+/// amends it: `(kdst.rest("POST", "/orders")) { private = true }`.
+function rest(routeMethod: String, routePath: String): RestRoute =
+  new { method = routeMethod; path = routePath }
+
 /// An eventbridge scheduler schedule: `kdst.schedule("rate(1 hour)")`. The rest of a `Schedule`
 /// amends it: `(kdst.schedule("cron(0 9 ? * MON-FRI *)")) { timezone = "Europe/Amsterdam" }`.
 function schedule(scheduleExpression: String): Schedule = new { expression = scheduleExpression }
@@ -226,6 +232,36 @@ class HttpRoute extends Project.Event {
   iam: Boolean = false
   /// This route's own request limit, in place of the stage-wide one.
   throttling: Project.Throttling?
+}
+
+/// A route on the stage's rest api, which hands its function the event of payload 1.0 by api
+/// gateway's lambda proxy integration, and returns what the function returns.
+class RestRoute extends Project.Event {
+  fixed type: "restRoute" = "restRoute"
+  method: "GET"|"POST"|"PUT"|"PATCH"|"DELETE"|"HEAD"|"OPTIONS"|"ANY"
+  /// Such as `/orders/{id}` or `/files/{proxy+}`, and `/` for the root.
+  path: String(startsWith("/"))
+  /// An authorizer of `rest.authorizers`, by name.
+  authorizer: String?
+  /// For a cognito authorizer: scopes of the access token, any one of which the route takes.
+  /// Without any, the route takes the user pool's id token.
+  scopes: Listing<String>
+  /// Take only requests signed with sigv4 by a caller that may `execute-api:Invoke` the route,
+  /// in place of an authorizer.
+  iam: Boolean = false
+  /// Take only requests with the stage's api key in the `x-api-key` header, next to any
+  /// authorizer. The output `restApiKeyId` is the key's id.
+  private: Boolean = false
+  /// Query string parameters a request must have: api gateway refuses one without them before it
+  /// calls the function.
+  requiredQuery: Listing<String(!isEmpty)>
+  /// Headers a request must have, as [requiredQuery].
+  requiredHeaders: Listing<String(!isEmpty)>
+  /// How long api gateway waits for the function, 29 seconds without it. Longer than 29 seconds
+  /// needs a raised quota of the account.
+  hidden timeout: Duration(isBetween(50.ms, 15.min))?
+  /// [timeout] in milliseconds, what koldstart reads.
+  fixed timeoutMillis: Int? = if (timeout == null) null else timeout.toUnit("ms").value.toInt()
 }
 
 /// An eventbridge rule that sends the events matching its pattern to the function.
@@ -391,4 +427,40 @@ class LambdaAuthorizer extends Project.Authorizer {
   identity: Listing<String>
   /// How long a result is cached.
   ttl: Duration(isBetween(0.s, 1.h)) = 0.s
+}
+
+/// An authorizer of the rest api that hands a function of this project the token in a header,
+/// as `authorizationToken` with the `methodArn`, and takes the iam policy it returns.
+class TokenAuthorizer extends Project.RestAuthorizer {
+  fixed type: "token" = "token"
+  functionName: String
+  /// The header the token is in.
+  header: String(!isEmpty) = "Authorization"
+  /// A regular expression the token must match: api gateway refuses one that does not without
+  /// calling the function.
+  validation: String?
+  /// How long a result is cached, by the token.
+  ttl: Duration(isBetween(0.s, 1.h)) = 0.s
+}
+
+/// An authorizer of the rest api that hands a function of this project the request's headers,
+/// query string parameters, stage variables and context, as payload 1.0 does, and takes the iam
+/// policy it returns.
+class RequestAuthorizer extends Project.RestAuthorizer {
+  fixed type: "request" = "request"
+  functionName: String
+  /// What a request must have, and what a result is cached by: `method.request.header.<name>`,
+  /// `method.request.querystring.<name>`, `context.<name>` or `stageVariables.<name>`.
+  identity: Listing<String(matches(Regex(#"(method\.request\.(header|querystring|multivalueheader|multivaluequerystring)|context|stageVariables)\.[^,\s]+"#)))>
+  /// How long a result is cached, by the identity, which it then needs.
+  ttl: Duration(isBetween(0.s, 1.h)) = 0.s
+}
+
+/// An authorizer of the rest api that takes a token of a cognito user pool.
+class CognitoAuthorizer extends Project.RestAuthorizer {
+  fixed type: "cognito" = "cognito"
+  /// The user pools, by their arns: `kdst.ref("users", "Arn")` for one of this project.
+  userPools: Listing<Project.Value>(!isEmpty)
+  /// The header the token is in.
+  header: String(!isEmpty) = "Authorization"
 }

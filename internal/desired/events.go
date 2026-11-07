@@ -108,7 +108,7 @@ func (b *builder) httpAPI() []engine.Node {
 	if h != nil {
 		inputs[inputCORS] = corsInputs(h.CORS)
 		if h.Throttling != nil {
-			inputs["throttling"] = map[string]any{"rate": h.Throttling.Rate, "burst": h.Throttling.Burst}
+			inputs["throttling"] = throttlingInputs(h.Throttling)
 		}
 		if h.AccessLogs != nil {
 			group := "/aws/http-api/" + Name(128, b.project.App, b.project.Stage)
@@ -304,27 +304,27 @@ func (b *builder) integration(name string) []engine.Node {
 
 func (b *builder) route(fn string, e config.Event) engine.Node {
 	in := map[string]any{
-		inputAPI:            engine.Ref(HTTPAPIID, "ApiId"),
-		"routeKey":          strings.ToUpper(e.Method) + " " + e.Path,
-		"target":            engine.Join("integrations/", engine.Ref(integrationID(fn), "IntegrationId")),
-		"authorizationType": authNone,
-		"authorizer":        "",
-		"scopes":            e.Scopes,
+		inputAPI:      engine.Ref(HTTPAPIID, "ApiId"),
+		"routeKey":    strings.ToUpper(e.Method) + " " + e.Path,
+		"target":      engine.Join("integrations/", engine.Ref(integrationID(fn), "IntegrationId")),
+		inputAuthType: authNone,
+		inputAuth:     "",
+		"scopes":      e.Scopes,
 	}
 	if e.IAM {
-		in["authorizationType"] = "AWS_IAM"
+		in[inputAuthType] = "AWS_IAM"
 	}
 	if e.Path == "$default" {
 		in["routeKey"] = "$default"
 	}
 	if e.Throttling != nil {
-		in["throttling"] = map[string]any{"rate": e.Throttling.Rate, "burst": e.Throttling.Burst}
+		in["throttling"] = throttlingInputs(e.Throttling)
 	}
 	if e.Authorizer != "" {
-		in["authorizer"] = engine.Ref(authorizerID(e.Authorizer), "AuthorizerId")
-		in["authorizationType"] = "CUSTOM"
+		in[inputAuth] = engine.Ref(authorizerID(e.Authorizer), "AuthorizerId")
+		in[inputAuthType] = "CUSTOM"
 		if b.project.HTTP.Authorizers[e.Authorizer].Type == "jwt" {
-			in["authorizationType"] = "JWT"
+			in[inputAuthType] = "JWT"
 		}
 	}
 	return engine.Node{ID: routeID(e.Method, e.Path), Type: awsp.TypeRoute, Inputs: in}
@@ -390,8 +390,8 @@ func (b *builder) sourceStatements(fn config.Function) []any {
 	return out
 }
 
-// Triggers lists the nodes of a state that invoke a function: its routes, schedules, mappings,
-// subscriptions and the notifications of its buckets, sorted.
+// Triggers lists the nodes of a state that invoke a function: its routes of the http and rest
+// apis, schedules, mappings, subscriptions and the notifications of its buckets, sorted.
 func Triggers(resources map[string]*state.Resource, fn string) []string {
 	var out []string
 	for id, r := range resources {
@@ -402,6 +402,8 @@ func Triggers(resources map[string]*state.Resource, fn string) []string {
 				out = append(out, id)
 			}
 		case kind == "route" && slices.Contains(r.Dependencies, integrationID(fn)):
+			out = append(out, id)
+		case kind == kindRESTRoute && slices.Contains(r.Dependencies, FunctionID(fn)):
 			out = append(out, id)
 		case kind == kindWSRoute && slices.Contains(r.Dependencies, wsIntegrationID(fn)):
 			out = append(out, id)
@@ -418,12 +420,14 @@ const (
 	GroupFunction = "function"
 	GroupResource = "resource"
 	GroupHTTP     = "http"
+	GroupREST     = "rest"
 )
 
 // Group says what a node of a state belongs to, by its id and what it depends on. A function
 // has its role, log group, url, integration, permissions and events, and the routes to it; a
 // resource has the notifications of a bucket; the stage's http api has its domain and its
-// authorizers. Anything else has no group.
+// authorizers; the rest api has its resources, authorizers, stage, api key and usage plan.
+// Anything else has no group.
 func Group(id string, deps []string) (kind, name string) {
 	kind, rest, _ := strings.Cut(id, "/")
 	first, _, _ := strings.Cut(rest, "/")
@@ -446,6 +450,15 @@ func Group(id string, deps []string) (kind, name string) {
 		return GroupHTTP, ""
 	case HTTPAPIID, DomainID, AccessLogsID, WebSocketID, kindOf(authorizerID("")):
 		return GroupHTTP, ""
+	case kindRESTRoute:
+		for _, d := range deps {
+			if fn, ok := strings.CutPrefix(d, FunctionID("")); ok {
+				return GroupFunction, fn
+			}
+		}
+		return GroupREST, ""
+	case RESTAPIID, RESTStageID, RESTKeyID, RESTUsagePlanID, kindRESTResource, kindRESTAuthorizer:
+		return GroupREST, ""
 	}
 	return "", ""
 }

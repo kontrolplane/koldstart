@@ -57,9 +57,9 @@ func (s *Store) Update(ctx context.Context, fn func(st *state.State)) error {
 	return nil
 }
 
-// Apply makes the plan's changes in dependency order, nodes of one level at once, and the
-// deletes last, in reverse. It stops after the first level with a failure; what was done is in
-// the state, so the next deploy plans from there.
+// Apply makes the plan's changes in dependency order, nodes of one level at once, then the
+// deletes, in reverse, and then the nodes that come after the deletes. It stops after the first
+// level with a failure; what was done is in the state, so the next deploy plans from there.
 func (e *Engine) Apply(ctx context.Context, plan *Plan, nodes []Node, store *Store) error {
 	if snap := store.Snapshot(); snap.Serial != plan.Serial {
 		return errors.New("the state changed since the plan was made: plan again")
@@ -72,12 +72,23 @@ func (e *Engine) Apply(ctx context.Context, plan *Plan, nodes []Node, store *Sto
 	for _, c := range plan.Changes {
 		changes[c.ID] = c
 	}
+	last := lastIDs(nodes)
+	if err := e.applyLevels(ctx, levels, changes, store, func(id string) bool { return !last[id] }); err != nil {
+		return err
+	}
+	if err := e.applyDeletes(ctx, plan, store); err != nil {
+		return err
+	}
+	return e.applyLevels(ctx, levels, changes, store, func(id string) bool { return last[id] })
+}
 
+// applyLevels applies the changes of the nodes pick takes, a level at a time.
+func (e *Engine) applyLevels(ctx context.Context, levels [][]Node, changes map[string]Change, store *Store, pick func(id string) bool) error {
 	for _, level := range levels {
 		var todo []func() error
 		for _, n := range level {
 			c, ok := changes[n.ID]
-			if !ok || c.Action == NoOp {
+			if !ok || c.Action == NoOp || !pick(n.ID) {
 				continue
 			}
 			todo = append(todo, func() error { return e.applyNode(ctx, n, c, store) })
@@ -86,7 +97,7 @@ func (e *Engine) Apply(ctx context.Context, plan *Plan, nodes []Node, store *Sto
 			return err
 		}
 	}
-	return e.applyDeletes(ctx, plan, store)
+	return nil
 }
 
 // run calls the functions, at most Concurrency at once, and returns their errors joined.

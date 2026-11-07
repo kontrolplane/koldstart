@@ -77,6 +77,9 @@ func (c *converter) httpAPIEvent(w *writer, where string, n *yaml.Node) {
 			path = "$default"
 		}
 	}
+	if auth := get(n, "authorizer"); auth != nil && auth.Kind == yaml.MappingNode && str(get(auth, "type")) == authIAM {
+		c.leave(w, Review, where+".authorizer", iamCallers("httpApiUrl"), nil)
+	}
 	httpRoute(w, method, path, func(w *writer) { c.routeAuthorizer(w, where, get(n, "authorizer")) })
 }
 
@@ -108,7 +111,7 @@ func (c *converter) routeAuthorizer(w *writer, where string, n *yaml.Node) {
 		w.line("authorizer = %s", quote(str(n)))
 		return
 	}
-	if str(get(n, "type")) == "aws_iam" {
+	if str(get(n, "type")) == authIAM {
 		w.line("iam = true")
 		return
 	}

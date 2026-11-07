@@ -15,18 +15,23 @@ import (
 )
 
 // defaultRoute catches every request no other route matches, and defaultStage is the stage every
-// http api koldstart makes has; localName stands for the api and the account where there are none.
+// http api koldstart makes has; localName stands for the api and the account where there are none;
+// keyPath is the key of a path in an event.
 const (
 	defaultRoute = "$default"
 	defaultStage = "$default"
 	localName    = "local"
+	keyPath      = "path"
 )
 
-// Route is an http route of the configuration, and the function it invokes.
+// Route is a route of the configuration, of the http api or the rest api, and the function it
+// invokes.
 type Route struct {
 	Method   string
 	Path     string
 	Function string
+	// Stage is the stage of a rest route, which it is served under, and empty for an http route.
+	Stage string
 }
 
 // Key is the route key api gateway names the route by, such as GET /orders/{id}.
@@ -145,7 +150,7 @@ func event(req *http.Request, route Route, params map[string]string, body []byte
 			"domainName":   req.Host,
 			"domainPrefix": localName,
 			"http": map[string]any{
-				"method": req.Method, "path": req.URL.Path, "protocol": req.Proto,
+				"method": req.Method, keyPath: req.URL.Path, "protocol": req.Proto,
 				"sourceIp": strings.Split(req.RemoteAddr, ":")[0], "userAgent": req.UserAgent(),
 			},
 			"requestId": requestID(),
@@ -224,8 +229,9 @@ type Invoker interface {
 	Invoke(ctx context.Context, function string, payload []byte) ([]byte, error)
 }
 
-// Offline serves the http routes of a stage on this machine, each request an invocation of the
-// function its route names.
+// Offline serves the routes of a stage on this machine, each request an invocation of the
+// function its route names: an http route at its path with the event of payload 2.0, and a rest
+// route under the stage, /<stage>/<path>, with the event of payload 1.0.
 type Offline struct {
 	Routes  []Route
 	Invoker Invoker
@@ -236,7 +242,11 @@ type Offline struct {
 // ServeHTTP implements http.Handler.
 func (o *Offline) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	start := time.Now()
-	route, params, ok := match(o.Routes, req.Method, req.URL.Path)
+	if route, params, path, ok := matchREST(o.Routes, req.Method, req.URL.Path); ok {
+		o.serveREST(w, req, route, params, path, start)
+		return
+	}
+	route, params, ok := match(o.http(), req.Method, req.URL.Path)
 	if !ok {
 		writeMessage(w, http.StatusNotFound)
 		o.log(req, http.StatusNotFound, "no route", start)
@@ -261,6 +271,41 @@ func (o *Offline) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 	respond(rec, out)
+	o.log(req, rec.status, route.Function, start)
+}
+
+// http are the routes of the http api.
+func (o *Offline) http() []Route {
+	var out []Route
+	for _, r := range o.Routes {
+		if !r.REST() {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// serveREST hands a request to the function of its rest route, and writes what it returns.
+func (o *Offline) serveREST(w http.ResponseWriter, req *http.Request, route Route, params map[string]string, path string, start time.Time) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, req.Body, 10<<20))
+	if err != nil {
+		writeMessage(w, http.StatusRequestEntityTooLarge)
+		return
+	}
+	payload, err := json.Marshal(restEvent(req, route, params, path, body, start))
+	if err != nil {
+		writeMessage(w, http.StatusInternalServerError)
+		return
+	}
+	out, err := o.Invoker.Invoke(req.Context(), route.Function, payload)
+	if err != nil {
+		slog.Debug("invocation failed", "route", route.Served(), "error", err)
+		writeMessage(w, http.StatusBadGateway)
+		o.log(req, http.StatusBadGateway, route.Function+": "+err.Error(), start)
+		return
+	}
+	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+	respondREST(rec, out)
 	o.log(req, rec.status, route.Function, start)
 }
 

@@ -26,11 +26,13 @@ func offlineCommand(name string, opts *Options) *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{
 		Use:   "offline",
-		Short: "serve the http routes on this machine",
-		Long: `offline serves every http route of the stage on 127.0.0.1:3000, or --port, each request an
-invocation of its function on this machine, as invoke --local runs it, until ctrl+c. A change to a
-source file of the project rebuilds the functions, and the next request runs the new code. Against
-prod or production it asks first.`,
+		Short: "serve the http and rest routes on this machine",
+		Long: `offline serves every http route and rest route of the stage on 127.0.0.1:3000, or --port, each
+request an invocation of its function on this machine, as invoke --local runs it, until ctrl+c. A
+rest route is served under the stage, as /dev/orders, with the event of payload 1.0; an http route
+at its path with the event of payload 2.0. Authorizers, iam and api keys are not checked. A change
+to a source file of the project rebuilds the functions, and the next request runs the new code.
+Against prod or production it asks first.`,
 		Example: fmt.Sprintf(`  %[1]s offline
   %[1]s offline --port 8080
   %[1]s offline --stage pr-12`, name),
@@ -46,7 +48,7 @@ prod or production it asks first.`,
 			}
 			routes := s.routes()
 			if len(routes) == 0 {
-				return fmt.Errorf("no function in %s has an http route to serve: add a kdst.HttpRoute to its events, or run it with %s invoke --local", s.shownPath(), name)
+				return fmt.Errorf("no function in %s has an http or rest route to serve: add a kdst.HttpRoute or kdst.RestRoute to its events, or run it with %s invoke --local", s.shownPath(), name)
 			}
 			return s.serve(ctx, cmd, routes, port)
 		},
@@ -56,13 +58,16 @@ prod or production it asks first.`,
 	return cmd
 }
 
-// routes are the http routes of the stage's functions.
+// routes are the http and rest routes of the stage's functions.
 func (s *stage) routes() []local.Route {
 	var routes []local.Route
 	for _, fn := range slices.Sorted(maps.Keys(s.Functions)) {
 		for _, e := range s.Functions[fn].Events {
-			if e.Type == config.EventHTTPRoute {
+			switch e.Type {
+			case config.EventHTTPRoute:
 				routes = append(routes, local.Route{Method: strings.ToUpper(e.Method), Path: e.Path, Function: fn})
+			case config.EventRESTRoute:
+				routes = append(routes, local.Route{Method: strings.ToUpper(e.Method), Path: e.Path, Function: fn, Stage: s.Stage})
 			}
 		}
 	}
@@ -159,7 +164,7 @@ func printServing(w io.Writer, app, stage string, addr net.Addr, routes []local.
 	_, _ = fmt.Fprintf(w, "serving %s/%s on http://%s\n\n", app, stage, addr)
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	for _, r := range routes {
-		_, _ = fmt.Fprintf(tw, "  %s\t%s\n", r.Key(), r.Function)
+		_, _ = fmt.Fprintf(tw, "  %s\t%s\n", r.Served(), r.Function)
 	}
 	_ = tw.Flush()
 	_, _ = fmt.Fprintln(w, "\na change to a source file rebuilds the functions; ctrl+c stops")

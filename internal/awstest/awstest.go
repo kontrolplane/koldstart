@@ -40,26 +40,29 @@ func Emulator(t *testing.T) aws.Config {
 	return cfg
 }
 
-// Get requests a url aws gave out, such as an http api's endpoint. The emulator answers for
-// every host on its own address, so a url of an aws host goes there with its host in the Host
-// header.
+// Get requests a url aws gave out, such as an http api's endpoint, as Do does.
 func Get(t *testing.T, rawURL string) (*http.Response, error) {
 	t.Helper()
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return nil, err
-	}
 	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, err
 	}
-	if strings.HasSuffix(u.Hostname(), ".amazonaws.com") {
+	return Do(t, req)
+}
+
+// Do sends a request to a url aws gave out. The emulator answers for every host on its own
+// address, so a url of an aws host goes there with its host in the Host header.
+//
+//nolint:gosec // a test sends it to the emulator, or to a url the emulator gave out
+func Do(t *testing.T, req *http.Request) (*http.Response, error) {
+	t.Helper()
+	if host := req.URL.Hostname(); strings.HasSuffix(host, ".amazonaws.com") {
 		endpoint, err := url.Parse(os.Getenv(EnvEndpoint))
 		if err != nil {
 			return nil, err
 		}
 		req.URL.Scheme, req.URL.Host = endpoint.Scheme, endpoint.Host
-		req.Host = u.Hostname()
+		req.Host = host
 	}
 	return http.DefaultClient.Do(req)
 }

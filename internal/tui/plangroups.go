@@ -55,9 +55,9 @@ type planRow struct {
 
 // planKinds are the kinds of node the changes are grouped in by kind, in their order: functions,
 // what each brings, its role, log group, url, permissions and events, the http api with its
-// routes, domain and authorizers, the resources, and anything else, named as the stage's tree
-// names its kinds.
-var planKinds = []string{kindNames[functionGroups], "roles, logs and triggers", kindNames[httpGroup], kindNames[resourceGroups], kindNames[otherGroups]}
+// routes, domain and authorizers, the rest api with its resources, authorizers and stage, the
+// resources, and anything else, named as the stage's tree names its kinds.
+var planKinds = []string{kindNames[functionGroups], "roles, logs and triggers", kindNames[httpGroup], kindNames[restGroup], kindNames[resourceGroups], kindNames[otherGroups]}
 
 // planKind is the kind of node id is, by its index in planKinds.
 func planKind(id string) int {
@@ -69,10 +69,12 @@ func planKind(id string) int {
 		return 1
 	case desired.GroupHTTP:
 		return 2
-	case desired.GroupResource:
+	case desired.GroupREST:
 		return 3
+	case desired.GroupResource:
+		return 4
 	}
-	return 4
+	return 5
 }
 
 // hasFields reports whether a change of the action lists the fields it changes.

@@ -120,6 +120,8 @@ func (p *Project) Validate() error {
 		}
 		v.value("http.certificate", p.HTTP.Certificate)
 	}
+	v.restAuthorizers()
+	v.restSiblings()
 	for _, name := range slices.Sorted(maps.Keys(p.Resources)) {
 		walkRefs(p.Resources[name].Properties, func(r Ref) {
 			if !v.exists(r.Resource) {
@@ -156,7 +158,10 @@ type validator struct {
 	p *Project
 	// routes maps each route, such as "GET /path", to the function it belongs to.
 	routes map[string]string
-	errs   []error
+	// restParams are the path parameters of the rest routes, such as {id}, by the path they
+	// follow, each with the route it is first in.
+	restParams map[string]map[string]string
+	errs       []error
 }
 
 func (v *validator) errorf(format string, args ...any) {
@@ -331,6 +336,8 @@ func (v *validator) event(fn, where string, e Event) {
 		if e.Authorizer != "" && e.IAM {
 			v.errorf("%s: a route takes iam or an authorizer, not both", where)
 		}
+	case EventRESTRoute:
+		v.restRoute(fn, where, e)
 	case EventQueue:
 		v.value(where+".queue", e.Queue)
 		v.visibility(fn, where, e.Queue)

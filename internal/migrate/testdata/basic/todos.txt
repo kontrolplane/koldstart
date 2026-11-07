@@ -6,4 +6,4 @@ works differently, to check:
 not needed in koldstart:
   custom: each ${self:custom...} got its value where it was used: tableName
   plugins.serverless-esbuild: koldstart bundles typescript with esbuild itself
-  plugins.serverless-offline: kdst offline serves the http routes on this machine
+  plugins.serverless-offline: kdst offline serves the http and rest routes on this machine

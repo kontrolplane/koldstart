@@ -462,8 +462,8 @@ func TestValidateOutputs(t *testing.T) {
 }
 
 // TestGeneratedOutputs checks the names of the outputs a deploy adds follow what the project
-// deploys: an http api once a function has a route, its domain, a websocket api and the urls of
-// functions.
+// deploys: an http api once a function has a route, its domain, a rest api and the key of its
+// private routes, a websocket api and the urls of functions.
 func TestGeneratedOutputs(t *testing.T) {
 	route := Event{Type: EventHTTPRoute, Method: "GET", Path: "/"}
 	tests := []struct {
@@ -486,6 +486,18 @@ func TestGeneratedOutputs(t *testing.T) {
 			name:    "routes and a domain",
 			project: Project{HTTP: &HTTP{Domain: "orders.example.com"}, Functions: map[string]Function{"api": {Events: []Event{route}}}},
 			want:    []string{OutputHTTPAPIURL, OutputHTTPDomainTarget},
+		},
+		{
+			name:    "rest routes",
+			project: Project{Functions: map[string]Function{"api": {Events: []Event{{Type: EventRESTRoute, Method: "GET", Path: "/"}}}}},
+			want:    []string{OutputRESTAPIURL},
+		},
+		{
+			name: "a private rest route",
+			project: Project{Functions: map[string]Function{"api": {Events: []Event{
+				{Type: EventRESTRoute, Method: "GET", Path: "/"}, {Type: EventRESTRoute, Method: "POST", Path: "/", Private: true},
+			}}}},
+			want: []string{OutputRESTAPIKeyID, OutputRESTAPIURL},
 		},
 		{
 			name: "a websocket route and function urls",

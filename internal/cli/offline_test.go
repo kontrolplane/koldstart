@@ -10,20 +10,22 @@ import (
 )
 
 // TestPrintServing checks offline says where it serves, lines the routes up with their
-// functions, and says how to stop.
+// functions, a rest route under the stage, and says how to stop.
 func TestPrintServing(t *testing.T) {
 	routes := []local.Route{
 		{Method: "GET", Path: "/orders/{id}", Function: "api"},
 		{Method: "POST", Path: "/orders", Function: "api"},
 		{Method: "ANY", Path: "$default", Function: "fallback"},
+		{Method: "GET", Path: "/legacy/{id}", Function: "api", Stage: "dev"},
 	}
 	var out bytes.Buffer
 	printServing(&out, "shop", "dev", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 3000}, routes)
 	want := `serving shop/dev on http://127.0.0.1:3000
 
-  GET /orders/{id}  api
-  POST /orders      api
-  $default          fallback
+  GET /orders/{id}      api
+  POST /orders          api
+  $default              fallback
+  GET /dev/legacy/{id}  api
 
 a change to a source file rebuilds the functions; ctrl+c stops
 `

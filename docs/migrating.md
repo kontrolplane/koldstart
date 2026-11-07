@@ -22,7 +22,7 @@ works differently, to check:
 not needed in koldstart:
   custom: each ${self:custom...} got its value where it was used: tableName
   plugins.serverless-esbuild: koldstart bundles typescript with esbuild itself
-  plugins.serverless-offline: kdst offline serves the http routes on this machine
+  plugins.serverless-offline: kdst offline serves the http and rest routes on this machine
 
 next:
   kdst plan --stage prod
@@ -64,7 +64,7 @@ koldstart does not read `serverless.yml` itself, and does not run serverless fra
 | `functions.<name>.layers`                                   | `layers`, by their arns                                              |
 | `functions.<name>.image` of `provider.ecr.images`           | `image { context; dockerfile; buildArgs; command; entryPoint; workingDirectory }` |
 | `events: httpApi`                                           | `kdst.get("/path")` and the other methods' helpers, `*` as `kdst.any("$default")`, amended with its authorizer and scopes, and `iam = true` for `aws_iam` |
-| `events: http`                                              | the same, on the http api, with a note; its `authorizer` as `iam = true` for `aws_iam`, a `kdst.LambdaAuthorizer` of a function of the service, with its identity sources and ttl, 300 seconds by default, or a `kdst.JwtAuthorizer` of a cognito user pool's arn, with its `scopes` |
+| `events: http`                                              | `kdst.rest("GET", "/path")`, a route of the rest api, amended with `private`, the `request.parameters` a request must have as `requiredQuery` and `requiredHeaders`, `timeoutInMillis`, its own or `provider.apiGateway`'s, as `timeout`, and its `authorizer` in `rest.authorizers`: `iam = true` for `aws_iam`, a `kdst.TokenAuthorizer` or `kdst.RequestAuthorizer` of a function of the service, with its identity sources, validation expression and ttl, 300 seconds by default, or a `kdst.CognitoAuthorizer` of a user pool's arn or one of `resources`, with its `scopes` |
 | `events: schedule`                                          | `kdst.schedule("rate(...)")`, one for each rate, amended with `enabled`, `timezone` and `input` |
 | `events: sqs`                                               | `kdst.fromQueue()`, of a queue of `resources` by its name or of an arn; `kdst.Queue` for any other value; with `maximumConcurrency` and `enabled` |
 | `events: stream`                                            | `kdst.fromStream()` or `kdst.fromTableStream()`, the same way; `kdst.Stream` for any other value; with its retries, record age, bisecting, parallelization, tumbling window, `destinations.onFailure` and `enabled` |
@@ -105,8 +105,8 @@ A variable inside a longer string becomes pkl interpolation: `orders-${sls:stage
 
 ## what is left to you
 
-- `events: http` and `provider.apiGateway`, the rest api of api gateway. koldstart deploys http apis only. The route is converted to one of the http api, `kdst.get("/path")` and the other methods' helpers, with a note, because request validation, usage plans and api keys have no equivalent.
-- the `authorizer` of an `events: http` route that is not converted, one by its `authorizerId`, a function of another service or a user pool of the stack, and `private`: fixes before you deploy, as the route is open without them. A converted lambda authorizer gets payload 2.0 and returns `{ isAuthorized, context }`, and a user pool's needs its app clients in `audience`. `request.parameters` and `schemas`, `cors`, `async` and `integration: lambda` get a note, and an `http`, `http-proxy` or `mock` integration leaves the route out.
+- the `authorizer` of an `events: http` route that is not converted, one by its `authorizerId` or a function of another service: a fix before you deploy, as the route is open without it; so is a token authorizer that reads its token from anything but a header. A `private` route takes the api key koldstart makes, not the serverless framework's: hand callers its value, of the key the output `restApiKeyId` names. A route of `aws_iam`, of either api, is on an api koldstart makes anew, so the policies of its callers need its id for `execute-api:Invoke`. A required parameter gets a note, as api gateway refuses a request without it, and an optional one changes nothing for a proxy integration.
+- what koldstart's rest api does not do yet: `request.schemas`, `cors`, which a function answers with a route of `"OPTIONS"`, `async`, `caching` and `connectionType`; `integration: lambda`, which becomes the proxy integration with a note, and an `http`, `http-proxy` or `mock` integration, which leaves the route out. Of `provider.apiGateway`, `timeoutInMillis` becomes each route's `timeout`, `apiKeys` and `usagePlan` get a note, and the rest is left. The rest api is regional, where the serverless framework's was edge-optimised by default.
 - `provider.iam`: the statements become `permissions` of every function, with a note to narrow them to what each function needs, or to replace them with `link`. A role of your own, `provider.iam.role` or a function's `role`, is not taken over: every function gets one of its own. Statements with a `Condition`, `NotAction`, `NotResource` or `Principal` are left out.
 - `Fn::Select` of a list only known while deploying, such as `Fn::GetAZs`, and `Fn::Split`, `Fn::ImportValue`, `Fn::Cidr` and `Fn::Transform`, which become pkl expressions or values of your own; `AWS::StackId` and `AWS::NotificationARNs`.
 - a condition on a value only known while deploying, such as a ref.
@@ -115,7 +115,7 @@ A variable inside a longer string becomes pkl interpolation: `orders-${sls:stage
 - runtimes other than node, go, python and rust, which koldstart does not build, such as java, .NET and ruby: those functions are left out, to build as a `bootstrap` or a container image; and a function of a prebuilt image, given by its uri, which koldstart does not take, as it builds images itself.
 - `layers` that `serverless.yml` builds, which koldstart does not build: publish them, and give functions their arns. A go or rust function's layers, which they do not take.
 - `snapStart` of a function that is not python, which lambda takes for java and .NET as well, runtimes koldstart does not build. `provider.versionFunctions`: koldstart publishes versions only of functions with `provisionedConcurrency` or `snapStart`. `provisionedConcurrency` is on the function's `live` alias: call the function as `<name>:live` to use it.
-- `provider.logs.restApi` and `provider.logs.websocket`: the rest api's routes are on the http api, which takes `http.accessLogs`, and the websocket api has no access logs yet. `provider.tracing.apiGateway`: an http api has no x-ray tracing.
+- `provider.logs.restApi` and `provider.logs.websocket`: the rest api and the websocket api have no access logs yet. `provider.tracing.apiGateway`: koldstart's apis have no x-ray tracing.
 - a kinesis stream's `consumer` and `startingPositionTimestamp`.
 - the policy of an `eventBridge` event's `deadLetterQueueArn`, which must let eventbridge send to it.
 - events other than the ones above, such as `cognitoUserPool`, `iot`, `msk` and `kafka`; an `eventBridge` event of a schedule, which is `kdst.schedule()`; a websocket route's `authorizer` and `routeResponseSelectionExpression`.

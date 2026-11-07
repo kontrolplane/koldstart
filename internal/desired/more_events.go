@@ -49,7 +49,7 @@ func (b *builder) webSocketAPI() []engine.Node {
 	}
 	name := Name(128, b.project.App, b.project.Stage, "websocket")
 	return []engine.Node{{ID: WebSocketID, Type: awsp.TypeHTTPAPI, Name: name, Inputs: map[string]any{
-		inputName: name, inputCORS: nil, "throttling": nil, "protocol": "WEBSOCKET", "routeSelection": selection, "stage": b.project.Stage,
+		inputName: name, inputCORS: nil, "throttling": nil, "protocol": "WEBSOCKET", "routeSelection": selection, inputStage: b.project.Stage,
 	}}}
 }
 
@@ -92,7 +92,7 @@ func (b *builder) webSocketRoutes(name string, fn config.Function) []engine.Node
 		}
 		nodes = append(nodes, engine.Node{ID: wsRouteID(e.Route), Type: awsp.TypeRoute, Inputs: map[string]any{
 			inputAPI: api, "routeKey": e.Route, "target": engine.Join("integrations/", engine.Ref(wsIntegrationID(name), "IntegrationId")),
-			"authorizationType": authNone, "authorizer": "", "scopes": nil, "stage": b.project.Stage,
+			inputAuthType: authNone, inputAuth: "", "scopes": nil, inputStage: b.project.Stage,
 		}})
 	}
 	return nodes

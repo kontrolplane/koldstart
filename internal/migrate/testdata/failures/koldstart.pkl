@@ -32,6 +32,7 @@ functions {
     applicationLogLevel = "WARN"
     systemLogLevel = "INFO"
     events {
+      // TODO: callers sign their requests and need execute-api:Invoke on the api koldstart makes, a new one: update their policies to its id, which httpApiUrl has
       (kdst.post("/internal")) {
         iam = true
       }

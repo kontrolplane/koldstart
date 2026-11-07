@@ -285,6 +285,12 @@ func TestEventHelpers(t *testing.T) {
 			short: `(kdst.get("/orders")) { authorizer = "users"; scopes { "orders:read" } }`,
 			long:  `new kdst.HttpRoute { method = "GET"; path = "/orders"; authorizer = "users"; scopes { "orders:read" } }`,
 		},
+		{name: "rest", short: `kdst.rest("GET", "/orders/{id}")`, long: `new kdst.RestRoute { method = "GET"; path = "/orders/{id}" }`},
+		{
+			name:  "rest amended",
+			short: `(kdst.rest("POST", "/orders")) { private = true; timeout = 10.s }`,
+			long:  `new kdst.RestRoute { method = "POST"; path = "/orders"; private = true; timeout = 10000.ms }`,
+		},
 		{name: "schedule", short: `kdst.schedule("rate(1 hour)")`, long: `new kdst.Schedule { expression = "rate(1 hour)" }`},
 		{
 			name:  "schedule amended",
@@ -552,6 +558,55 @@ resources { ["dead"] = kdst.queue() }`)
 	}
 }
 
+// TestRESTSettings checks the rest api, its three kinds of authorizer and a route that sets
+// everything render as what they say: the timeout in milliseconds, the ttls in seconds, a ref
+// among the user pools, and the defaults of the headers.
+func TestRESTSettings(t *testing.T) {
+	p := loadBody(t, evaluator(t), `rest {
+  throttling = new { rate = 50; burst = 100 }
+  authorizers {
+    ["token"] = new kdst.TokenAuthorizer { functionName = "auth"; validation = "^Bearer .+$"; ttl = 5.min }
+    ["request"] = new kdst.RequestAuthorizer { functionName = "auth"; identity { "method.request.header.X-Token"; "context.sourceIp" }; ttl = 1.min }
+    ["users"] = new kdst.CognitoAuthorizer { userPools { kdst.ref("pool", "Arn"); "arn:aws:cognito-idp:eu-west-1:123456789012:userpool/eu-west-1_a" } }
+  }
+}
+functions {
+  ["auth"] { runtime = "nodejs22.x"; handler = "src/auth.handler" }
+  ["api"] {
+    runtime = "nodejs22.x"; handler = "src/api.handler"
+    events {
+      (kdst.rest("GET", "/orders/{id}")) {
+        authorizer = "users"; scopes { "orders/read" }; private = true
+        requiredQuery { "page" }; requiredHeaders { "X-Tenant" }; timeout = 5500.ms
+      }
+      (kdst.rest("ANY", "/")) { iam = true }
+    }
+  }
+}
+resources { ["pool"] { type = "AWS::Cognito::UserPool" } }`)
+	route, root := p.Functions["api"].Events[0], p.Functions["api"].Events[1]
+	if route.Type != config.EventRESTRoute || !route.Private || route.RequiredQuery[0] != "page" || route.RequiredHeaders[0] != "X-Tenant" ||
+		route.TimeoutMillis == nil || *route.TimeoutMillis != 5500 || route.Scopes[0] != "orders/read" {
+		t.Errorf("route = %+v", route)
+	}
+	if !root.IAM || root.TimeoutMillis != nil || root.Path != "/" {
+		t.Errorf("the root's route = %+v", root)
+	}
+	a := p.REST.Authorizers
+	if a["token"].Type != config.RESTAuthorizerToken || a["token"].Header != "Authorization" || a["token"].TTL != 300 || a["token"].Validation != "^Bearer .+$" {
+		t.Errorf("token = %+v", a["token"])
+	}
+	if a["request"].Type != config.RESTAuthorizerRequest || len(a["request"].Identity) != 2 || a["request"].TTL != 60 {
+		t.Errorf("request = %+v", a["request"])
+	}
+	if pools := a["users"].UserPools; a["users"].Type != config.RESTAuthorizerCognito || len(pools) != 2 || pools[0].Ref == nil || pools[1].Literal == "" {
+		t.Errorf("users = %+v", a["users"])
+	}
+	if p.REST.Throttling.Rate != 50 || p.REST.Throttling.Burst != 100 {
+		t.Errorf("throttling = %+v", p.REST.Throttling)
+	}
+}
+
 // TestSchemaRefuses checks the schema reports mistakes, pointing at the line, and Load the
 // outputs a deploy could not record, before a plan.
 func TestSchemaRefuses(t *testing.T) {
@@ -575,6 +630,9 @@ func TestSchemaRefuses(t *testing.T) {
 		{name: "mount outside of mnt", body: `functions { ["api"] { runtime = "nodejs22.x"; handler = "x.y"; fileSystem = new { accessPoint = "arn:x"; mountPath = "/data" } } }`, want: "mountPath"},
 		{name: "unknown log format", body: `functions { ["api"] { runtime = "nodejs22.x"; handler = "x.y"; logFormat = "xml" } }`, want: "xml"},
 		{name: "secret with an empty segment", body: `functions { ["api"] { runtime = "nodejs22.x"; handler = "x.y"; environment { ["X"] = kdst.secret("db//main").field("password") } } }`, want: "kdst.secretsmanager() for the full name"},
+		{name: "a rest route of an unknown method", body: `functions { ["api"] { runtime = "nodejs22.x"; handler = "x.y"; events { kdst.rest("FETCH", "/x") } } }`, want: "FETCH"},
+		{name: "a rest route that waits too long", body: `functions { ["api"] { runtime = "nodejs22.x"; handler = "x.y"; events { (kdst.rest("GET", "/x")) { timeout = 20.min } } } }`, want: "isBetween(50.ms, 15.min)"},
+		{name: "a request authorizer of an unknown source", body: `rest { authorizers { ["a"] = new kdst.RequestAuthorizer { functionName = "api"; identity { "$request.header.X" } } } }`, want: "identity"},
 		{name: "a secret as an output", body: `outputs { ["apiKey"] = kdst.param("api-key") }`, want: "outputs[apiKey]: a secret cannot be an output"},
 		{name: "another stage's output as an output", body: `outputs { ["payments"] = kdst.stageOutput("payments", "prod", "apiUrl") }`, want: "outputs[payments]: kdst.stageOutput() cannot be an output"},
 		{name: "an output koldstart generates", body: `functions { ["stripe-webhook"] { runtime = "nodejs22.x"; handler = "x.y"; url { auth = "none" } } }

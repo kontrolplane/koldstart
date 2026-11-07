@@ -1,5 +1,6 @@
 // Package awsp holds the providers koldstart writes by hand: a function with its role, log group
-// and url, the http api with its routes, integrations, authorizers and domain, and the
+// and url, the http api with its routes, integrations, authorizers and domain, the rest api with
+// its resources, routes, authorizers, stage and deployment, api key and usage plan, and the
 // schedules, mappings, subscriptions, notifications and permissions of its events. They call the
 // aws apis directly, so a change aws can make in place takes one call.
 package awsp
@@ -39,6 +40,13 @@ const (
 	TypeTargets         = "koldstart::ElasticLoadBalancingV2::Targets"
 	TypeListenerRule    = "koldstart::ElasticLoadBalancingV2::ListenerRule"
 	TypeLogSubscription = "koldstart::Logs::SubscriptionFilter"
+	TypeRESTAPI         = "koldstart::ApiGateway::RestApi"
+	TypeRESTResource    = "koldstart::ApiGateway::Resource"
+	TypeRESTRoute       = "koldstart::ApiGateway::Method"
+	TypeRESTAuthorizer  = "koldstart::ApiGateway::Authorizer"
+	TypeRESTStage       = "koldstart::ApiGateway::Stage"
+	TypeRESTKey         = "koldstart::ApiGateway::ApiKey"
+	TypeRESTUsagePlan   = "koldstart::ApiGateway::UsagePlan"
 )
 
 // decodeInputs reads the request's inputs into v.
