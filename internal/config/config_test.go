@@ -213,6 +213,79 @@ func TestValidate(t *testing.T) {
 			want: "sets NotificationConfiguration",
 		},
 		{
+			name: "dead letter target in s3",
+			change: func(p *Project) {
+				fn := p.Functions["api"]
+				fn.DeadLetter = Value{Literal: "arn:aws:s3:::dead"}
+				p.Functions["api"] = fn
+			},
+			want: "deadLetter: it is in s3, and takes sqs, sns alone",
+		},
+		{
+			name: "destination by name",
+			change: func(p *Project) {
+				fn := p.Functions["api"]
+				fn.Async = &Async{OnFailure: Value{Literal: "dead"}}
+				p.Functions["api"] = fn
+			},
+			want: `async.onFailure: "dead" is not an arn`,
+		},
+		{
+			name: "destination a table",
+			change: func(p *Project) {
+				fn := p.Functions["api"]
+				fn.Async = &Async{OnSuccess: Value{Ref: &Ref{Resource: "orders", Attribute: "Arn"}}}
+				p.Functions["api"] = fn
+			},
+			want: "async.onSuccess: it is in dynamodb, and takes sqs, sns, events, lambda alone",
+		},
+		{
+			name: "efs without a vpc",
+			change: func(p *Project) {
+				fn := p.Functions["api"]
+				fn.FileSystem = &FileSystem{AccessPoint: Value{Literal: "arn:aws:elasticfilesystem:eu-west-1:1:access-point/fsap-1"}, MountPath: "/mnt/x"}
+				p.Functions["api"] = fn
+			},
+			want: "a function that mounts efs needs a vpc",
+		},
+		{
+			name: "log levels of text logs",
+			change: func(p *Project) {
+				fn := p.Functions["api"]
+				fn.LogFormat, fn.ApplicationLogLevel = LogFormatText, "WARN"
+				p.Functions["api"] = fn
+			},
+			want: "the log levels apply to json logs alone",
+		},
+		{
+			name: "iam and an authorizer",
+			change: func(p *Project) {
+				fn := p.Functions["api"]
+				fn.Events[0].IAM = true
+				p.Functions["api"] = fn
+			},
+			want: "a route takes iam or an authorizer, not both",
+		},
+		{
+			name: "input and input path",
+			change: func(p *Project) {
+				fn := p.Functions["worker"]
+				fn.Events = append(fn.Events, Event{Type: EventRule, Pattern: []byte(`{"source":["x"]}`), Input: "{}", InputPath: "$.detail"})
+				p.Functions["worker"] = fn
+			},
+			want: "give one of input, inputPath and inputTransformer",
+		},
+		{
+			name: "stream failures to a function",
+			change: func(p *Project) {
+				fn := p.Functions["worker"]
+				fn.Events = append(fn.Events, Event{Type: EventStream, Stream: Value{Literal: "arn:aws:kinesis:eu-west-1:1:stream/x"},
+					OnFailure: Value{Ref: &Ref{Resource: "api", Attribute: "Arn"}}})
+				p.Functions["worker"] = fn
+			},
+			want: "onFailure: it is in lambda, and takes sqs, sns, s3 alone",
+		},
+		{
 			name: "output of itself",
 			change: func(p *Project) {
 				p.Outputs["self"] = Value{Output: &OutputRef{App: "orders", Stage: "dev", Output: "table"}}

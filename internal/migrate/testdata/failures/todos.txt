@@ -1,0 +1,13 @@
+left out, to write by hand:
+  provider.logs.restApi: the routes of the rest api are on the http api: give it access logs with http.accessLogs
+  provider.logs.websocket: koldstart has no access logs of the websocket api yet
+  functions.charge.provisionedConcurrency: koldstart publishes no versions yet, which provisioned concurrency needs
+  functions.settle.events[1].consumer: koldstart has no consumer yet
+  functions.settle.snapStart: koldstart publishes no versions yet, which snapStart needs
+
+works differently, to check:
+  provider.tracing.apiGateway: an http api has no x-ray tracing: the functions trace with tracing
+  functions.audit.events[2].deadLetterQueueArn: the queue's policy must let events.amazonaws.com send to it
+
+not needed in koldstart:
+  provider.logs.frameworkLambda: koldstart deploys no functions of its own

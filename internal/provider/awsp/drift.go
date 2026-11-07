@@ -9,6 +9,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
+	"github.com/aws/aws-sdk-go-v2/service/lambda/types"
 
 	"github.com/kontrolplane/koldstart/internal/engine"
 )
@@ -28,13 +29,31 @@ func (p Function) Drift(ctx context.Context, req engine.Request) ([]string, erro
 }
 
 // liveInputs are the inputs lambda says a function has, with what lambda does not return, such
-// as where its zip came from, taken from in.
+// as where its zip came from and its async settings, taken from in. Its tags are the ones of in
+// that lambda has, as lambda's include koldstart's own.
 func liveInputs(in FunctionInputs, out *lambda.GetFunctionOutput) FunctionInputs {
 	c := out.Configuration
 	live := FunctionInputs{
 		Name: in.Name, Runtime: string(c.Runtime), Handler: aws.ToString(c.Handler),
 		Memory: aws.ToInt32(c.MemorySize), Timeout: aws.ToInt32(c.Timeout), Role: aws.ToString(c.Role),
-		Code: in.Code,
+		Code: in.Code, Async: in.Async, KMSKey: aws.ToString(c.KMSKeyArn),
+	}
+	if c.TracingConfig != nil && c.TracingConfig.Mode == types.TracingModeActive {
+		live.Tracing = string(types.TracingModeActive)
+	}
+	if c.DeadLetterConfig != nil {
+		live.DeadLetter = aws.ToString(c.DeadLetterConfig.TargetArn)
+	}
+	for _, fs := range c.FileSystemConfigs {
+		live.FileSystem = &FileSystemConfig{AccessPoint: aws.ToString(fs.Arn), MountPath: aws.ToString(fs.LocalMountPath)}
+	}
+	for k := range in.Tags {
+		if v, ok := out.Tags[k]; ok {
+			if live.Tags == nil {
+				live.Tags = map[string]string{}
+			}
+			live.Tags[k] = v
+		}
 	}
 	if in.isImage() {
 		live.Runtime, live.Handler = in.Runtime, in.Handler
@@ -55,6 +74,11 @@ func liveInputs(in FunctionInputs, out *lambda.GetFunctionOutput) FunctionInputs
 	}
 	if c.LoggingConfig != nil {
 		live.LogGroup = aws.ToString(c.LoggingConfig.LogGroup)
+		if c.LoggingConfig.LogFormat == types.LogFormatJson {
+			live.LogFormat = string(types.LogFormatJson)
+			live.ApplicationLogLevel = level(in.ApplicationLogLevel, string(c.LoggingConfig.ApplicationLogLevel))
+			live.SystemLogLevel = level(in.SystemLogLevel, string(c.LoggingConfig.SystemLogLevel))
+		}
 	}
 	if c.VpcConfig != nil && len(c.VpcConfig.SubnetIds) > 0 {
 		live.VPC = &VPCConfig{SubnetIDs: c.VpcConfig.SubnetIds, SecurityGroupIDs: c.VpcConfig.SecurityGroupIds}
@@ -68,6 +92,15 @@ func liveInputs(in FunctionInputs, out *lambda.GetFunctionOutput) FunctionInputs
 	}
 	if out.Concurrency != nil {
 		live.ReservedConcurrency = out.Concurrency.ReservedConcurrentExecutions
+	}
+	return live
+}
+
+// level is the log level lambda has, empty when it is INFO, lambda's default, and the function
+// sets none.
+func level(want, live string) string {
+	if want == "" && live == "INFO" {
+		return ""
 	}
 	return live
 }

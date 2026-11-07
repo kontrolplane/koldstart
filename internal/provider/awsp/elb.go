@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 
@@ -220,6 +221,11 @@ type ListenerRuleInputs struct {
 	Paths       []string `json:"paths"`
 	Hosts       []string `json:"hosts"`
 	Methods     []string `json:"methods"`
+	// Headers, Query and SourceIPs are left out when the rule has none, so one deployed before
+	// them keeps its hash.
+	Headers   map[string][]string `json:"headers,omitempty"`
+	Query     map[string]string   `json:"query,omitempty"`
+	SourceIPs []string            `json:"sourceIps,omitempty"`
 }
 
 // ListenerRule is the provider of listener rules.
@@ -237,6 +243,19 @@ func (in ListenerRuleInputs) conditions() []types.RuleCondition {
 	}
 	if len(in.Methods) > 0 {
 		out = append(out, types.RuleCondition{Field: aws.String("http-request-method"), HttpRequestMethodConfig: &types.HttpRequestMethodConditionConfig{Values: in.Methods}})
+	}
+	for _, name := range slices.Sorted(maps.Keys(in.Headers)) {
+		out = append(out, types.RuleCondition{Field: aws.String("http-header"), HttpHeaderConfig: &types.HttpHeaderConditionConfig{HttpHeaderName: aws.String(name), Values: in.Headers[name]}})
+	}
+	if len(in.Query) > 0 {
+		pairs := make([]types.QueryStringKeyValuePair, 0, len(in.Query))
+		for _, key := range slices.Sorted(maps.Keys(in.Query)) {
+			pairs = append(pairs, types.QueryStringKeyValuePair{Key: aws.String(key), Value: aws.String(in.Query[key])})
+		}
+		out = append(out, types.RuleCondition{Field: aws.String("query-string"), QueryStringConfig: &types.QueryStringConditionConfig{Values: pairs}})
+	}
+	if len(in.SourceIPs) > 0 {
+		out = append(out, types.RuleCondition{Field: aws.String("source-ip"), SourceIpConfig: &types.SourceIpConditionConfig{Values: in.SourceIPs}})
 	}
 	return out
 }

@@ -56,7 +56,7 @@ The schema has a version of its own, `schemaVersion`, which `Project.pkl` render
 | `stage`     | the stage from `--stage`, read only; inside functions and resources, read it as `kdst.stage`     |
 | `functions` | the functions, by name                                                                          |
 | `resources` | any other aws resources, by name; functions and resources share their names                     |
-| `http`      | the stage's http api: domain, cors, authorizers and throttling                                   |
+| `http`      | the stage's http api: domain, cors, authorizers, throttling and access logs                      |
 | `outputs`   | values printed by `kdst outputs`                                                                 |
 | `tags`      | tags added to everything koldstart creates, next to its own                                      |
 
@@ -94,8 +94,15 @@ functions {
 | `vpc`                 |           | `subnetIds` and `securityGroupIds` to put the function in                                           |
 | `bundle`              |           | for node: `externals`, packages to leave out of the bundle, and `sourcemap`; for python: `include`, what goes in the zip |
 | `typecheck`           | `false`   | for typescript: run `tsc --noEmit` before bundling, which needs node and typescript installed       |
+| `tracing`             | `false`   | send traces to x-ray                                                                               |
+| `kmsKey`              |           | a kms key of your own, by its arn, that encrypts the variables in place of lambda's                 |
+| `tags`                |           | tags of this function alone, next to the project's `tags`                                           |
+| `deadLetter`          |           | an sqs queue or sns topic, by its arn, for the async events the function failed on every time        |
+| `async`               |           | how lambda handles async events, see [failures](#failures)                                          |
+| `fileSystem`          |           | an efs access point to mount: `accessPoint`, its arn, and `mountPath`, under `/mnt/`; needs `vpc`    |
+| `logFormat`           | `"text"`  | `"json"` writes each line as json with its level, and takes `applicationLogLevel` and `systemLogLevel` |
 
-Each function gets a role and a log group of its own. The role may write to the log group, and has what `link`, `permissions`, its events and its runtime secrets add.
+Each function gets a role and a log group of its own. The role may write to the log group, and has what `link`, `permissions`, its events and its runtime secrets add, and what its settings need: writing traces, decrypting with its `kmsKey`, sending to its dead letter target and destinations, and mounting its file system.
 
 `default`, pkl's default of a mapping, holds what every function gets:
 
@@ -185,6 +192,40 @@ permissions {
 }
 ```
 
+### failures
+
+When a function fails on an event lambda handed it without waiting, as s3, sns and eventbridge do, lambda tries it again. `async` says how often, how long an event may wait, and where results go:
+
+```pkl
+deadLetter = kdst.ref("failed", "Arn")
+async = new {
+  maximumRetryAttempts = 0
+  maximumEventAge = 1.h
+  onSuccess = kdst.ref("settle", "Arn")
+  onFailure = kdst.ref("failed", "Arn")
+}
+```
+
+`maximumRetryAttempts` is `0` to `2`, and `maximumEventAge` a minute to six hours; lambda's defaults are `2` and six hours. A destination is an sqs queue, an sns topic, an event bus or a function, by its arn; `kdst.ref()` of one of the project's. The role may send to each one koldstart can tell the service of; one given as a value only known while deploying, such as `kdst.stageOutput()`, needs a statement in `permissions`.
+
+A stream's mapping takes how it handles a batch the function fails on, and an event rule how it hands over events:
+
+```pkl
+(kdst.fromStream("clicks")) {
+  maximumRetryAttempts = 3
+  maximumRecordAge = 1.h
+  bisectBatchOnFunctionError = true
+  onFailure = kdst.ref("failed", "Arn")
+}
+(kdst.fromEventBridge(new Dynamic { source { "orders" } })) {
+  maximumRetryAttempts = 4
+  maximumEventAge = 2.h
+  deadLetter = kdst.ref("failed", "Arn")
+}
+```
+
+A stream without `maximumRetryAttempts` or `maximumRecordAge` retries a batch until its records expire. A rule's `deadLetter` is an sqs queue whose policy lets `events.amazonaws.com` send to it; koldstart does not write that policy.
+
 ### function urls
 
 ```pkl
@@ -208,6 +249,7 @@ events {
   (kdst.fromBucket("uploads")) { prefix = "incoming/" }
   (kdst.fromEventBridge(new Dynamic { source { "orders.service" } })) { bus = "orders" }
   kdst.fromWebSocket("$connect")
+  (kdst.fromLogs("/ecs/web")) { filter = "ERROR" }
 }
 ```
 
@@ -222,6 +264,7 @@ events {
 | `kdst.fromBucket(name or arn)`           | a `Bucket`; a name is `kdst.ref(name, "BucketName")`, and `arn:aws:s3:::<name>` any other bucket |
 | `kdst.fromEventBridge(pattern)`          | an `EventRule` on the default bus                                       |
 | `kdst.fromWebSocket(route)`              | a `WebSocketRoute`                                                      |
+| `kdst.fromLogs(log group)`               | a `LogSubscription` of a log group, by its name, as it is              |
 
 A name is a resource of the project; anything that starts with `arn:`, or a value such as `kdst.stageOutput()`, is passed as it is. Each helper gives the event's class, so the rest of the class amends it, in parentheses. The classes are the long form, and the only one for a load balancer:
 
@@ -236,20 +279,22 @@ events {
   new kdst.EventRule { bus = "orders"; pattern = new Dynamic { source { "orders.service" }; ["detail-type"] { "OrderPlaced" } } }
   new kdst.WebSocketRoute { route = "$connect" }
   new kdst.LoadBalancer { listener = "arn:aws:elasticloadbalancing:..."; priority = 10; paths { "/legacy/*" } }
+  new kdst.LogSubscription { logGroup = "/ecs/web"; filter = "ERROR" }
 }
 ```
 
 | class       | creates                                                                                            |
 | ----------- | -------------------------------------------------------------------------------------------------- |
-| `HttpRoute` | a route on the stage's http api, with its integration and permission; `authorizer` and `scopes` guard it |
+| `HttpRoute` | a route on the stage's http api, with its integration and permission; `authorizer` and `scopes` guard it, or `iam = true` takes only requests signed by a caller that may `execute-api:Invoke` it |
 | `Schedule`  | an eventbridge scheduler schedule, `rate(...)`, `cron(...)` or `at(...)`, with `timezone`, `input` and `enabled` |
-| `Queue`     | an event source mapping from an sqs queue, with `batchSize`, `maximumBatchingWindow`, `reportBatchItemFailures` and `filters` |
+| `Queue`     | an event source mapping from an sqs queue, with `batchSize`, `maximumBatchingWindow`, `reportBatchItemFailures`, `filters`, `maximumConcurrency` and `enabled` |
 | `Topic`     | an sns subscription and the permission for sns to invoke the function, with `filterPolicy`          |
-| `Stream`    | an event source mapping from a kinesis stream or a dynamodb stream                                   |
+| `Stream`    | an event source mapping from a kinesis stream or a dynamodb stream, with what a queue takes, `parallelizationFactor`, `tumblingWindow`, and its [failures](#failures) |
 | `Bucket`    | the function in the bucket's notifications, and the permission for s3 to invoke it                   |
-| `EventRule` | an eventbridge rule on `bus`, `default` without one, that sends the events matching `pattern`, an object or json, to the function, with `input` in their place and `enabled`; and the permission for eventbridge to invoke it |
+| `EventRule` | an eventbridge rule on `bus`, `default` without one, that sends the events matching `pattern`, an object or json, to the function, with `input`, `inputPath` or `inputTransformer` in their place, `enabled` and its [failures](#failures); and the permission for eventbridge to invoke it |
 | `WebSocketRoute` | a route of the stage's websocket api, `$connect`, `$disconnect`, `$default` or a value of the route selection, with its integration and permission |
-| `LoadBalancer` | a target group of the function, the permission for the load balancer to invoke it, and a rule of `priority` on `listener` that forwards the requests matching its `paths`, `hosts` and `methods` to it |
+| `LoadBalancer` | a target group of the function, the permission for the load balancer to invoke it, and a rule of `priority` on `listener` that forwards the requests matching its `paths`, `hosts`, `methods`, `headers`, `query` and `sourceIps` to it |
+| `LogSubscription` | a subscription filter of `logGroup` that sends the lines matching `filter`, every line without one, to the function, and the permission for cloudwatch logs to invoke it; a log group takes two |
 
 A queue must hide a message for at least the function's timeout, its `VisibilityTimeout`, or lambda refuses the mapping; koldstart checks it for queues of the project. `reportBatchItemFailures` is on by default, so a function returns the messages that failed and only those are retried.
 
@@ -265,6 +310,7 @@ http {
   certificate = "arn:aws:acm:eu-west-1:123456789012:certificate/..."
   cors = new { origins { "https://example.com" } }
   throttling = new { rate = 100; burst = 200 }
+  accessLogs = new { retention = 14 }
   authorizers {
     ["users"] = new kdst.JwtAuthorizer { issuer = "https://auth.example.com"; audience { "orders" } }
     ["keys"] = new kdst.LambdaAuthorizer { functionName = "authorize"; ttl = 5.min }
@@ -273,6 +319,8 @@ http {
 ```
 
 With a domain, `httpApiUrl` is `https://<domain>`, and the output `httpDomainTarget` is where its dns record points. A route picks an authorizer with `authorizer = "users"`, and sets a request limit of its own, in place of the stage-wide one, with `throttling = new { rate = 5; burst = 10 }`.
+
+`accessLogs` writes a line for every request to a log group koldstart makes, `/aws/http-api/<app>-<stage>`, kept for `retention` days, `30` without it. The line is json of the request's id, ip, time, method, route, status, protocol and length, or what `format` says with api gateway's `$context` variables.
 
 ### the websocket api
 

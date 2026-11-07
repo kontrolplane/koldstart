@@ -272,6 +272,7 @@ func (b *builder) functionNode(name string, fn config.Function, env map[string]a
 	if len(fn.Layers) > 0 {
 		inputs["layers"] = b.values(fn.Layers)
 	}
+	b.functionSettings(fn, inputs)
 	if fn.IsImage() {
 		delete(inputs, "runtime")
 		delete(inputs, "handler")
@@ -281,6 +282,53 @@ func (b *builder) functionNode(name string, fn config.Function, env map[string]a
 		}
 	}
 	return engine.Node{ID: FunctionID(name), Type: awsp.TypeFunction, Name: lambdaName, After: []string{LogGroupID(name)}, Inputs: inputs}
+}
+
+// functionSettings adds what a function sets beyond its runtime, size and code: tracing, its kms
+// key, tags, dead letter target, async handling, file system and log format. Each is left out of
+// the inputs when the function does not set it, so a function deployed before they were known
+// keeps its hash.
+func (b *builder) functionSettings(fn config.Function, inputs map[string]any) {
+	if fn.Tracing {
+		inputs["tracing"] = "Active"
+	}
+	if fn.KMSKey.IsSet() {
+		inputs["kmsKey"] = b.value(fn.KMSKey)
+	}
+	if len(fn.Tags) > 0 {
+		inputs["tags"] = fn.Tags
+	}
+	if fn.DeadLetter.IsSet() {
+		inputs["deadLetter"] = b.value(fn.DeadLetter)
+	}
+	if a := fn.Async; a != nil {
+		async := map[string]any{}
+		if a.MaximumRetryAttempts != nil {
+			async["maximumRetryAttempts"] = *a.MaximumRetryAttempts
+		}
+		if a.MaximumEventAge != nil {
+			async["maximumEventAge"] = *a.MaximumEventAge
+		}
+		if a.OnSuccess.IsSet() {
+			async["onSuccess"] = b.value(a.OnSuccess)
+		}
+		if a.OnFailure.IsSet() {
+			async["onFailure"] = b.value(a.OnFailure)
+		}
+		inputs["async"] = async
+	}
+	if fs := fn.FileSystem; fs != nil {
+		inputs["fileSystem"] = map[string]any{"accessPoint": b.value(fs.AccessPoint), "mountPath": fs.MountPath}
+	}
+	if fn.LogFormat == config.LogFormatJSON {
+		inputs["logFormat"] = "JSON"
+		if fn.ApplicationLogLevel != "" {
+			inputs["applicationLogLevel"] = fn.ApplicationLogLevel
+		}
+		if fn.SystemLogLevel != "" {
+			inputs["systemLogLevel"] = fn.SystemLogLevel
+		}
+	}
 }
 
 // ImageURI is where a function's container image is pushed: its app's repository in the

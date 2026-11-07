@@ -25,6 +25,40 @@ type RuleInputs struct {
 	Function string `json:"function"`
 	Input    string `json:"input"`
 	Enabled  bool   `json:"enabled"`
+	// The settings of the target below are left out when they are not set, so a rule deployed
+	// before they were known keeps its hash.
+	InputPath            string            `json:"inputPath,omitempty"`
+	InputTransformer     *InputTransformer `json:"inputTransformer,omitempty"`
+	MaximumRetryAttempts *int32            `json:"maximumRetryAttempts,omitempty"`
+	MaximumEventAge      *int32            `json:"maximumEventAge,omitempty"`
+	DeadLetter           string            `json:"deadLetter,omitempty"`
+}
+
+// InputTransformer is a template eventbridge fills in with parts of an event.
+type InputTransformer struct {
+	Paths    map[string]string `json:"paths"`
+	Template string            `json:"template"`
+}
+
+// target is the rule's one target, the function, with what it gets and how it is retried.
+func (in RuleInputs) target() types.Target {
+	target := types.Target{Id: aws.String(ruleTarget), Arn: &in.Function}
+	if in.Input != "" {
+		target.Input = &in.Input
+	}
+	if in.InputPath != "" {
+		target.InputPath = &in.InputPath
+	}
+	if t := in.InputTransformer; t != nil {
+		target.InputTransformer = &types.InputTransformer{InputPathsMap: t.Paths, InputTemplate: &t.Template}
+	}
+	if in.MaximumRetryAttempts != nil || in.MaximumEventAge != nil {
+		target.RetryPolicy = &types.RetryPolicy{MaximumRetryAttempts: in.MaximumRetryAttempts, MaximumEventAgeInSeconds: in.MaximumEventAge}
+	}
+	if in.DeadLetter != "" {
+		target.DeadLetterConfig = &types.DeadLetterConfig{Arn: &in.DeadLetter}
+	}
+	return target
 }
 
 // Rule is the provider of eventbridge rules.
@@ -55,11 +89,7 @@ func (p Rule) put(ctx context.Context, in RuleInputs, tags map[string]string) (e
 	if err != nil {
 		return engine.Result{}, fmt.Errorf("putting the rule %s: %w", in.Name, err)
 	}
-	target := types.Target{Id: aws.String(ruleTarget), Arn: &in.Function}
-	if in.Input != "" {
-		target.Input = &in.Input
-	}
-	failed, err := p.Client.PutTargets(ctx, &eventbridge.PutTargetsInput{Rule: &in.Name, EventBusName: &in.Bus, Targets: []types.Target{target}})
+	failed, err := p.Client.PutTargets(ctx, &eventbridge.PutTargetsInput{Rule: &in.Name, EventBusName: &in.Bus, Targets: []types.Target{in.target()}})
 	if err != nil {
 		return engine.Result{}, fmt.Errorf("pointing the rule %s at %s: %w", in.Name, in.Function, err)
 	}

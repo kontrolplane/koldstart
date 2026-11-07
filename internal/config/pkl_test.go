@@ -324,6 +324,12 @@ func TestEventHelpers(t *testing.T) {
 			long:  `new kdst.EventRule { pattern = new Dynamic { source { "orders" } }; bus = "orders" }`,
 		},
 		{name: "websocket", short: `kdst.fromWebSocket("$connect")`, long: `new kdst.WebSocketRoute { route = "$connect" }`},
+		{name: "logs", short: `kdst.fromLogs("/aws/lambda/other")`, long: `new kdst.LogSubscription { logGroup = "/aws/lambda/other" }`},
+		{
+			name:  "logs amended",
+			short: `(kdst.fromLogs("/ecs/web")) { filter = "ERROR" }`,
+			long:  `new kdst.LogSubscription { logGroup = "/ecs/web"; filter = "ERROR" }`,
+		},
 	}
 	dir := t.TempDir()
 	for _, tt := range tests {
@@ -446,6 +452,97 @@ func TestFunctionDefault(t *testing.T) {
 	}
 }
 
+// loadBody writes body as a koldstart.pkl and loads it for dev.
+func loadBody(t *testing.T, ev pkl.Evaluator, body string) *config.Project {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "koldstart.pkl")
+	if err := os.WriteFile(path, []byte(header(t)+body+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p, err := config.Load(context.Background(), ev, path, "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// TestFunctionSettings checks the settings of a function beyond its runtime and size, and the
+// access logs of the http api, render as what they say: durations in seconds, and what is not
+// set left to aws.
+func TestFunctionSettings(t *testing.T) {
+	p := loadBody(t, evaluator(t), `functions {
+  ["api"] {
+    runtime = "nodejs22.x"; handler = "src/api.handler"
+    tracing = true
+    kmsKey = "arn:aws:kms:eu-west-1:123456789012:key/1"
+    tags { ["tier"] = "web" }
+    deadLetter = kdst.ref("dead", "Arn")
+    async = new { maximumRetryAttempts = 0; maximumEventAge = 1.h; onFailure = kdst.ref("dead", "Arn") }
+    vpc = new { subnetIds { "subnet-1" }; securityGroupIds { "sg-1" } }
+    fileSystem = new { accessPoint = "arn:aws:elasticfilesystem:eu-west-1:123456789012:access-point/fsap-1"; mountPath = "/mnt/data" }
+    logFormat = "json"; applicationLogLevel = "WARN"
+    events { kdst.post("/orders") }
+  }
+}
+resources { ["dead"] = kdst.queue() }
+http { accessLogs = new { retention = 7 } }`)
+	api := p.Functions["api"]
+	if !api.Tracing || api.KMSKey.Literal == "" || api.Tags["tier"] != "web" || api.DeadLetter.Ref == nil {
+		t.Errorf("api settings = tracing %v, kms %+v, tags %v, dead letter %+v", api.Tracing, api.KMSKey, api.Tags, api.DeadLetter)
+	}
+	if a := api.Async; a == nil || *a.MaximumRetryAttempts != 0 || *a.MaximumEventAge != 3600 || a.OnFailure.Ref == nil || a.OnSuccess.IsSet() {
+		t.Errorf("async = %+v", api.Async)
+	}
+	if fs := api.FileSystem; fs == nil || fs.MountPath != "/mnt/data" {
+		t.Errorf("file system = %+v", api.FileSystem)
+	}
+	if api.LogFormat != config.LogFormatJSON || api.ApplicationLogLevel != "WARN" || api.SystemLogLevel != "" {
+		t.Errorf("logs = %s %s %s", api.LogFormat, api.ApplicationLogLevel, api.SystemLogLevel)
+	}
+	if l := p.HTTP.AccessLogs; l == nil || l.Retention != 7 || !strings.Contains(l.Format, "$context.requestId") {
+		t.Errorf("access logs = %+v", p.HTTP.AccessLogs)
+	}
+}
+
+// TestEventSettings checks the settings of a queue, a stream, an event rule and a route render
+// as what they say: durations in seconds, and what is not set left to aws.
+func TestEventSettings(t *testing.T) {
+	p := loadBody(t, evaluator(t), `functions {
+  ["api"] {
+    runtime = "nodejs22.x"; handler = "src/api.handler"
+    events {
+      (kdst.fromQueue("dead")) { maximumConcurrency = 5; enabled = false }
+      (kdst.fromStream("arn:aws:kinesis:eu-west-1:123456789012:stream/clicks")) {
+        maximumRetryAttempts = 3; maximumRecordAge = 1.h; bisectBatchOnFunctionError = true
+        parallelizationFactor = 2; tumblingWindow = 1.min; onFailure = kdst.ref("dead", "Arn")
+      }
+      (kdst.fromEventBridge(new Dynamic { source { "x" } })) {
+        inputTransformer = new { paths { ["id"] = "$.detail.id" }; template = "<id>" }
+        maximumRetryAttempts = 4; maximumEventAge = 2.h
+      }
+      (kdst.post("/internal")) { iam = true }
+    }
+  }
+}
+resources { ["dead"] = kdst.queue() }`)
+	queue, stream, rule, route := p.Functions["api"].Events[0], p.Functions["api"].Events[1], p.Functions["api"].Events[2], p.Functions["api"].Events[3]
+	if *queue.MaximumConcurrency != 5 || *queue.Enabled {
+		t.Errorf("queue = %+v", queue)
+	}
+	if *stream.MaximumRetryAttempts != 3 || *stream.MaximumRecordAge != 3600 || !stream.BisectBatchOnFunctionError {
+		t.Errorf("stream retries = %+v", stream)
+	}
+	if stream.ParallelizationFactor != 2 || stream.TumblingWindow != 60 || stream.OnFailure.Ref == nil || !*stream.Enabled {
+		t.Errorf("stream = %+v", stream)
+	}
+	if rule.InputTransformer == nil || rule.InputTransformer.Paths["id"] != "$.detail.id" || *rule.MaximumRetryAttempts != 4 || *rule.MaximumEventAge != 7200 {
+		t.Errorf("rule = %+v", rule)
+	}
+	if !route.IAM {
+		t.Errorf("route = %+v", route)
+	}
+}
+
 // TestSchemaRefuses checks the schema reports mistakes, pointing at the line.
 func TestSchemaRefuses(t *testing.T) {
 	ev := evaluator(t)
@@ -464,6 +561,9 @@ func TestSchemaRefuses(t *testing.T) {
 		{name: "secret with dot dot", body: `functions { ["api"] { runtime = "nodejs22.x"; handler = "x.y"; environment { ["X"] = kdst.secret("../prod/db") } } }`, want: `kdst.secret("../prod/db"): the name goes after <app>/<stage>/ and has no empty segments or ..`},
 		{name: "bucket by another arn", body: `functions { ["api"] { runtime = "nodejs22.x"; handler = "x.y"; events { kdst.fromBucket("arn:aws:sqs:eu-west-1:123456789012:jobs") } } }`, want: "not the arn of a bucket"},
 		{name: "table of an unknown key type", body: `resources { ["orders"] = (kdst.table("id")) { partitionKeyType = "X" } }`, want: "partitionKeyType"},
+		{name: "too many async retries", body: `functions { ["api"] { runtime = "nodejs22.x"; handler = "x.y"; async = new { maximumRetryAttempts = 3 } } }`, want: "isBetween(0, 2)"},
+		{name: "mount outside of mnt", body: `functions { ["api"] { runtime = "nodejs22.x"; handler = "x.y"; fileSystem = new { accessPoint = "arn:x"; mountPath = "/data" } } }`, want: "mountPath"},
+		{name: "unknown log format", body: `functions { ["api"] { runtime = "nodejs22.x"; handler = "x.y"; logFormat = "xml" } }`, want: "xml"},
 		{name: "secret with an empty segment", body: `functions { ["api"] { runtime = "nodejs22.x"; handler = "x.y"; environment { ["X"] = kdst.secret("db//main").field("password") } } }`, want: "kdst.secretsmanager() for the full name"},
 	}
 	dir := t.TempDir()

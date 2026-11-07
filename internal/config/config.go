@@ -64,6 +64,42 @@ type Function struct {
 	Typecheck    bool              `json:"typecheck"`
 	Image        *Image            `json:"image"`
 	Layers       []Value           `json:"layers"`
+	Tracing      bool              `json:"tracing"`
+	KMSKey       Value             `json:"kmsKey"`
+	Tags         map[string]string `json:"tags"`
+	DeadLetter   Value             `json:"deadLetter"`
+	Async        *Async            `json:"async"`
+	FileSystem   *FileSystem       `json:"fileSystem"`
+	// LogFormat is text or json; the levels apply to json alone.
+	LogFormat           string `json:"logFormat"`
+	ApplicationLogLevel string `json:"applicationLogLevel"`
+	SystemLogLevel      string `json:"systemLogLevel"`
+}
+
+// The formats a function's logs can have.
+const (
+	LogFormatText = "text"
+	LogFormatJSON = "json"
+)
+
+// Async is what lambda does with the events it is handed without waiting.
+type Async struct {
+	MaximumRetryAttempts *int `json:"maximumRetryAttempts"`
+	// MaximumEventAge is in seconds.
+	MaximumEventAge *int  `json:"maximumEventAge"`
+	OnSuccess       Value `json:"onSuccess"`
+	OnFailure       Value `json:"onFailure"`
+}
+
+// FileSystem is an efs access point a function mounts.
+type FileSystem struct {
+	AccessPoint Value  `json:"accessPoint"`
+	MountPath   string `json:"mountPath"`
+}
+
+// IsSet reports whether the value was given: a string that is not empty, or one of koldstart's.
+func (v Value) IsSet() bool {
+	return v.Literal != "" || v.Ref != nil || v.Secret != nil || v.Output != nil || v.Join != nil || v.Pseudo != ""
 }
 
 // Image is a container image a function runs instead of a runtime.
@@ -141,6 +177,14 @@ type HTTP struct {
 	CORS        *CORS                 `json:"cors"`
 	Authorizers map[string]Authorizer `json:"authorizers"`
 	Throttling  *Throttling           `json:"throttling"`
+	AccessLogs  *AccessLogs           `json:"accessLogs"`
+}
+
+// AccessLogs are the access logs of the http api.
+type AccessLogs struct {
+	Format string `json:"format"`
+	// Retention is in days.
+	Retention int `json:"retention"`
 }
 
 // Authorizer guards http routes: a jwt issuer, or a lambda function of the project.
@@ -366,6 +410,7 @@ const (
 	EventRule      = "eventRule"
 	EventWebSocket = "webSocketRoute"
 	EventALB       = "loadBalancer"
+	EventLogs      = "logSubscription"
 )
 
 // Event invokes a function. Type says which of the fields apply.
@@ -377,12 +422,14 @@ type Event struct {
 	Path       string   `json:"path"`
 	Authorizer string   `json:"authorizer"`
 	Scopes     []string `json:"scopes"`
+	IAM        bool     `json:"iam"`
 
 	// schedule
 	Expression string `json:"expression"`
 	Timezone   string `json:"timezone"`
 	Input      string `json:"input"`
-	Enabled    *bool  `json:"enabled"`
+	// Enabled is of a schedule, a rule, or a mapping of a queue or stream.
+	Enabled *bool `json:"enabled"`
 
 	// queue, topic, stream, bucket: the source
 	Queue  Value `json:"queue"`
@@ -397,8 +444,18 @@ type Event struct {
 	ReportBatchItemFailures bool     `json:"reportBatchItemFailures"`
 	Filters                 []string `json:"filters"`
 
+	// queue
+	MaximumConcurrency *int `json:"maximumConcurrency"`
+
 	// stream
-	StartingPosition string `json:"startingPosition"`
+	StartingPosition           string `json:"startingPosition"`
+	MaximumRetryAttempts       *int   `json:"maximumRetryAttempts"`
+	BisectBatchOnFunctionError bool   `json:"bisectBatchOnFunctionError"`
+	ParallelizationFactor      int    `json:"parallelizationFactor"`
+	OnFailure                  Value  `json:"onFailure"`
+	// MaximumRecordAge and TumblingWindow are in seconds.
+	MaximumRecordAge *int `json:"maximumRecordAge"`
+	TumblingWindow   int  `json:"tumblingWindow"`
 
 	// topic
 	FilterPolicy string `json:"filterPolicy"`
@@ -412,8 +469,13 @@ type Event struct {
 	Throttling *Throttling `json:"throttling"`
 
 	// eventRule: the pattern, an object or a json string, and the bus
-	Pattern json.RawMessage `json:"pattern"`
-	Bus     Value           `json:"bus"`
+	Pattern          json.RawMessage   `json:"pattern"`
+	Bus              Value             `json:"bus"`
+	InputPath        string            `json:"inputPath"`
+	InputTransformer *InputTransformer `json:"inputTransformer"`
+	DeadLetter       Value             `json:"deadLetter"`
+	// MaximumEventAge is in seconds. A rule's retries are MaximumRetryAttempts, as a stream's are.
+	MaximumEventAge *int `json:"maximumEventAge"`
 
 	// webSocketRoute
 	Route string `json:"route"`
@@ -425,6 +487,20 @@ type Event struct {
 	Hosts             []string `json:"hosts"`
 	Methods           []string `json:"methods"`
 	MultiValueHeaders bool     `json:"multiValueHeaders"`
+	// Headers, Query and SourceIPs are conditions of the rule, with the paths, hosts and methods.
+	Headers   map[string][]string `json:"headers"`
+	Query     map[string]string   `json:"query"`
+	SourceIPs []string            `json:"sourceIps"`
+
+	// logSubscription
+	LogGroup Value  `json:"logGroup"`
+	Filter   string `json:"filter"`
+}
+
+// InputTransformer is a template eventbridge fills in with parts of an event.
+type InputTransformer struct {
+	Paths    map[string]string `json:"paths"`
+	Template string            `json:"template"`
 }
 
 // PatternJSON is an event rule's pattern as the json string eventbridge takes, from an object or

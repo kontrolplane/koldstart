@@ -205,6 +205,68 @@ func (v *validator) function(name string, fn Function) {
 	if len(fn.Bundle.Include) > 0 && !fn.IsPython() {
 		v.errorf("%s.bundle.include: only python functions take it", where)
 	}
+	v.value(where+".kmsKey", fn.KMSKey)
+	v.destination(where+".deadLetter", fn.DeadLetter, ServiceSQS, ServiceSNS)
+	if a := fn.Async; a != nil {
+		v.destination(where+".async.onSuccess", a.OnSuccess, ServiceSQS, ServiceSNS, ServiceEvents, ServiceLambda)
+		v.destination(where+".async.onFailure", a.OnFailure, ServiceSQS, ServiceSNS, ServiceEvents, ServiceLambda)
+	}
+	if fs := fn.FileSystem; fs != nil {
+		v.value(where+".fileSystem.accessPoint", fs.AccessPoint)
+		if fn.VPC == nil {
+			v.errorf("%s.fileSystem: a function that mounts efs needs a vpc: set vpc to subnets that reach the file system", where)
+		}
+	}
+	if fn.LogFormat != LogFormatJSON && (fn.ApplicationLogLevel != "" || fn.SystemLogLevel != "") {
+		v.errorf("%s: the log levels apply to json logs alone: set logFormat = \"json\", or leave out the levels", where)
+	}
+}
+
+// The services a destination can be in, as its arn names them.
+const (
+	ServiceSQS    = "sqs"
+	ServiceSNS    = "sns"
+	ServiceS3     = "s3"
+	ServiceEvents = "events"
+	ServiceLambda = "lambda"
+)
+
+// Service is the service of a value that names something by its arn: from the arn, or from the
+// type of the function or resource of the project a ref names, AWS::SQS::Queue being in sqs. It is empty when it cannot be told
+// before deploying, as for an output of another stage.
+func (p *Project) Service(v Value) string {
+	switch {
+	case v.Ref != nil:
+		if _, ok := p.Functions[v.Ref.Resource]; ok {
+			return ServiceLambda
+		}
+		parts := strings.Split(p.Resources[v.Ref.Resource].Type, "::")
+		if len(parts) == 3 {
+			return strings.ToLower(parts[1])
+		}
+	case strings.HasPrefix(v.Literal, "arn:"):
+		parts := strings.SplitN(v.Literal, ":", 4)
+		if len(parts) == 4 {
+			return parts[2]
+		}
+	}
+	return ""
+}
+
+// destination checks a value that is set names something of one of the services, when that can
+// be told.
+func (v *validator) destination(where string, val Value, services ...string) {
+	if !val.IsSet() {
+		return
+	}
+	v.value(where, val)
+	if val.Literal != "" && !strings.HasPrefix(val.Literal, "arn:") {
+		v.errorf("%s: %q is not an arn: give the arn, or kdst.ref() of a resource of the project", where, val.Literal)
+		return
+	}
+	if service := v.p.Service(val); service != "" && !slices.Contains(services, service) {
+		v.errorf("%s: it is in %s, and takes %s alone", where, service, strings.Join(services, ", "))
+	}
 }
 
 func (v *validator) event(fn, where string, e Event) {
@@ -221,6 +283,9 @@ func (v *validator) event(fn, where string, e Event) {
 		if e.Authorizer != "" && (v.p.HTTP == nil || v.p.HTTP.Authorizers[e.Authorizer].Type == "") {
 			v.errorf("%s: no authorizer %q in http.authorizers", where, e.Authorizer)
 		}
+		if e.Authorizer != "" && e.IAM {
+			v.errorf("%s: a route takes iam or an authorizer, not both", where)
+		}
 	case EventQueue:
 		v.value(where+".queue", e.Queue)
 		v.visibility(fn, where, e.Queue)
@@ -228,10 +293,14 @@ func (v *validator) event(fn, where string, e Event) {
 		v.value(where+".topic", e.Topic)
 	case EventStream:
 		v.value(where+".stream", e.Stream)
+		v.destination(where+".onFailure", e.OnFailure, ServiceSQS, ServiceSNS, ServiceS3)
 	case EventRule:
 		v.value(where+".bus", e.Bus)
-		if pattern, err := e.PatternJSON(); err != nil || pattern == "" || pattern == "{}" {
-			v.errorf("%s: the pattern is not an event pattern: give an object, or json", where)
+		v.rule(where, e)
+	case EventLogs:
+		v.value(where+".logGroup", e.LogGroup)
+		if e.LogGroup.Literal == "" && e.LogGroup.Ref == nil && e.LogGroup.Join == nil {
+			v.errorf("%s: give the log group by its name", where)
 		}
 	case EventWebSocket:
 		key := "websocket " + e.Route
@@ -241,8 +310,8 @@ func (v *validator) event(fn, where string, e Event) {
 		v.routes[key] = fn
 	case EventALB:
 		v.value(where+".listener", e.Listener)
-		if len(e.Paths)+len(e.Hosts)+len(e.Methods) == 0 {
-			v.errorf("%s: a load balancer rule needs paths, hosts or methods to match", where)
+		if len(e.Paths)+len(e.Hosts)+len(e.Methods)+len(e.Headers)+len(e.Query)+len(e.SourceIPs) == 0 {
+			v.errorf("%s: a load balancer rule needs paths, hosts, methods, headers, query or sourceIps to match", where)
 		}
 		if e.Listener.Literal != "" {
 			key := fmt.Sprintf("listener %s %d", e.Listener.Literal, e.Priority)
@@ -259,6 +328,24 @@ func (v *validator) event(fn, where string, e Event) {
 			}
 		}
 	}
+}
+
+// rule checks an event rule has a pattern, at most one of the ways to change what the function
+// gets, and a dead letter queue in sqs.
+func (v *validator) rule(where string, e Event) {
+	if pattern, err := e.PatternJSON(); err != nil || pattern == "" || pattern == "{}" {
+		v.errorf("%s: the pattern is not an event pattern: give an object, or json", where)
+	}
+	given := 0
+	for _, set := range []bool{e.Input != "", e.InputPath != "", e.InputTransformer != nil} {
+		if set {
+			given++
+		}
+	}
+	if given > 1 {
+		v.errorf("%s: give one of input, inputPath and inputTransformer", where)
+	}
+	v.destination(where+".deadLetter", e.DeadLetter, ServiceSQS)
 }
 
 // defaultVisibility is how long sqs hides a received message when the queue does not say.

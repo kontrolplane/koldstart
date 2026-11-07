@@ -111,11 +111,27 @@ func (b *builder) rule(name string, e config.Event, n int) []engine.Node {
 	if s, ok := bus.(string); ok && s == "" {
 		bus = "default"
 	}
+	inputs := map[string]any{
+		inputName: ruleName, "bus": bus, "pattern": pattern, inputFunction: engine.Ref(FunctionID(name), attrArn),
+		"input": e.Input, "enabled": e.Enabled == nil || *e.Enabled,
+	}
+	if e.InputPath != "" {
+		inputs["inputPath"] = e.InputPath
+	}
+	if t := e.InputTransformer; t != nil {
+		inputs["inputTransformer"] = map[string]any{"paths": t.Paths, "template": t.Template}
+	}
+	if e.MaximumRetryAttempts != nil {
+		inputs["maximumRetryAttempts"] = *e.MaximumRetryAttempts
+	}
+	if e.MaximumEventAge != nil {
+		inputs["maximumEventAge"] = *e.MaximumEventAge
+	}
+	if e.DeadLetter.IsSet() {
+		inputs["deadLetter"] = b.value(e.DeadLetter)
+	}
 	return []engine.Node{
-		{ID: id, Type: awsp.TypeRule, Name: ruleName, Inputs: map[string]any{
-			inputName: ruleName, "bus": bus, "pattern": pattern, inputFunction: engine.Ref(FunctionID(name), attrArn),
-			"input": e.Input, "enabled": e.Enabled == nil || *e.Enabled,
-		}},
+		{ID: id, Type: awsp.TypeRule, Name: ruleName, Inputs: inputs},
 		b.permission(name, "rule-"+fmt.Sprint(n), "events.amazonaws.com", engine.Ref(id, attrArn), false),
 	}
 }
@@ -137,7 +153,7 @@ func (b *builder) loadBalancer(name string, e config.Event, n int) []engine.Node
 	group := b.targetGroupName(name, n)
 	permission := b.permission(name, "alb-"+key, "elasticloadbalancing.amazonaws.com", engine.Ref(groupID, attrArn), false)
 	targetsID := eventID(kindTargets, name, key)
-	return []engine.Node{
+	nodes := []engine.Node{
 		{ID: groupID, Type: awsp.TypeTargetGroup, Name: group, Inputs: map[string]any{inputName: group, "multiValueHeaders": e.MultiValueHeaders}},
 		permission,
 		{ID: targetsID, Type: awsp.TypeTargets, After: []string{permission.ID}, Inputs: map[string]any{
@@ -148,4 +164,15 @@ func (b *builder) loadBalancer(name string, e config.Event, n int) []engine.Node
 			"paths": e.Paths, "hosts": e.Hosts, "methods": e.Methods,
 		}},
 	}
+	rule := nodes[len(nodes)-1].Inputs
+	if len(e.Headers) > 0 {
+		rule["headers"] = e.Headers
+	}
+	if len(e.Query) > 0 {
+		rule["query"] = e.Query
+	}
+	if len(e.SourceIPs) > 0 {
+		rule["sourceIps"] = e.SourceIPs
+	}
+	return nodes
 }

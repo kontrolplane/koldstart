@@ -42,6 +42,8 @@ func (c *converter) events(w *writer, where string, events *yaml.Node) {
 			c.webSocketEvent(w, at, spec)
 		case "alb":
 			c.albEvent(w, at, spec)
+		case "cloudwatchLog":
+			c.logEvent(w, at, spec)
 		default:
 			c.leaveOut(w, at, fmt.Sprintf("koldstart has no %s events yet", kind), e)
 		}
@@ -107,7 +109,7 @@ func (c *converter) routeAuthorizer(w *writer, where string, n *yaml.Node) {
 		return
 	}
 	if str(get(n, "type")) == "aws_iam" {
-		c.leave(w, Add, where+".authorizer", "koldstart has no aws_iam authorization of routes yet", nil)
+		w.line("iam = true")
 		return
 	}
 	w.line("authorizer = %s", quote(str(get(n, "name"))))
@@ -222,8 +224,9 @@ func (c *converter) source(w *writer, where, key string, n *yaml.Node) {
 	c.assign(w, where+".arn", key, c.scalar(arn), arn)
 }
 
-// batching writes what a queue and a stream share: batch size, window, partial failures, filters.
-func (c *converter) batching(w *writer, where string, n *yaml.Node, window string) {
+// batching writes what a queue and a stream share: batch size, window, partial failures, filters,
+// and whether the mapping is enabled.
+func (c *converter) batching(w *writer, n *yaml.Node, window string) {
 	if size, ok := integer(get(n, "batchSize")); ok {
 		w.line("batchSize = %d", size)
 	}
@@ -241,17 +244,47 @@ func (c *converter) batching(w *writer, where string, n *yaml.Node, window strin
 		}
 		w.close()
 	}
-	for _, key := range []string{"maximumConcurrency", "parallelizationFactor", "bisectBatchOnFunctionError", "maximumRetryAttempts", "destinations", "tumblingWindowInSeconds"} {
-		if v := get(n, key); v != nil {
-			c.leaveOut(w, where+"."+key, "koldstart has no "+key+" yet", v)
-		}
+	if isFalse(get(n, "enabled")) {
+		w.line("enabled = false")
 	}
 }
 
 func (c *converter) queueEvent(w *writer, where string, n *yaml.Node) {
 	c.sourceEvent(w, where, n, "fromQueue", "Queue", "queue", attrArn, func(w *writer) {
-		c.batching(w, where, n, "maximumBatchingWindow")
+		c.batching(w, n, "maximumBatchingWindow")
+		if limit, ok := integer(get(n, "maximumConcurrency")); ok {
+			w.line("maximumConcurrency = %d", limit)
+		}
 	})
+}
+
+// failures writes how a stream's mapping handles a batch the function fails on: its retries,
+// how old a record may get, splitting the batch, parallel batches, the tumbling window, and
+// where a batch that is given up on goes.
+func (c *converter) failures(w *writer, where string, n *yaml.Node) {
+	if retries, ok := integer(get(n, "maximumRetryAttempts")); ok && retries >= 0 {
+		w.line("maximumRetryAttempts = %d", retries)
+	}
+	if age, ok := integer(get(n, "maximumRecordAgeInSeconds")); ok && age >= 0 {
+		w.line("maximumRecordAge = %d.s", age)
+	}
+	if isTrue(get(n, "bisectBatchOnFunctionError")) {
+		w.line("bisectBatchOnFunctionError = true")
+	}
+	if factor, ok := integer(get(n, "parallelizationFactor")); ok && factor > 1 {
+		w.line("parallelizationFactor = %d", factor)
+	}
+	if window, ok := integer(get(n, "tumblingWindowInSeconds")); ok && window > 0 {
+		w.line("tumblingWindow = %d.s", window)
+	}
+	if failure := get(get(n, "destinations"), "onFailure"); failure != nil {
+		c.assign(w, where+".destinations.onFailure", "onFailure", c.destination(failure), failure)
+	}
+	for _, key := range []string{"consumer", "startingPositionTimestamp"} {
+		if v := get(n, key); v != nil {
+			c.leaveOut(w, where+"."+key, "koldstart has no "+key+" yet", v)
+		}
+	}
 }
 
 // attrArn is the attribute of most resources' arn.
@@ -276,7 +309,8 @@ func (c *converter) streamEvent(w *writer, where string, n *yaml.Node) {
 		default:
 			c.leave(w, Review, where+".startingPosition", "the stream starts at LATEST, as koldstart has no "+position, nil)
 		}
-		c.batching(w, where, n, "batchWindow")
+		c.batching(w, n, "batchWindow")
+		c.failures(w, where, n)
 	})
 }
 
@@ -378,15 +412,58 @@ func (c *converter) ruleEvent(w *writer, where string, spec *yaml.Node) {
 			c.leaveOut(w, where+".input", err.Error(), input)
 		}
 	}
-	for _, key := range []string{"inputPath", "inputTransformer", "retryPolicy", "deadLetterQueueArn"} {
-		if v := get(spec, key); v != nil {
-			c.leaveOut(w, where+"."+key, "koldstart has no "+key+": the function gets the event, or input", v)
-		}
+	if path := get(spec, "inputPath"); path != nil {
+		c.assign(w, where+".inputPath", "inputPath", c.scalar(path), path)
+	}
+	if t := get(spec, "inputTransformer"); t != nil {
+		w.open("inputTransformer = new")
+		c.mapping(w, where+".inputTransformer.inputPathsMap", "paths", orMapping(get(t, "inputPathsMap")))
+		template := orEmpty(get(t, "inputTemplate"))
+		c.assign(w, where+".inputTransformer.inputTemplate", "template", c.scalar(template), template)
+		w.close()
 	}
 	if isFalse(get(spec, "enabled")) {
 		w.line("enabled = false")
 	}
+	retry := get(spec, "retryPolicy")
+	if n, ok := integer(get(retry, "maximumRetryAttempts")); ok {
+		w.line("maximumRetryAttempts = %d", n)
+	}
+	if n, ok := integer(get(retry, "maximumEventAge")); ok {
+		w.line("maximumEventAge = %d.s", n)
+	}
+	if dlq := get(spec, "deadLetterQueueArn"); dlq != nil {
+		c.assign(w, where+".deadLetterQueueArn", "deadLetter", c.nodeValue(dlq), dlq)
+		c.todo(Review, where+".deadLetterQueueArn", "the queue's policy must let events.amazonaws.com send to it")
+	}
 	w.close()
+}
+
+func orMapping(n *yaml.Node) *yaml.Node {
+	if n == nil {
+		return &yaml.Node{Kind: yaml.MappingNode}
+	}
+	return n
+}
+
+// logEvent converts a cloudwatchLog event, a log group by its name, or { logGroup, filter }, to
+// kdst.fromLogs().
+func (c *converter) logEvent(w *writer, where string, spec *yaml.Node) {
+	group, filter := spec, (*yaml.Node)(nil)
+	if spec.Kind == yaml.MappingNode {
+		group, filter = orEmpty(get(spec, "logGroup")), get(spec, "filter")
+	}
+	rest := func(w *writer) {
+		if filter != nil && str(filter) != "" {
+			c.assign(w, where+".filter", "filter", c.scalar(filter), filter)
+		}
+	}
+	v := c.nodeValue(group)
+	if !v.ok {
+		c.leaveOut(w, where, v.todo, spec)
+		return
+	}
+	w.amend("", "kdst.fromLogs("+v.expr+")", rest)
 }
 
 // webSocketEvent converts a websocket event, a route by its key: { route: $connect }, or the key
@@ -430,10 +507,21 @@ func (c *converter) albEvent(w *writer, where string, spec *yaml.Node) {
 		}
 		c.member(w, where+".conditions."+pair[0], pair[1], v)
 	}
-	for _, key := range []string{"header", "query", "ip"} {
-		if v := get(conditions, key); v != nil {
-			c.leaveOut(w, where+".conditions."+key, "koldstart has no alb condition on the "+key+" yet", v)
+	if header := get(conditions, "header"); header != nil {
+		name, values := str(get(header, "name")), get(header, "values")
+		if name == "" || values == nil {
+			c.leaveOut(w, where+".conditions.header", "give the header condition its name and values", header)
+		} else {
+			w.open("headers")
+			c.member(w, where+".conditions.header.values", "["+quote(name)+"]", listOf(values))
+			w.close()
 		}
+	}
+	if query := get(conditions, "query"); query != nil {
+		c.mapping(w, where+".conditions.query", "query", query)
+	}
+	if ip := get(conditions, "ip"); ip != nil {
+		c.member(w, where+".conditions.ip", "sourceIps", listOf(ip))
 	}
 	if isTrue(get(spec, "multiValueHeaders")) {
 		w.line("multiValueHeaders = true")

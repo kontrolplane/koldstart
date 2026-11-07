@@ -76,7 +76,7 @@ What was deployed is recorded in an S3 bucket in your account, created on the fi
 
 Functions are written in typescript, javascript, go or python, or are container images. Typescript is bundled with esbuild built into the binary, so packaging needs no node install. Go is cross-compiled to a `bootstrap` binary for the `provided.al2023` runtime. Python's dependencies are installed with uv for lambda's platform, native code included, from any machine. A container image is built with docker and pushed to ecr, and rebuilt only when what it is built from changes. Zips are built byte for byte the same from the same code, on a laptop and in CI, so their hash tells koldstart whether the code changed.
 
-Functions are triggered by api gateway http and websocket routes, function urls, schedules, eventbridge rules, sqs queues, sns topics, kinesis and dynamodb streams, s3 buckets, and application load balancers. Anything else AWS offers goes in `resources`, with the same type names and properties as CloudFormation. Tables, buckets and other resources that hold data are kept when a stage is removed, and a resource made outside koldstart is taken over with `kdst import`.
+Functions are triggered by api gateway http and websocket routes, function urls, schedules, eventbridge rules, sqs queues, sns topics, kinesis and dynamodb streams, s3 buckets, cloudwatch log groups, and application load balancers. Anything else AWS offers goes in `resources`, with the same type names and properties as CloudFormation. Tables, buckets and other resources that hold data are kept when a stage is removed, and a resource made outside koldstart is taken over with `kdst import`.
 
 `kdst invoke --local` and `kdst offline` run functions on your machine against an emulator of the lambda runtime api, with the variables the stage deployed and your credentials, so a handler runs locally the way it runs in AWS.
 
@@ -268,7 +268,7 @@ A file without a `PklProject` that amends the full `package://` uri of the schem
 ## what ends up in your account
 
 - for each function: the lambda function, an iam role, a log group, and the permissions its events need to invoke it
-- for each stage with http routes: one api gateway http api that all its routes share
+- for each stage with http routes: one api gateway http api that all its routes share, and a log group for its access logs when it has them
 - everything in `resources`, created through the cloud control api
 - per account and region: one bucket, `koldstart-state-<account>-<region>`, versioned, encrypted and with public access blocked, holding the state, locks and zips of every app and stage. Zips expire after 90 days, and each state keeps its last 100 versions.
 
@@ -278,6 +278,7 @@ Everything koldstart creates is tagged with its app, stage and node, together wi
 
 - runtimes other than node, go and python
 - the rest api of api gateway, only http apis are deployed
+- provisioned concurrency and snapstart, which need the published versions koldstart does not make yet
 - windows, other than through the container image
 
 ## commands

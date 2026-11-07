@@ -137,6 +137,10 @@ function fromBucket(bucketNameOrArn: Project.Value): Bucket = new {
 function fromEventBridge(eventPattern: Dynamic|Mapping<String, Any>|String): EventRule =
   new { pattern = eventPattern }
 
+/// A subscription to a cloudwatch log group by its name: `kdst.fromLogs("/aws/lambda/other")`.
+/// A filter amends it: `(kdst.fromLogs("/ecs/web")) { filter = "ERROR" }`.
+function fromLogs(logGroupName: Project.Value): LogSubscription = new { logGroup = logGroupName }
+
 /// A route of the stage's websocket api: `kdst.fromWebSocket("$connect")`.
 function fromWebSocket(routeKey: String): WebSocketRoute = new { route = routeKey }
 
@@ -217,6 +221,9 @@ class HttpRoute extends Project.Event {
   authorizer: String?
   /// For a jwt authorizer: the scopes the token must have.
   scopes: Listing<String>
+  /// Take only requests signed with sigv4 by a caller that may `execute-api:Invoke` the route,
+  /// in place of an authorizer.
+  iam: Boolean = false
   /// This route's own request limit, in place of the stage-wide one.
   throttling: Project.Throttling?
 }
@@ -230,7 +237,37 @@ class EventRule extends Project.Event {
   bus: Project.Value = "default"
   /// What the function gets in place of the event, as json.
   input: String?
+  /// What the function gets in place of the event: a part of it, by a json path such as
+  /// `$.detail`.
+  inputPath: String?
+  /// What the function gets in place of the event: a template filled in with parts of it.
+  inputTransformer: InputTransformer?
   enabled: Boolean = true
+  /// How often eventbridge tries again to hand over an event, at most 185.
+  maximumRetryAttempts: Int(isBetween(0, 185))?
+  /// How long eventbridge tries to hand over an event, a minute to a day.
+  maximumEventAge: Duration(isBetween(1.min, 24.h))?
+  /// An sqs queue, by its arn, for the events eventbridge could not hand over. Its queue policy
+  /// must let `events.amazonaws.com` send to it.
+  deadLetter: Project.Value?
+}
+
+/// A template eventbridge fills in with parts of an event.
+class InputTransformer {
+  /// The parts, by name, as json paths: `["id"] = "$.detail.id"`.
+  paths: Mapping<String, String>
+  /// What the function gets, with `<id>` where each part goes.
+  template: String
+}
+
+/// A subscription to a cloudwatch log group: the function gets the lines that match [filter], a
+/// batch at a time.
+class LogSubscription extends Project.Event {
+  fixed type: "logSubscription" = "logSubscription"
+  /// The log group, by its name.
+  logGroup: Project.Value
+  /// A filter pattern. Empty matches every line.
+  filter: String = ""
 }
 
 /// A route of the stage's websocket api: `$connect`, `$disconnect`, `$default`, or a value of
@@ -252,6 +289,12 @@ class LoadBalancer extends Project.Event {
   paths: Listing<String>
   hosts: Listing<String>
   methods: Listing<String>
+  /// Headers to match, by name, each to any of its values.
+  headers: Mapping<String, Listing<String>>
+  /// Query parameters to match, by key: `["format"] = "json"`.
+  query: Mapping<String, String>
+  /// The addresses requests come from, as cidr blocks.
+  sourceIps: Listing<String>
   /// Hand the function headers and query parameters as lists, for those that repeat.
   multiValueHeaders: Boolean = false
 }
@@ -278,6 +321,10 @@ class Queue extends Project.Event {
   reportBatchItemFailures: Boolean = true
   /// Filter patterns, as json.
   filters: Listing<String>
+  /// How many functions read the queue at once, 2 to 1000. Null leaves it to lambda.
+  maximumConcurrency: Int(isBetween(2, 1000))?
+  /// False stops reading the queue, and keeps the mapping.
+  enabled: Boolean = true
 }
 
 /// An sns subscription.
@@ -299,6 +346,23 @@ class Stream extends Project.Event {
   maximumBatchingWindow: Duration(isBetween(0.s, 5.min)) = 0.s
   reportBatchItemFailures: Boolean = true
   filters: Listing<String>
+  /// How often a batch the function fails on is tried again. Null retries until its records
+  /// expire.
+  maximumRetryAttempts: Int(isBetween(0, 10000))?
+  /// How old a record may get before it is given up on, a minute to a week. Null keeps it until
+  /// it expires.
+  maximumRecordAge: Duration(isBetween(1.min, 7.d))?
+  /// Split a batch the function fails on in two, and try each half again.
+  bisectBatchOnFunctionError: Boolean = false
+  /// How many batches of one shard the function handles at once.
+  parallelizationFactor: Int(isBetween(1, 10)) = 1
+  /// For aggregates across batches: the length of the window the function keeps a state over.
+  tumblingWindow: Duration(isBetween(0.s, 15.min)) = 0.s
+  /// Where a batch that is given up on is recorded: an sqs queue, sns topic or s3 bucket, by its
+  /// arn. The role may send to it.
+  onFailure: Project.Value?
+  /// False stops reading the stream, and keeps the mapping.
+  enabled: Boolean = true
 }
 
 /// An s3 bucket notification.
