@@ -261,12 +261,91 @@ func TestGoRuntime(t *testing.T) {
 	}
 	root := t.TempDir()
 	write(t, root, map[string]string{"go.mod": "module example.com/worker\n\ngo 1.26\n", "cmd/worker/main.go": goHandler})
-	r, out := start(t, root, config.Function{Runtime: config.RuntimeGo, Handler: "./cmd/worker", Memory: 128, Timeout: 5}, nil)
+	r, out := start(t, root, config.Function{Runtime: config.RuntimeProvided, Handler: "./cmd/worker", Memory: 128, Timeout: 5}, nil)
 	payload, err := r.Invoke(context.Background(), []byte(`{"job": 1}`))
 	if err != nil {
 		t.Fatalf("Invoke: %v\n%s", err, out)
 	}
 	if string(payload) != `{"event": {"job": 1}, "region": "eu-west-1"}` {
+		t.Errorf("Invoke = %s", payload)
+	}
+}
+
+// TestBootstrapRuntime runs an executable built elsewhere, here a go binary built for this
+// machine, as the function's bootstrap against the runtime api.
+func TestBootstrapRuntime(t *testing.T) {
+	goBin, err := exec.LookPath("go")
+	if err != nil {
+		t.Skip("no go on the PATH")
+	}
+	root := t.TempDir()
+	write(t, root, map[string]string{"go.mod": "module example.com/worker\n\ngo 1.26\n", "cmd/worker/main.go": goHandler})
+	cmd := exec.Command(goBin, "build", "-o", filepath.Join(root, "dist", "worker"), "./cmd/worker")
+	cmd.Dir = root
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go build: %v\n%s", err, out)
+	}
+	r, out := start(t, root, config.Function{Runtime: config.RuntimeProvided, Bootstrap: "dist/worker", Memory: 128, Timeout: 5}, nil)
+	payload, err := r.Invoke(context.Background(), []byte(`{"job": 2}`))
+	if err != nil {
+		t.Fatalf("Invoke: %v\n%s", err, out)
+	}
+	if string(payload) != `{"event": {"job": 2}, "region": "eu-west-1"}` {
+		t.Errorf("Invoke = %s", payload)
+	}
+}
+
+// rustHandler is a rust function with nothing but the standard library, so cargo builds it
+// without the network: it asks the runtime api for each event and posts it back with its
+// handler.
+const rustHandler = `use std::io::{Read, Write};
+use std::net::TcpStream;
+
+fn request(addr: &str, method: &str, path: &str, body: &str) -> (String, String) {
+    let mut s = TcpStream::connect(addr).unwrap();
+    write!(s, "{} {} HTTP/1.1\r\nHost: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", method, path, addr, body.len(), body).unwrap();
+    let mut out = String::new();
+    s.read_to_string(&mut out).unwrap();
+    let (head, rest) = out.split_once("\r\n\r\n").unwrap();
+    (head.to_string(), rest.to_string())
+}
+
+fn main() {
+    let addr = std::env::var("AWS_LAMBDA_RUNTIME_API").unwrap();
+    loop {
+        let (head, event) = request(&addr, "GET", "/2018-06-01/runtime/invocation/next", "");
+        let id = head.lines().find_map(|l| {
+            let (k, v) = l.split_once(':')?;
+            if k.eq_ignore_ascii_case("lambda-runtime-aws-request-id") { Some(v.trim().to_string()) } else { None }
+        }).unwrap();
+        let body = format!("{{\"event\": {}, \"handler\": \"{}\"}}", event, std::env::var("_HANDLER").unwrap_or_default());
+        request(&addr, "POST", &format!("/2018-06-01/runtime/invocation/{}/response", id), &body);
+    }
+}
+`
+
+// TestRustRuntime runs a rust crate, built with cargo for this machine, against the runtime
+// api, told its handler is bootstrap as lambda tells it.
+func TestRustRuntime(t *testing.T) {
+	if _, err := exec.LookPath("cargo"); err != nil {
+		t.Skip("no cargo on the PATH")
+	}
+	if runtime.GOOS == "linux" {
+		if _, err := exec.LookPath("cargo-lambda"); err != nil {
+			t.Skip("no cargo-lambda on the PATH, which builds rust on linux")
+		}
+	}
+	root := t.TempDir()
+	write(t, root, map[string]string{
+		"cmd/api/Cargo.toml":  "[package]\nname = \"api\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+		"cmd/api/src/main.rs": rustHandler,
+	})
+	r, out := start(t, root, config.Function{Runtime: config.RuntimeProvided, Handler: "./cmd/api", Memory: 128, Timeout: 5}, nil)
+	payload, err := r.Invoke(context.Background(), []byte(`{"order": 3}`))
+	if err != nil {
+		t.Fatalf("Invoke: %v\n%s", err, out)
+	}
+	if string(payload) != `{"event": {"order": 3}, "handler": "bootstrap"}` {
 		t.Errorf("Invoke = %s", payload)
 	}
 }

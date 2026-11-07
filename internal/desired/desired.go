@@ -255,10 +255,7 @@ func (b *builder) environment(fn config.Function) (map[string]any, error) {
 }
 
 func (b *builder) functionNode(name string, fn config.Function, env map[string]any, archive build.Archive) engine.Node {
-	handler := fn.Handler
-	if fn.IsGo() {
-		handler = "bootstrap"
-	}
+	handler := fn.LambdaHandler()
 	var vpc any
 	if fn.VPC != nil {
 		vpc = map[string]any{"subnetIds": b.values(fn.VPC.SubnetIDs), "securityGroupIds": b.values(fn.VPC.SecurityGroupIDs)}

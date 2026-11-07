@@ -31,10 +31,11 @@ func evaluator(t *testing.T) pkl.Evaluator {
 	return pkl.Evaluator{Binary: binary}
 }
 
-// TestTemplatesEvaluate checks what each template writes evaluates in its own project, with the
-// PklProject it writes depending on the schema of this tree as a dev build's does, with the
-// runtime and handler inferred from the handler it writes, passes the checks of a deploy, and
-// plans a function with its route, and that its commented secret evaluates once uncommented,
+// TestTemplatesEvaluate checks what each template writes, and adds to .gitignore, evaluates in
+// its own project, with the PklProject it writes depending on the schema of this tree as a dev
+// build's does, with the runtime and handler inferred from the handler it writes, passes the
+// checks of a deploy, and plans a function with its route, and that its commented secret
+// evaluates once uncommented,
 // under the app and stage.
 func TestTemplatesEvaluate(t *testing.T) {
 	ev := evaluator(t)
@@ -47,10 +48,13 @@ func TestTemplatesEvaluate(t *testing.T) {
 		files    []string
 		runtime  string
 		handler  string
+		// ignored are the lines .gitignore gets, Ignored without them.
+		ignored []string
 	}{
 		{template: Node, files: []string{"PklProject", "koldstart.pkl", "src/api.ts"}, runtime: config.RuntimeNode22, handler: "src/api.handler"},
-		{template: Go, files: []string{"PklProject", "cmd/api/main.go", "go.mod", "koldstart.pkl"}, runtime: config.RuntimeGo, handler: "./cmd/api"},
+		{template: Go, files: []string{"PklProject", "cmd/api/main.go", "go.mod", "koldstart.pkl"}, runtime: config.RuntimeProvided, handler: "./cmd/api"},
 		{template: Python, files: []string{"PklProject", "koldstart.pkl", "requirements.txt", "src/api.py"}, runtime: config.RuntimePy313, handler: "src/api.handler"},
+		{template: Rust, files: []string{"Cargo.toml", "PklProject", "cmd/api/Cargo.toml", "cmd/api/src/main.rs", "koldstart.pkl"}, runtime: config.RuntimeProvided, handler: "./cmd/api", ignored: []string{".koldstart/build/", ".koldstart/local/", "target/"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.template, func(t *testing.T) {
@@ -62,6 +66,13 @@ func TestTemplatesEvaluate(t *testing.T) {
 			slices.Sort(res.Written)
 			if !slices.Equal(res.Written, tt.files) {
 				t.Errorf("wrote %v, want %v", res.Written, tt.files)
+			}
+			want := tt.ignored
+			if want == nil {
+				want = Ignored
+			}
+			if !slices.Equal(res.Gitignore, want) {
+				t.Errorf("added %v to .gitignore, want %v", res.Gitignore, want)
 			}
 			source, err := os.ReadFile(filepath.Join(dir, Config))
 			if err != nil {
@@ -178,7 +189,7 @@ func TestWriteRefuses(t *testing.T) {
 		opts Options
 		want string
 	}{
-		{name: "template", opts: Options{Dir: t.TempDir(), App: "orders", Template: "ruby"}, want: `no template "ruby": want node, go or python`},
+		{name: "template", opts: Options{Dir: t.TempDir(), App: "orders", Template: "ruby"}, want: `no template "ruby": want node, go, python or rust`},
 		{name: "app", opts: Options{Dir: t.TempDir(), App: "Orders", Template: Node}, want: "pass --app with lowercase letters"},
 	}
 	for _, tt := range tests {

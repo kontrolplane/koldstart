@@ -12,8 +12,8 @@ import (
 // skipped are the directories a change in does not rebuild anything, and sources the files that
 // go into a build: a change to a log or an editor's backup is no reason to rebuild.
 var (
-	skipped = []string{"node_modules", ".koldstart", ".git", "dist", "bin", "__pycache__", ".venv", "venv"}
-	sources = []string{".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".cjs", ".jsx", ".json", ".go", ".mod", ".sum", ".py", ".toml", ".lock", ".txt"}
+	skipped = []string{"node_modules", ".koldstart", ".git", "dist", "bin", "target", "__pycache__", ".venv", "venv"}
+	sources = []string{".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".cjs", ".jsx", ".json", ".go", ".mod", ".sum", ".rs", ".py", ".toml", ".lock", ".txt"}
 )
 
 // Watch calls changed when a file under root changes, looking every interval, until ctx ends.

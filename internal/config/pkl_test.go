@@ -158,7 +158,8 @@ functions {
 }
 
 // TestLoadInfers checks functions that set neither runtime nor handler evaluate, and load with
-// what the files beside the configuration, or in the root LoadIn is given, say.
+// what the files beside the configuration, or in the root LoadIn is given, say, or with what a
+// bootstrap needs.
 func TestLoadInfers(t *testing.T) {
 	ev := evaluator(t)
 	schema, err := filepath.Abs(filepath.Join("..", "..", "pkl", "Project.pkl"))
@@ -173,14 +174,17 @@ functions {
   ["api"] { memory = 256 }
   ["worker"] {}
   ["report"] { runtime = "nodejs24.x" }
+  ["orders"] {}
+  ["resize"] { bootstrap = "dist/resize" }
 }
 `
 	root := t.TempDir()
 	files := map[string]string{
-		"koldstart.pkl":      body,
-		"src/api.ts":         "export const handler = async () => 1\n",
-		"src/report.ts":      "export const handler = async () => 1\n",
-		"cmd/worker/main.go": "package main\n",
+		"koldstart.pkl":         body,
+		"src/api.ts":            "export const handler = async () => 1\n",
+		"src/report.ts":         "export const handler = async () => 1\n",
+		"cmd/worker/main.go":    "package main\n",
+		"cmd/orders/Cargo.toml": "[package]\nname = \"orders\"\n",
 	}
 	for name, content := range files {
 		file := filepath.Join(root, filepath.FromSlash(name))
@@ -197,8 +201,10 @@ functions {
 	}
 	want := map[string][2]string{
 		"api":    {config.RuntimeNode22, "src/api.handler"},
-		"worker": {config.RuntimeGo, "./cmd/worker"},
+		"worker": {config.RuntimeProvided, "./cmd/worker"},
 		"report": {config.RuntimeNode24, "src/report.handler"},
+		"orders": {config.RuntimeProvided, "./cmd/orders"},
+		"resize": {config.RuntimeProvided, ""},
 	}
 	tests := []struct {
 		name string
@@ -221,6 +227,9 @@ functions {
 				if fn := p.Functions[name]; fn.Runtime != w[0] || fn.Handler != w[1] {
 					t.Errorf("%s: runtime %q, handler %q, want %q, %q", name, fn.Runtime, fn.Handler, w[0], w[1])
 				}
+			}
+			if got := p.Functions["resize"].Bootstrap; got != "dist/resize" {
+				t.Errorf("resize: bootstrap %q, want dist/resize", got)
 			}
 		})
 	}

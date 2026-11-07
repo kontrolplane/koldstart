@@ -1,6 +1,6 @@
 // Package scaffold writes a new project: a koldstart.pkl with one function behind an http route,
-// the PklProject that names its schema, its handler in typescript, go or python, and the entries
-// koldstart needs in .gitignore.
+// the PklProject that names its schema, its handler in typescript, go, python or rust, and the
+// entries koldstart needs in .gitignore.
 package scaffold
 
 import (
@@ -24,10 +24,11 @@ const (
 	Node   = "node"
 	Go     = "go"
 	Python = "python"
+	Rust   = "rust"
 )
 
 // Templates are the names of the templates, in the order help lists them.
-var Templates = []string{Node, Go, Python}
+var Templates = []string{Node, Go, Python, Rust}
 
 // files are the templates, a file ending in .tmpl filled in and written without the suffix.
 //
@@ -36,6 +37,10 @@ var files embed.FS
 
 // Ignored are the lines .gitignore gets: where koldstart builds functions, for aws and to run here.
 var Ignored = []string{".koldstart/build/", ".koldstart/local/"}
+
+// templateIgnored are the lines .gitignore gets for a template, after Ignored: where cargo
+// builds the crates of rust's workspace.
+var templateIgnored = map[string][]string{Rust: {"target/"}}
 
 // Config is the file every template writes, which init refuses to write over without force.
 const Config = "koldstart.pkl"
@@ -127,7 +132,7 @@ func Write(o Options) (Result, error) {
 	} else {
 		res.Kept = append(res.Kept, schema.Package)
 	}
-	res.Gitignore, err = ignore(filepath.Join(o.Dir, ".gitignore"))
+	res.Gitignore, err = ignore(filepath.Join(o.Dir, ".gitignore"), slices.Concat(Ignored, templateIgnored[o.Template]))
 	return res, err
 }
 
@@ -170,10 +175,10 @@ func writeFile(path string, data []byte, overwrite bool) (bool, error) {
 	return true, nil
 }
 
-// ignore adds the lines of Ignored that .gitignore does not have yet, and returns them.
+// ignore adds the lines .gitignore does not have yet, and returns them.
 //
 //nolint:gosec // reads and writes the project's .gitignore, which everyone reads
-func ignore(path string) ([]string, error) {
+func ignore(path string, lines []string) ([]string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, err
@@ -183,7 +188,7 @@ func ignore(path string) ([]string, error) {
 		have[strings.TrimSpace(line)] = true
 	}
 	var missing []string
-	for _, line := range Ignored {
+	for _, line := range lines {
 		if !have[line] && !have[strings.TrimSuffix(line, "/")] {
 			missing = append(missing, line)
 		}

@@ -27,9 +27,9 @@ func initCommand(name string, opts *Options) *cobra.Command {
 		Use:   "init [directory]",
 		Short: "start a project: a koldstart.pkl, its PklProject, a handler and the .gitignore entries",
 		Long: fmt.Sprintf(`init writes a koldstart.pkl with one function behind GET /hello, and its handler in typescript,
-go or python, into the directory, this one without it, and adds .koldstart/build/ and
-.koldstart/local/ to .gitignore. It keeps any other file that is there already, and writes over a
-koldstart.pkl only with --force.
+go, python or rust, into the directory, this one without it, and adds .koldstart/build/ and
+.koldstart/local/ to .gitignore, and target/ for rust. It keeps any other file that is there
+already, and writes over a koldstart.pkl only with --force.
 
 Beside it goes a PklProject that names the schema of this release of %[1]s, or, for a dev build,
 the schema it embeds, which init resolves into PklProject.deps.json; commit both. When it cannot

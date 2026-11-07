@@ -27,12 +27,13 @@ var NodeExtensions = []string{".ts", ".mts", ".cts", ".tsx", ".js", ".mjs", ".cj
 //
 //   - src/<name>.ts, or another of NodeExtensions: DefaultNode, src/<name>.handler
 //   - src/<name>.py: DefaultPython, src/<name>.handler
-//   - cmd/<name>/ with go files: provided.al2023, ./cmd/<name>
+//   - cmd/<name>/ with go files or a Cargo.toml: provided.al2023, ./cmd/<name>
 //
 // A runtime without a handler gets that runtime's handler. A handler without a runtime gets the
-// runtime of what it names: go for ./… or a directory of go files, otherwise node or python for
-// the file that is there. Finding none of them, or more than one, is an error that says what to
-// set.
+// runtime of what it names: provided.al2023 for ./…, a directory of go files or one with a
+// Cargo.toml, otherwise node or python for the file that is there. A bootstrap without a runtime
+// gets provided.al2023, and no handler. Finding none of them, or more than one, is an error that
+// says what to set.
 func (p *Project) Infer(root string) error {
 	var errs []error
 	for _, name := range slices.Sorted(maps.Keys(p.Functions)) {
@@ -58,6 +59,11 @@ type candidate struct {
 // infer fills in fn's runtime, its handler, or both, for a function called name.
 func infer(root, name string, fn *Function) error {
 	switch {
+	case fn.Bootstrap != "":
+		if fn.Runtime == "" {
+			fn.Runtime = RuntimeProvided
+		}
+		return nil
 	case fn.Runtime != "":
 		fn.Handler = conventionalHandler(fn.Runtime, name)
 		return nil
@@ -68,8 +74,8 @@ func infer(root, name string, fn *Function) error {
 	}
 	module := "src/" + name
 	found := sources(root, module)
-	if dir := "cmd/" + name; goPackage(root, dir) {
-		found = append(found, candidate{RuntimeGo, dir + "/"})
+	if dir := "cmd/" + name; goPackage(root, dir) || crate(root, dir) {
+		found = append(found, candidate{RuntimeProvided, dir + "/"})
 	}
 	switch len(found) {
 	case 0:
@@ -84,7 +90,7 @@ func infer(root, name string, fn *Function) error {
 
 // conventionalHandler is the handler of a function called name on runtime, by the convention.
 func conventionalHandler(runtime, name string) string {
-	if runtime == RuntimeGo {
+	if runtime == RuntimeProvided {
 		return "./cmd/" + name
 	}
 	return "src/" + name + ".handler"
@@ -92,12 +98,12 @@ func conventionalHandler(runtime, name string) string {
 
 // handlerRuntime is the runtime of what handler names in root.
 func handlerRuntime(root, handler string) (string, error) {
-	if strings.HasPrefix(handler, "./") || strings.HasPrefix(handler, "../") || goPackage(root, handler) {
-		return RuntimeGo, nil
+	if strings.HasPrefix(handler, "./") || strings.HasPrefix(handler, "../") || goPackage(root, handler) || crate(root, handler) {
+		return RuntimeProvided, nil
 	}
 	i := strings.LastIndex(handler, ".")
 	if i <= 0 {
-		return "", fmt.Errorf("handler %s names no file and function, such as src/api.handler, or go package, such as ./cmd/api: set runtime", handler)
+		return "", fmt.Errorf("handler %s names no file and function, such as src/api.handler, or directory to build, such as ./cmd/api: set runtime, or bootstrap for a binary built elsewhere", handler)
 	}
 	module := handler[:i]
 	found := sources(root, module)
@@ -171,4 +177,10 @@ func goPackage(root, dir string) bool {
 	return slices.ContainsFunc(entries, func(e os.DirEntry) bool {
 		return !e.IsDir() && strings.HasSuffix(e.Name(), ".go") && !strings.HasSuffix(e.Name(), "_test.go")
 	})
+}
+
+// crate reports whether the slash-separated dir in root holds a Cargo.toml, a rust crate or a
+// member of a workspace.
+func crate(root, dir string) bool {
+	return dir != "" && exists(root, path.Join(dir, "Cargo.toml"))
 }

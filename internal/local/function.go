@@ -134,7 +134,7 @@ func (l Runner) Runtime(f Function) (*Runtime, error) {
 			cmd.Dir, cmd.Env = dir, l.env(f, dir, addr)
 			return cmd
 		}
-	case f.Config.IsGo():
+	case f.Config.IsProvided():
 		command = func(addr string) *exec.Cmd {
 			cmd := exec.Command(filepath.Join(dir, "bootstrap"))
 			cmd.Dir, cmd.Env = dir, l.env(f, dir, addr)
@@ -283,7 +283,7 @@ func (l Runner) env(f Function, dir, addr string) []string {
 		"AWS_REGION":                      f.Region,
 		"AWS_DEFAULT_REGION":              f.Region,
 		"LAMBDA_TASK_ROOT":                dir,
-		"_HANDLER":                        f.Config.Handler,
+		"_HANDLER":                        f.Config.LambdaHandler(),
 	}
 	maps.Copy(vars, f.Env)
 	out := make([]string, 0, len(vars))

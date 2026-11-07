@@ -41,7 +41,7 @@ func TestDecode(t *testing.T) {
 	if env["LOG_LEVEL"].Literal != "info" {
 		t.Errorf("LOG_LEVEL = %+v, want info", env["LOG_LEVEL"])
 	}
-	if !p.Functions["api"].IsNode() || !p.Functions["worker"].IsGo() {
+	if !p.Functions["api"].IsNode() || !p.Functions["worker"].IsProvided() {
 		t.Error("runtimes are not told apart")
 	}
 	redrive := p.Resources["jobs"].Properties["RedrivePolicy"].(map[string]any)
@@ -127,7 +127,7 @@ func TestValidate(t *testing.T) {
 				fn.Image = &Image{Dockerfile: "Dockerfile", Context: "."}
 				p.Functions["api"] = fn
 			},
-			want: "a function with an image has no runtime or handler",
+			want: "a function with an image has no runtime, handler or bootstrap",
 		},
 		{
 			name: "neither runtime nor image",
@@ -136,7 +136,7 @@ func TestValidate(t *testing.T) {
 				fn.Runtime, fn.Handler = "", ""
 				p.Functions["api"] = fn
 			},
-			want: "a function needs a runtime and a handler, or an image",
+			want: "a function needs a runtime and a handler, a bootstrap, or an image",
 		},
 		{
 			name: "layers on go",
@@ -145,7 +145,26 @@ func TestValidate(t *testing.T) {
 				fn.Layers = []Value{{Literal: "arn:aws:lambda:eu-west-1:1:layer:x:1"}}
 				p.Functions["worker"] = fn
 			},
-			want: "a go function has no layers",
+			want: "a go or rust function has no layers",
+		},
+		{
+			name: "a bootstrap on node",
+			change: func(p *Project) {
+				fn := p.Functions["api"]
+				fn.Bootstrap = "dist/api"
+				p.Functions["api"] = fn
+			},
+			want: "functions[api].bootstrap: a bootstrap runs on provided.al2023, not nodejs22.x: leave out runtime, or set it to provided.al2023",
+		},
+		{
+			name: "an image with a bootstrap",
+			change: func(p *Project) {
+				fn := p.Functions["api"]
+				fn.Runtime, fn.Handler, fn.Bootstrap = "", "", "dist/api"
+				fn.Image = &Image{Dockerfile: "Dockerfile", Context: "."}
+				p.Functions["api"] = fn
+			},
+			want: "a function with an image has no runtime, handler or bootstrap",
 		},
 		{
 			name: "include on node",

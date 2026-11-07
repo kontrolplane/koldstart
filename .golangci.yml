@@ -31,10 +31,11 @@ linters:
               desc: use the slices package
     misspell:
       locale: UK
-      # lipgloss and image/color are spelt the american way
+      # lipgloss, image/color and the messages of cargo are spelt the american way
       ignore-rules:
         - center
         - color
+        - artifact
     revive:
       rules:
         - name: comment-spacings

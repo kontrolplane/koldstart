@@ -33,7 +33,7 @@ func (b Builder) golang(ctx context.Context, fn config.Function, target Target) 
 		return File{}, fmt.Errorf("making a directory to build in: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(tmp) }()
-	out := filepath.Join(tmp, "bootstrap")
+	out := filepath.Join(tmp, bootstrapFile)
 
 	args := append([]string{"build"}, goFlags...)
 	args = append(args, "-o", out, fn.Handler)
@@ -52,9 +52,9 @@ func (b Builder) golang(ctx context.Context, fn config.Function, target Target) 
 		}
 		return File{}, fmt.Errorf("go build %s: %w", fn.Handler, err)
 	}
-	data, err := fs.ReadFile(os.DirFS(tmp), "bootstrap")
+	data, err := fs.ReadFile(os.DirFS(tmp), bootstrapFile)
 	if err != nil {
 		return File{}, fmt.Errorf("reading the built %s: %w", fn.Handler, err)
 	}
-	return File{Name: "bootstrap", Data: data, Executable: true}, nil
+	return File{Name: bootstrapFile, Data: data, Executable: true}, nil
 }

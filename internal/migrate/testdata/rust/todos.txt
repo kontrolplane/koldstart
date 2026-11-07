@@ -1,0 +1,19 @@
+fix before you deploy:
+  functions.hello.handler: set handler to the directory of the crate hello, with its Cargo.toml, such as ./cmd/hello: koldstart builds it there with cargo lambda
+  functions.jobs.handler: set handler to the directory of the crate workers, with its Cargo.toml, such as ./cmd/jobs, and name its binary jobs rather than jobs-runner, or make it the crate's only one: koldstart builds it there with cargo lambda
+  functions.resize.handler: set handler to the go package to build, such as ./cmd/resize, or the directory of a rust crate; or replace it with bootstrap, the binary your build writes: koldstart builds from source, not "bootstrap"
+  functions.resize.package.artifact: koldstart zips the function itself, and takes no build/resize.zip: set bootstrap to the binary in it, which your build writes, or build it from source with handler
+  functions.legacy.handler: set handler to the package to build, such as ./cmd/legacy: koldstart builds go from source, not "bin/legacy"
+  functions.current.handler: set handler to the go package to build, such as ./cmd/current, or the directory of a rust crate; or replace it with bootstrap, the binary your build writes: koldstart builds from source, not "bootstrap"
+
+left out, to write by hand:
+  functions.jobs.layers: build what the layers hold into the binary: a go or rust function takes no layers
+  functions.scripted: koldstart does not build ruby3.3: build the function from a dockerfile with image, set bootstrap to a binary built for linux, or port it to node, python, go or rust
+
+works differently, to check:
+  functions.resize.runtime: runs on provided.al2023 now, as koldstart does not build provided.al2: test it there
+  functions.legacy.runtime: runs on provided.al2023 now, as koldstart does not build go1.x: test it there
+  plugins.serverless-rust: koldstart builds rust itself, with cargo lambda build --release for the function's architecture, not in the plugin's docker image: put what custom.rust passes to cargo, such as features, in each crate's Cargo.toml
+
+not needed in koldstart:
+  custom: each ${self:custom...} got its value where it was used: rust
