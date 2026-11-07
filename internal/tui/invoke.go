@@ -653,7 +653,7 @@ func (m model) payloadBody(width int) (lazyLines, int) {
 	}
 	v := m.state.function.pane.view
 	if v.empty() {
-		lines.add(insetLines([]string{styles.Faint("empty")})...)
+		lines.add(row("", text("empty", styles.ToneFaint), width))
 		return lines, -1
 	}
 	at := lines.len()
@@ -929,8 +929,9 @@ func traceLines(f cli.Failure, width int) []string {
 
 // resultLines show how an invocation ended, the error it failed with or what it returned in its
 // json view v, and its log, and the line the json starts on, -1 without it. Under their headers
-// the error, the json and the log start rowInset in, as rows do. Only the lines in sight are
-// drawn, so a payload of megabytes draws as quickly as a short one.
+// the error, the json and the log start rowInset in, as rows do, and a note in place of the json
+// where the values of a row do. Only the lines in sight are drawn, so a payload of megabytes
+// draws as quickly as a short one.
 func resultLines(r invocationResult, v jsonView, width int) (lazyLines, int) {
 	var lines lazyLines
 	lines.add(resultHead(r, width)...)
@@ -942,7 +943,7 @@ func resultLines(r invocationResult, v jsonView, width int) (lazyLines, int) {
 	if !r.failed {
 		lines.add("", styles.SectionHeader("returned", width))
 		if v.empty() {
-			lines.add(insetLines([]string{styles.Faint("nothing")})...)
+			lines.add(row("", text("nothing", styles.ToneFaint), width))
 		} else {
 			at = lines.len()
 			lines.join(v.lines(width))

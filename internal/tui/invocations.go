@@ -283,7 +283,7 @@ func (m model) invocationLines() lazyLines {
 	}
 	shown := shownEvents(r)
 	if len(shown) == 0 {
-		out.add(insetLines([]string{styles.Faint("nothing logged but lambda's own lines")})...)
+		out.add(row("", text("nothing logged but lambda's own lines", styles.ToneFaint), width))
 		return out
 	}
 	g := cache.gutter(r, shown)

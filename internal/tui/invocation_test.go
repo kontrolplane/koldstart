@@ -642,7 +642,7 @@ func TestInvocationCauseWraps(t *testing.T) {
 }
 
 // TestInvocationNothingLogged checks the note of an invocation that logged nothing of its own
-// starts where the lines of a log do.
+// starts where the values of the rows above it do.
 func TestInvocationNothingLogged(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -655,8 +655,8 @@ func TestInvocationNothingLogged(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			m := newTestModel(t, newFake(t))
 			m.state.invocation = invocationState{req: request{id: "r-1", lines: tt.lines}, cache: &invocationCache{}}
-			if v := ivdPage(m); !strings.Contains(v, "\n"+strings.Repeat(" ", rowInset)+"nothing logged but lambda's own lines") {
-				t.Errorf("the note is not rowInset in:\n%s", v)
+			if v := ivdPage(m); !strings.Contains(v, "\n"+strings.Repeat(" ", rowInset+labelWidth)+"nothing logged but lambda's own lines") {
+				t.Errorf("the note does not start where the values do:\n%s", v)
 			}
 		})
 	}

@@ -70,15 +70,14 @@ func TestInputsKeys(t *testing.T) {
 	}
 }
 
-// TestInputsNone checks a change without inputs says so where the rows of its json would start,
-// a column in from its header.
+// TestInputsNone checks a change without inputs says so where the values of a row start.
 func TestInputsNone(t *testing.T) {
 	tests := []struct {
 		name string
 		json jsonView
 		want string
 	}{
-		{name: "none", want: "\n" + strings.Repeat(" ", 1+rowInset) + "no inputs"},
+		{name: "none", want: "\n" + strings.Repeat(" ", 1+rowInset+labelWidth) + "no inputs"},
 		{name: "empty", json: newJSONView(map[string]any{}), want: "{}"},
 	}
 	for _, tt := range tests {

@@ -76,7 +76,7 @@ func (m model) inputsView() string {
 	if v := s.shown(); v != nil {
 		lines = append(lines, v.view(width, inputsHeight()))
 	} else {
-		lines = append(lines, insetLines([]string{styles.Faint("no inputs")})...)
+		lines = append(lines, row("", text("no inputs", styles.ToneFaint), width))
 	}
 	return indent(strings.Join(lines, "\n"))
 }

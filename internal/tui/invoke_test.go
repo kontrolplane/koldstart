@@ -591,8 +591,8 @@ func TestInvokeFromStage(t *testing.T) {
 }
 
 // TestResultRowsInset checks what a result holds under its headers starts rowInset in, as its
-// json does: the error a function failed with, the note in place of what it returned, and its
-// log, while how it ended starts a column further out, as a page's facts do.
+// json does: the error a function failed with and its log, the note in place of what it returned
+// where the values of a row start, and how it ended a column in, as a page's facts do.
 func TestResultRowsInset(t *testing.T) {
 	tests := []struct {
 		name string
@@ -600,7 +600,7 @@ func TestResultRowsInset(t *testing.T) {
 		want []string
 	}{
 		{name: "a failure", inv: cli.Invocation{Payload: []byte(ikNodeFailure), Error: "Unhandled"}, want: []string{"✗ failed · in aws", "  TypeError: x is undefined", "    at handler (file:///var/task/index.mjs:3:9)"}},
-		{name: "an error without a payload", inv: cli.Invocation{Error: "Unhandled"}, want: []string{"  Unhandled", "  nothing"}},
+		{name: "an error without a payload", inv: cli.Invocation{Error: "Unhandled"}, want: []string{"  Unhandled", strings.Repeat(" ", rowInset+labelWidth) + "nothing"}},
 		{name: "a log", inv: cli.Invocation{Payload: []byte(`{}`), Logs: "END RequestId: 1\n"}, want: []string{"✓ ok · in aws", "returned ─", "  END RequestId: 1"}},
 	}
 	for _, tt := range tests {
@@ -621,7 +621,7 @@ func TestResultRowsInset(t *testing.T) {
 }
 
 // TestInvokeEmptyEvent checks an event file with nothing in it says it is not json, and says it
-// is empty where its json would start.
+// is empty where the values of a row start.
 func TestInvokeEmptyEvent(t *testing.T) {
 	tests := []struct {
 		name string
@@ -636,7 +636,7 @@ func TestInvokeEmptyEvent(t *testing.T) {
 			l := m.invokeLayout()
 			body, _ := m.paneBody(l.paneW)
 			drawn := ansi.Strip(strings.Join(body.window(0, body.len()), "\n"))
-			for _, want := range []string{"▲ empty.json is not json", "\n" + strings.Repeat(" ", rowInset) + "empty"} {
+			for _, want := range []string{"▲ empty.json is not json", "\n" + strings.Repeat(" ", rowInset+labelWidth) + "empty"} {
 				if !strings.Contains(drawn, want) {
 					t.Errorf("no %q in:\n%s", want, drawn)
 				}
