@@ -62,7 +62,7 @@ koldstart does not read `serverless.yml` itself, and does not run serverless fra
 | `functions.<name>.layers`                                   | `layers`, by their arns                                              |
 | `functions.<name>.image` of `provider.ecr.images`           | `image { context; dockerfile; buildArgs; command; entryPoint; workingDirectory }` |
 | `events: httpApi`                                           | `kdst.get("/path")` and the other methods' helpers, `*` as `kdst.any("$default")`, amended with its authorizer and scopes, and `iam = true` for `aws_iam` |
-| `events: http`                                              | the same, on the http api, with a note                               |
+| `events: http`                                              | the same, on the http api, with a note; its `authorizer` as `iam = true` for `aws_iam`, a `kdst.LambdaAuthorizer` of a function of the service, with its identity sources and ttl, 300 seconds by default, or a `kdst.JwtAuthorizer` of a cognito user pool's arn, with its `scopes` |
 | `events: schedule`                                          | `kdst.schedule("rate(...)")`, one for each rate, amended with `enabled`, `timezone` and `input` |
 | `events: sqs`                                               | `kdst.fromQueue()`, of a queue of `resources` by its name or of an arn; `kdst.Queue` for any other value; with `maximumConcurrency` and `enabled` |
 | `events: stream`                                            | `kdst.fromStream()` or `kdst.fromTableStream()`, the same way; `kdst.Stream` for any other value; with its retries, record age, bisecting, parallelization, tumbling window, `destinations.onFailure` and `enabled` |
@@ -104,6 +104,7 @@ A variable inside a longer string becomes pkl interpolation: `orders-${sls:stage
 ## what is left to you
 
 - `events: http` and `provider.apiGateway`, the rest api of api gateway. koldstart deploys http apis only. The route is converted to one of the http api, `kdst.get("/path")` and the other methods' helpers, with a note, because request validation, usage plans and api keys have no equivalent.
+- the `authorizer` of an `events: http` route that is not converted, one by its `authorizerId`, a function of another service or a user pool of the stack, and `private`: fixes before you deploy, as the route is open without them. A converted lambda authorizer gets payload 2.0 and returns `{ isAuthorized, context }`, and a user pool's needs its app clients in `audience`. `request.parameters` and `schemas`, `cors`, `async` and `integration: lambda` get a note, and an `http`, `http-proxy` or `mock` integration leaves the route out.
 - `provider.iam`: the statements become `permissions` of every function, with a note to narrow them to what each function needs, or to replace them with `link`. A role of your own, `provider.iam.role` or a function's `role`, is not taken over: every function gets one of its own. Statements with a `Condition`, `NotAction`, `NotResource` or `Principal` are left out.
 - `Fn::Select` of a list only known while deploying, such as `Fn::GetAZs`, and `Fn::Split`, `Fn::ImportValue`, `Fn::Cidr` and `Fn::Transform`, which become pkl expressions or values of your own; `AWS::StackId` and `AWS::NotificationARNs`.
 - a condition on a value only known while deploying, such as a ref.

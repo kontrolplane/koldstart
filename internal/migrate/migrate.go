@@ -121,6 +121,9 @@ type converter struct {
 	usesMappings bool
 	usesParams   bool
 	conditions   map[string]string
+	// restAuthorizers are the authorizers the routes of the rest api take, converted, which go
+	// in http.authorizers.
+	restAuthorizers []*restAuthorizer
 }
 
 // addedResource is a resource of an event that serverless.yml names but does not declare, and
@@ -191,6 +194,7 @@ func (c *converter) convert() (*Result, error) {
 	c.region = str(get(provider, "region"))
 	c.nameFunctions()
 	c.nameResources()
+	c.nameRestAuthorizers()
 	c.convertConditions()
 
 	var w writer
@@ -331,14 +335,15 @@ func (c *converter) tags(w *writer, provider *yaml.Node) {
 	w.close()
 }
 
-// http writes the stage's http api: its cors, authorizers and access logs.
+// http writes the stage's http api: its cors, authorizers, those of the rest api's routes
+// among them, and access logs.
 func (c *converter) http(w *writer, provider *yaml.Node) {
 	api := get(provider, "httpApi")
 	cors, authorizers, logs := get(api, "cors"), get(api, "authorizers"), get(get(provider, "logs"), "httpApi")
 	if isFalse(logs) {
 		logs = nil
 	}
-	if cors == nil && authorizers == nil && logs == nil {
+	if cors == nil && authorizers == nil && logs == nil && len(c.restAuthorizers) == 0 {
 		return
 	}
 	w.blank()
@@ -353,10 +358,13 @@ func (c *converter) http(w *writer, provider *yaml.Node) {
 	default:
 		w.line("accessLogs = new {}")
 	}
-	if len(keys(authorizers)) > 0 {
+	if len(keys(authorizers)) > 0 || len(c.restAuthorizers) > 0 {
 		w.open("authorizers")
 		for _, name := range keys(authorizers) {
 			c.authorizer(w, name, get(authorizers, name))
+		}
+		for _, a := range c.restAuthorizers {
+			c.writeRestAuthorizer(w, a)
 		}
 		w.close()
 	}

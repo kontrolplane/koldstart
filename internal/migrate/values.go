@@ -14,6 +14,7 @@ const (
 	intrinsicRef       = "Ref"
 	intrinsicCondition = "Condition"
 	intrinsicIf        = "Fn::If"
+	intrinsicGetAtt    = "Fn::GetAtt"
 )
 
 // isTrue and isFalse report whether a yaml value is the boolean true or false.
@@ -269,7 +270,7 @@ func (c *converter) intrinsic(n *yaml.Node) (value, bool) {
 		return value{}, false
 	case intrinsicRef:
 		return c.ref(arg.Value), true
-	case "Fn::GetAtt":
+	case intrinsicGetAtt:
 		var target, attribute string
 		if arg.Kind == yaml.SequenceNode && len(arg.Content) == 2 {
 			target, attribute = arg.Content[0].Value, arg.Content[1].Value

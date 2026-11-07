@@ -95,7 +95,7 @@ functions {
         }
       }
       kdst.any("$default")
-      // TODO: a route of the rest api is one of the http api now: check it does without request validation, api keys and usage plans
+      // TODO: a route of the rest api is one of the http api now: check the function takes the event of payload 2.0, not 1.0, and does without request validation, api keys and usage plans
       kdst.get("/legacy/{id}")
     }
   }
