@@ -20,8 +20,9 @@ func toneOf(c cell, part string) (styles.Tone, bool) {
 }
 
 // TestWrapCell checks a long line breaks at a space or after a comma that fills at least half
-// the width, and hard where none does, that no line is wider than the width, wide runes
-// included, and that no text is lost but the spaces broken at.
+// the width, and hard where none does, never before a separator and after one without it, that
+// no line is wider than the width, wide runes included, and that no text is lost but the spaces
+// and separators broken at.
 func TestWrapCell(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -37,6 +38,11 @@ func TestWrapCell(t *testing.T) {
 		{name: "wide runes", line: "漢字漢字漢", width: 5, want: []string{"漢字", "漢字", "漢"}},
 		{name: "a trailing space", line: "abcd ", width: 4, want: []string{"abcd"}},
 		{name: "empty", line: "", width: 4, want: []string{""}},
+		{name: "not before a separator", line: "aws said no · r tries again", width: 12, want: []string{"aws said no", "r tries", "again"}},
+		{name: "after a separator", line: "aws said no · r tries again", width: 15, want: []string{"aws said no", "r tries again"}},
+		{name: "a separator well before the width", line: "aws said no · r tries again", width: 22, want: []string{"aws said no · r tries", "again"}},
+		{name: "a line that starts with a separator", line: " · aws said no", width: 6, want: []string{" · aws", "said", "no"}},
+		{name: "a separator that fits", line: "aws said no · r tries", width: 22, want: []string{"aws said no · r tries"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

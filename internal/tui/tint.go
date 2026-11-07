@@ -517,7 +517,9 @@ func goSource(line string) bool {
 
 // wrapCell breaks a cell into lines of at most width columns, keeping each span's tone. A line
 // breaks at its last space or after its last comma, when that fills at least half of it, and
-// otherwise where the width runs out. The space it breaks at, or after the comma, is dropped.
+// otherwise where the width runs out. The space it breaks at, or after the comma, is dropped. A
+// separator, " · ", is not broken before: a break after it drops it whole, so no line starts or
+// ends with its dot.
 func wrapCell(c cell, width int) []cell {
 	text := plainText(c)
 	if width <= 0 || ansi.StringWidth(text) <= width {
@@ -535,7 +537,9 @@ func wrapCell(c cell, width int) []cell {
 		}
 		size := len(g)
 		if used+w > width && i > start {
-			if cut <= start || cutUsed*2 < width {
+			if from, to, ok := separatorAt(text, i); ok && from > start {
+				cut, next = from, to
+			} else if cut <= start || cutUsed*2 < width {
 				cut, next = i, i
 				if g == " " {
 					next = i + size
@@ -547,7 +551,12 @@ func wrapCell(c cell, width int) []cell {
 		}
 		switch g {
 		case " ":
-			cut, next, cutUsed = i, i+size, used
+			if sep := strings.HasSuffix(text[:i], " ·"); sep || !strings.HasPrefix(text[i+size:], "· ") {
+				cut, next, cutUsed = i, i+size, used
+				if sep {
+					cut, cutUsed = i-len(" ·"), used-2
+				}
+			}
 		case ",":
 			cut, next, cutUsed = i+size, i+size, used+w
 			if next < len(text) && text[next] == ' ' {
@@ -561,6 +570,17 @@ func wrapCell(c cell, width int) []cell {
 		lines = append(lines, parts.slice(start, len(text)))
 	}
 	return lines
+}
+
+// separatorAt reports whether byte i of text is in a separator, " · ", and where it starts and
+// ends.
+func separatorAt(text string, i int) (from, to int, ok bool) {
+	for _, back := range []int{0, 1, len(" ·")} {
+		if at := i - back; at >= 0 && strings.HasPrefix(text[at:], " · ") {
+			return at, at + len(" · "), true
+		}
+	}
+	return 0, 0, false
 }
 
 // plainText is the text of a cell, without its tones.
