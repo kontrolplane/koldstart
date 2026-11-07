@@ -966,7 +966,7 @@ func (m model) liveSection(c *overviewColumn) {
 	c.labelled("last update", reasoned(live.LastUpdate, live.LastUpdateReason), detailRow{copy: joinReason(live.LastUpdate, live.LastUpdateReason)}, 3)
 	modified, at := text("-", styles.ToneFaint), ""
 	if !live.LastModified.IsZero() {
-		modified = cell{styles.S(formatTime(live.LastModified), styles.ToneBody), styles.S(", "+formatAgo(live.LastModified), styles.ToneMuted)}
+		modified = cell{styles.S(formatTime(live.LastModified), styles.ToneBody), sep(), styles.S(formatAgo(live.LastModified), styles.ToneMuted)}
 		at = live.LastModified.Format(time.RFC3339)
 	}
 	c.labelled("modified", modified, detailRow{copy: at}, 1)
@@ -1170,8 +1170,8 @@ const perMinute = "/min"
 const sparkMin = 12
 
 // sparkLines draw each series as a sparkline, all the same width, what it comes to beside it,
-// its range and its last point as far as they fit, and under them the hour they span. A series
-// of zeros is a dotted baseline, and one without points says so.
+// its range and its last point as far as they fit, each right aligned, and under them the hour
+// they span. A series of zeros is a dotted baseline, and one without points says so.
 func sparkLines(series []metricSeries, width int) []string {
 	points, statW, totalW, rangeW, lastW := 0, 0, 0, 0, 0
 	ranges, lasts := make([]string, len(series)), make([]string, len(series))
@@ -1214,7 +1214,7 @@ func sparkLines(series []metricSeries, width int) []string {
 			cells[5] = text(plainText(s.total), styles.ToneFaint)
 		}
 		if lasts[i] != "" {
-			cells[9] = cell{styles.S("last ", styles.ToneFaint), styles.S(lasts[i], styles.ToneMuted)}
+			cells[9] = cell{styles.S("last ", styles.ToneFaint), styles.S(strings.Repeat(" ", max(0, lastW-len("last ")-ansi.StringWidth(lasts[i])))+lasts[i], styles.ToneMuted)}
 		}
 		var b strings.Builder
 		for j, cl := range cells {
@@ -1678,10 +1678,15 @@ func (m model) openOverviewRow(o functionOverview) (model, tea.Cmd) {
 	return m, nil
 }
 
-// functionOverviewHints are the keys of the overview: the cursor, and enter where its row opens.
+// functionOverviewHints are the keys of the overview: the cursor where there are rows, and enter
+// where its row opens.
 func (m model) functionOverviewHints() [][2]string {
+	o := m.functionOverview()
+	if o.rowCount() == 0 {
+		return nil
+	}
 	h := [][2]string{chooseHint}
-	r, _ := m.functionOverview().selected(m.state.function.cursor)
+	r, _ := o.selected(m.state.function.cursor)
 	switch {
 	case r.url != "":
 		h = append(h, hint(m.keys.View, "open in the browser"))

@@ -251,7 +251,7 @@ func TestOverviewStates(t *testing.T) {
 		{
 			name:     "deployed as it is",
 			function: cli.FunctionState{State: "Active", LastUpdate: "Successful", LastModified: time.Now(), CodeSHA256: strings.Repeat("ab", 32), CodeSize: 42 << 20, Memory: 1024, Timeout: 6, Runtime: "nodejs22.x"},
-			want:     []string{"✓ what koldstart deployed · 42 mb", "nodejs22.x · 1,024 mb", "✓ active"},
+			want:     []string{"✓ what koldstart deployed · 42 mb", "nodejs22.x · 1,024 mb", "✓ active", " · just now"},
 			notWant:  []string{"changed outside koldstart"},
 		},
 		{
@@ -556,6 +556,42 @@ func TestFunctionOverviewHints(t *testing.T) {
 	}
 }
 
+// TestFunctionHintsWithoutRows checks the footer offers the cursor and enter only where there is
+// a row to rest on: on the overview of a function deployed, and on the invocations once there are
+// some.
+func TestFunctionHintsWithoutRows(t *testing.T) {
+	tests := []struct {
+		name     string
+		deployed bool
+		logs     []cli.LogEvent
+		keys     []string
+		want     bool
+	}{
+		{name: "the overview", deployed: true, want: true},
+		{name: "the overview of a function not deployed", want: false},
+		{name: "invocations", deployed: true, logs: requestLogs(time.Now().Add(-time.Minute)), keys: []string{"3"}, want: true},
+		{name: "no invocations", deployed: true, keys: []string{"3"}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFake(t)
+			f.logs = tt.logs
+			if !tt.deployed {
+				delete(f.states[ordersDev].Resources, "loggroup/api")
+				f.states[ordersDev].Resources["function/api"].PhysicalID = ""
+			}
+			m := pressKeys(t, pressKeys(t, started(t, f), "enter"), tt.keys...)
+			got := false
+			for _, h := range m.shortHelp() {
+				got = got || h == chooseHint
+			}
+			if got != tt.want {
+				t.Errorf("the footer offers %s: %v, want %v; %v", chooseHint[1], got, tt.want, m.shortHelp())
+			}
+		})
+	}
+}
+
 // TestOverviewCursor checks the cursor walks every row of the overview and keeps it in sight, the
 // end of the page in sight on the last, the frame saying which lines are, and moves back up one
 // row at a time.
@@ -707,6 +743,37 @@ func TestSparkLines(t *testing.T) {
 				if !slices.Contains(got, strings.Join(strings.Fields(want), " ")) {
 					t.Errorf("no line %q in\n%s", want, strings.Join(got, "\n"))
 				}
+			}
+		})
+	}
+}
+
+// TestSparkLinesLineUp checks the last points beside the sparklines are right aligned, as the
+// numbers before them are, so every line ends in the same column.
+func TestSparkLinesLineUp(t *testing.T) {
+	count := func(v float64) string { return formatInt(int(v)) }
+	tests := []struct {
+		name   string
+		series []metricSeries
+	}{
+		{name: "counts", series: []metricSeries{
+			{label: "invocations", points: []float64{1, 2, 1200}, total: text("1,203", styles.ToneBody), format: count, unit: perMinute},
+			{label: "errors", points: []float64{1, 0, 3}, total: text("4", styles.ToneBody), format: count, unit: perMinute},
+		}},
+		{name: "a count and a gauge", series: []metricSeries{
+			{label: "invocations", points: []float64{1, 2, 3}, total: text("6", styles.ToneBody), format: count, unit: perMinute},
+			{label: "duration", points: []float64{40, 80, 120}, stat: "p99", total: text("120ms", styles.ToneBody), format: formatMillis, gauge: true},
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lines := sparkLines(tt.series, 100)
+			ends := map[int]bool{}
+			for _, l := range lines[:len(tt.series)] {
+				ends[ansi.StringWidth(l)] = true
+			}
+			if len(ends) != 1 {
+				t.Errorf("the columns of numbers do not end together:\n%s", ansi.Strip(strings.Join(lines, "\n")))
 			}
 		})
 	}
