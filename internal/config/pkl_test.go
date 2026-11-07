@@ -543,7 +543,8 @@ resources { ["dead"] = kdst.queue() }`)
 	}
 }
 
-// TestSchemaRefuses checks the schema reports mistakes, pointing at the line.
+// TestSchemaRefuses checks the schema reports mistakes, pointing at the line, and Load the
+// outputs a deploy could not record, before a plan.
 func TestSchemaRefuses(t *testing.T) {
 	ev := evaluator(t)
 	tests := []struct {
@@ -565,6 +566,10 @@ func TestSchemaRefuses(t *testing.T) {
 		{name: "mount outside of mnt", body: `functions { ["api"] { runtime = "nodejs22.x"; handler = "x.y"; fileSystem = new { accessPoint = "arn:x"; mountPath = "/data" } } }`, want: "mountPath"},
 		{name: "unknown log format", body: `functions { ["api"] { runtime = "nodejs22.x"; handler = "x.y"; logFormat = "xml" } }`, want: "xml"},
 		{name: "secret with an empty segment", body: `functions { ["api"] { runtime = "nodejs22.x"; handler = "x.y"; environment { ["X"] = kdst.secret("db//main").field("password") } } }`, want: "kdst.secretsmanager() for the full name"},
+		{name: "a secret as an output", body: `outputs { ["apiKey"] = kdst.param("api-key") }`, want: "outputs[apiKey]: a secret cannot be an output"},
+		{name: "another stage's output as an output", body: `outputs { ["payments"] = kdst.stageOutput("payments", "prod", "apiUrl") }`, want: "outputs[payments]: kdst.stageOutput() cannot be an output"},
+		{name: "an output koldstart generates", body: `functions { ["stripe-webhook"] { runtime = "nodejs22.x"; handler = "x.y"; url { auth = "none" } } }
+outputs { ["stripeWebhookUrl"] = "https://example.com" }`, want: "outputs[stripeWebhookUrl]: koldstart generates stripeWebhookUrl"},
 	}
 	dir := t.TempDir()
 	schema, err := filepath.Abs(filepath.Join("..", "..", "pkl", "Project.pkl"))

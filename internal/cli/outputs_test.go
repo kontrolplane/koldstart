@@ -52,21 +52,3 @@ func TestWriteOutputs(t *testing.T) {
 		})
 	}
 }
-
-// TestCamelCase checks a function's name of dashes is joined into one word for its url's output.
-func TestCamelCase(t *testing.T) {
-	tests := []struct {
-		name string
-		want string
-	}{
-		{name: "api", want: "api"},
-		{name: "stripe-webhook", want: "stripeWebhook"},
-		{name: "notify-customers-now", want: "notifyCustomersNow"},
-		{name: "Api-v2", want: "ApiV2"},
-	}
-	for _, tt := range tests {
-		if got := camelCase(tt.name); got != tt.want {
-			t.Errorf("camelCase(%q) = %q, want %q", tt.name, got, tt.want)
-		}
-	}
-}
