@@ -66,8 +66,11 @@ functions {
           "GET"
           "POST"
         }
-        // TODO: koldstart has no alb condition on the header yet
-        // was: {name: x-version, values: ["2"]}
+        headers {
+          ["x-version"] {
+            "2"
+          }
+        }
         multiValueHeaders = true
       }
     }

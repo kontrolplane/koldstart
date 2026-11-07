@@ -300,29 +300,59 @@ func (c *converter) nameResources() {
 	}
 }
 
+// tags writes provider.stackTags and provider.tags, which win, as the tags of everything.
 func (c *converter) tags(w *writer, provider *yaml.Node) {
-	tags := get(provider, "tags")
-	if len(keys(tags)) == 0 {
+	type tag struct {
+		key, where string
+		value      *yaml.Node
+	}
+	var tags []tag
+	index := map[string]int{}
+	for _, from := range []string{"stackTags", "tags"} {
+		set := get(provider, from)
+		for _, k := range keys(set) {
+			t := tag{key: k, where: "provider." + from + "." + k, value: get(set, k)}
+			if i, ok := index[k]; ok {
+				tags[i] = t
+				continue
+			}
+			index[k] = len(tags)
+			tags = append(tags, t)
+		}
+	}
+	if len(tags) == 0 {
 		return
 	}
 	w.blank()
 	w.open("tags")
-	for _, k := range keys(tags) {
-		c.assign(w, "provider.tags."+k, "["+quote(k)+"]", c.scalar(get(tags, k)), get(tags, k))
+	for _, t := range tags {
+		c.assign(w, t.where, "["+quote(t.key)+"]", c.scalar(t.value), t.value)
 	}
 	w.close()
 }
 
-// http writes the stage's http api: its cors and authorizers.
+// http writes the stage's http api: its cors, authorizers and access logs.
 func (c *converter) http(w *writer, provider *yaml.Node) {
 	api := get(provider, "httpApi")
-	cors, authorizers := get(api, "cors"), get(api, "authorizers")
-	if cors == nil && authorizers == nil {
+	cors, authorizers, logs := get(api, "cors"), get(api, "authorizers"), get(get(provider, "logs"), "httpApi")
+	if isFalse(logs) {
+		logs = nil
+	}
+	if cors == nil && authorizers == nil && logs == nil {
 		return
 	}
 	w.blank()
 	w.open("http")
 	c.cors(w, "provider.httpApi.cors", cors)
+	switch format := get(logs, "format"); {
+	case logs == nil:
+	case format != nil:
+		w.open("accessLogs = new")
+		c.assign(w, "provider.logs.httpApi.format", "format", c.scalar(format), format)
+		w.close()
+	default:
+		w.line("accessLogs = new {}")
+	}
 	if len(keys(authorizers)) > 0 {
 		w.open("authorizers")
 		for _, name := range keys(authorizers) {
@@ -415,11 +445,9 @@ var unconverted = []struct {
 	key string
 	hint
 }{
-	{"destinations", hint{Add, "koldstart has no destinations yet: send the result on from the function"}},
-	{"onError", hint{Add, "koldstart has no dead letter queue yet: send what fails on from the function"}},
-	{"provisionedConcurrency", hint{Add, "koldstart has no provisioned concurrency yet"}},
-	{"fileSystemConfig", hint{Add, "koldstart mounts no efs yet"}},
-	{"tags", hint{Add, "a function has no tags of its own: set them in tags, which every resource gets"}},
+	{"provisionedConcurrency", hint{Add, "koldstart publishes no versions yet, which provisioned concurrency needs"}},
+	{"snapStart", hint{Add, "koldstart publishes no versions yet, which snapStart needs"}},
+	{"disableLogs", hint{Review, "koldstart always gives a function a log group: set logRetention for how long it keeps them"}},
 	{"role", hint{Review, "every function gets a role of its own: give it what it needs with permissions or link"}},
 	{"name", hint{Review, "koldstart names the function <app>-<stage>-<function>: update what calls it by name"}},
 }
@@ -582,6 +610,102 @@ func (c *converter) settings(w *writer, where string, fn, provider *yaml.Node) {
 		c.member(w, where+".vpc.subnetIds", "subnetIds", orList(get(vpc, "subnetIds")))
 		c.member(w, where+".vpc.securityGroupIds", "securityGroupIds", orList(get(vpc, "securityGroupIds")))
 		w.close()
+	}
+	if tracing(get(fn, "tracing"), get(get(provider, "tracing"), "lambda")) {
+		w.line("tracing = true")
+	}
+	if key, at := get(fn, "kmsKeyArn"), where+".kmsKeyArn"; key != nil {
+		c.assign(w, at, "kmsKey", c.nodeValue(key), key)
+	} else if key := get(provider, "kmsKeyArn"); key != nil {
+		c.assign(w, "provider.kmsKeyArn", "kmsKey", c.nodeValue(key), key)
+	}
+	if tags := get(fn, "tags"); len(keys(tags)) > 0 {
+		w.open("tags")
+		for _, k := range keys(tags) {
+			c.assign(w, where+".tags."+k, "["+quote(k)+"]", c.scalar(get(tags, k)), get(tags, k))
+		}
+		w.close()
+	}
+	if dlq := get(fn, "onError"); dlq != nil {
+		c.assign(w, where+".onError", "deadLetter", c.nodeValue(dlq), dlq)
+	}
+	c.async(w, where, fn)
+	if fs := get(fn, "fileSystemConfig"); fs != nil {
+		w.open("fileSystem = new")
+		c.assign(w, where+".fileSystemConfig.arn", "accessPoint", c.nodeValue(orEmpty(get(fs, "arn"))), fs)
+		c.assign(w, where+".fileSystemConfig.localMountPath", "mountPath", c.scalar(orEmpty(get(fs, "localMountPath"))), fs)
+		w.close()
+	}
+	c.logFormat(w, where, fn, provider)
+}
+
+// tracing reports whether a function traces, by its own tracing, Active or PassThrough, or else
+// provider.tracing.lambda, true or one of those.
+func tracing(own, provider *yaml.Node) bool {
+	mode := own
+	if mode == nil {
+		mode = provider
+	}
+	return isTrue(mode) || str(mode) == "Active"
+}
+
+// async writes how lambda handles the events a function is handed without waiting: its retries,
+// how long an event may wait, and its destinations.
+func (c *converter) async(w *writer, where string, fn *yaml.Node) {
+	retries, age, destinations := get(fn, "maximumRetryAttempts"), get(fn, "maximumEventAge"), get(fn, "destinations")
+	if retries == nil && age == nil && destinations == nil {
+		return
+	}
+	w.open("async = new")
+	if n, ok := integer(retries); ok {
+		w.line("maximumRetryAttempts = %d", n)
+	}
+	if n, ok := integer(age); ok {
+		w.line("maximumEventAge = %d.s", n)
+	}
+	for _, key := range []string{"onSuccess", "onFailure"} {
+		if d := get(destinations, key); d != nil {
+			c.assign(w, where+".destinations."+key, key, c.destination(d), d)
+		}
+	}
+	w.close()
+}
+
+// destination is where a function sends results: the arn given, or given as { type, arn }, or a
+// function of the service by its name, which is its ref.
+func (c *converter) destination(n *yaml.Node) value {
+	if n.Kind == yaml.MappingNode {
+		if arn := get(n, "arn"); arn != nil {
+			return c.nodeValue(arn)
+		}
+	}
+	if fn, ok := c.functionNames[str(n)]; ok {
+		return refValue(fmt.Sprintf("kdst.ref(%s, %s)", quote(fn), quote(attrArn)))
+	}
+	return c.nodeValue(n)
+}
+
+// logFormat writes the format and levels of a function's logs, from its logs or
+// provider.logs.lambda.
+func (c *converter) logFormat(w *writer, where string, fn, provider *yaml.Node) {
+	logs, at := get(fn, "logs"), where+".logs"
+	if logs == nil {
+		logs, at = get(get(provider, "logs"), "lambda"), "provider.logs.lambda"
+	}
+	if logs == nil {
+		return
+	}
+	if strings.EqualFold(str(get(logs, "logFormat")), "json") {
+		w.line(`logFormat = "json"`)
+		if level := str(get(logs, "applicationLogLevel")); level != "" {
+			w.line("applicationLogLevel = %s", quote(strings.ToUpper(level)))
+		}
+		if level := str(get(logs, "systemLogLevel")); level != "" {
+			w.line("systemLogLevel = %s", quote(strings.ToUpper(level)))
+		}
+	}
+	if group := get(logs, "logGroup"); group != nil {
+		c.todo(Review, at+".logGroup", "koldstart writes the logs of each function to a log group of its own, /aws/lambda/<name>")
 	}
 }
 
@@ -877,10 +1001,6 @@ var (
 		hint
 	}{
 		{"apiGateway", hint{Add, "koldstart deploys an http api, not a rest api: set what it needs on http"}},
-		{"stackTags", hint{Add, "set them in tags, which every resource gets"}},
-		{"kmsKeyArn", hint{Add, "koldstart has no kmsKeyArn yet: the variables are encrypted with lambda's own key"}},
-		{"tracing", hint{Add, "koldstart has no tracing yet"}},
-		{"logs", hint{Add, "koldstart has no access logs yet; set logRetention on a function for how long its logs are kept"}},
 		{"deploymentBucket", hint{Drop, "koldstart keeps its zips and state in a bucket of its own"}},
 	}
 )
@@ -917,5 +1037,18 @@ func (c *converter) leftOver() {
 	}
 	if role := get(get(provider, "iam"), "role"); role != nil && role.Kind == yaml.ScalarNode {
 		c.todo(Review, "provider.iam.role", "every function gets a role of its own: give each what it needs with permissions or link")
+	}
+	if tracing := get(get(provider, "tracing"), "apiGateway"); isTrue(tracing) {
+		c.todo(Review, "provider.tracing.apiGateway", "an http api has no x-ray tracing: the functions trace with tracing")
+	}
+	logs := get(provider, "logs")
+	if get(logs, "restApi") != nil {
+		c.todo(Add, "provider.logs.restApi", "the routes of the rest api are on the http api: give it access logs with http.accessLogs")
+	}
+	if get(logs, "websocket") != nil {
+		c.todo(Add, "provider.logs.websocket", "koldstart has no access logs of the websocket api yet")
+	}
+	if get(logs, "frameworkLambda") != nil {
+		c.todo(Drop, "provider.logs.frameworkLambda", "koldstart deploys no functions of its own")
 	}
 }

@@ -3,10 +3,8 @@ fix before you deploy:
 
 left out, to write by hand:
   provider.environment.FROM_FILE: ${file(./config.json):key}: there is no ./config.json next to serverless.yml
-  provider.tracing: koldstart has no tracing yet
   functions.image.image: koldstart builds images itself: give the function the dockerfile to build, with image { context; dockerfile }
   functions.worker.layers: build what the layers hold into the binary: a go function takes no layers
-  functions.old_api.tags: a function has no tags of its own: set them in tags, which every resource gets
   resources.Resources.Seeder: cloud control creates AWS:: types only: do what the Custom::Seed did another way
   plugins.serverless-domain-manager: set http.domain and http.certificate
   plugins[1]: ./plugins/seed does not run in koldstart: do what it did another way

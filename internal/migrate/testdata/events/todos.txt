@@ -1,6 +1,5 @@
 left out, to write by hand:
   functions.onOrder.events[1]: an EventRule needs a pattern: write a schedule as kdst.schedule("rate(...)")
-  functions.legacy.events[0].conditions.header: koldstart has no alb condition on the header yet
 
 works differently, to check:
   functions.api.events[2]: a route of the rest api is one of the http api now: check it does without request validation, api keys and usage plans
