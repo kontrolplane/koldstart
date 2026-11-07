@@ -257,19 +257,28 @@ func (m model) applyStagePeek(msg stagePeekMsg) (model, tea.Cmd) {
 }
 
 // overviewPeek is the stage under the cursor of the stages at a glance, below its name: its
-// functions, each with its runtime, memory and what invokes it, beside its outputs.
+// functions, each with its runtime, memory and what invokes it, beside its outputs. A stage that
+// could not be read says why, and the project's stage before its first deploy the key that plans
+// it, each as a note where the values start.
 func (m model) overviewPeek(width int) []string {
 	sel, ok := m.selectedStage()
-	if !ok || notDeployed(sel) || sel.Err != nil {
+	if !ok {
 		return nil
 	}
 	head := styles.SectionHeader(styles.Clean(sel.String()), width-ansi.StringWidth(openHint)-1) + " " + styles.Faint(openHint)
+	note := func(c cell) []string { return append([]string{head}, wrappedRow(labelWidth, "", c, width)...) }
 	p, ok := m.state.overview.peeks[sel.StageRef]
 	switch {
+	case sel.Err != nil:
+		return note(m.couldNotRead("the stage", styles.Clean(sel.Err.Error()), styles.ToneMuted))
+	case notDeployed(sel) && m.b.Local(sel.StageRef):
+		return note(text("not deployed yet: "+m.keys.Deploy.Help().Key+" plans its first deploy", styles.ToneMuted))
+	case notDeployed(sel):
+		return note(text("not deployed yet", styles.ToneMuted))
 	case !ok || p.st == nil && p.err == "":
-		return []string{head, row("", text(readingNote("the state of "+sel.String()), styles.ToneMuted), width)}
+		return note(text(readingNote("the state of "+styles.Clean(sel.String())), styles.ToneMuted))
 	case p.st == nil:
-		return append([]string{head}, insetLines(cellLines(m.couldNotRead("the state", styles.Clean(p.err), styles.ToneMuted), width-rowInset))...)
+		return note(m.couldNotRead("the state", styles.Clean(p.err), styles.ToneMuted))
 	}
 	left := width
 	split := width >= overviewTwoColumns

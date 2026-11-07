@@ -131,7 +131,7 @@ func TestToneRules(t *testing.T) {
 		{name: "the current deploy", c: deployNote(deploySummary{failed: true}, true), part: "current", want: styles.ToneAccent},
 		{name: "a type in the tree", c: stageState{}.resourceRow(stageResource{id: "role/api", res: &state.Resource{Type: "koldstart::IAM::Role"}}, 0, false)[1], part: "iam role", want: styles.ToneMuted},
 		{name: "an id in aws in the tree", c: stageState{}.resourceRow(stageResource{id: "role/api", res: &state.Resource{PhysicalID: "orders-dev-api"}}, 0, false)[2], part: "orders-dev-api", want: styles.ToneMuted},
-		{name: "an unreadable stage", c: overviewRow(stage, false)[len(overviewRow(stage, false))-1], part: "unreadable", want: styles.ToneDanger},
+		{name: "an unreadable stage", c: overviewRow(stage, false, stageCounts{})[len(overviewRow(stage, false, stageCounts{}))-1], part: "unreadable", want: styles.ToneDanger},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
