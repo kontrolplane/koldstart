@@ -3,7 +3,9 @@ package config
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -317,9 +319,65 @@ func TestValidate(t *testing.T) {
 		{
 			name: "output of itself",
 			change: func(p *Project) {
-				p.Outputs["self"] = Value{Output: &OutputRef{App: "orders", Stage: "dev", Output: "table"}}
+				p.Functions["api"].Environment["SELF"] = Value{Output: &OutputRef{App: "orders", Stage: "dev", Output: "table"}}
 			},
 			want: "use kdst.ref() instead",
+		},
+		{
+			name: "a secret as an output",
+			change: func(p *Project) {
+				p.Outputs["apiKey"] = Value{Secret: &Secret{Source: SourceSSM, Name: "/orders/dev/api-key"}}
+			},
+			want: "outputs[apiKey]: a secret cannot be an output: give a string, a kdst.ref(), a kdst.join() of them or a value of the account",
+		},
+		{
+			name: "a secret joined into an output",
+			change: func(p *Project) {
+				p.Outputs["dsn"] = Value{Join: []Value{{Literal: "postgres://"}, {Secret: &Secret{Source: SourceSecretsManager, Name: "orders/dev/db"}}}}
+			},
+			want: "outputs[dsn]: a secret cannot be an output",
+		},
+		{
+			name: "another stage's output as an output",
+			change: func(p *Project) {
+				p.Outputs["payments"] = Value{Output: &OutputRef{App: "payments", Stage: "dev", Output: "apiUrl"}}
+			},
+			want: "outputs[payments]: kdst.stageOutput() cannot be an output",
+		},
+		{
+			name: "the http api's url",
+			change: func(p *Project) {
+				p.Outputs["httpApiUrl"] = Value{Literal: "https://orders.example.com"}
+			},
+			want: "outputs[httpApiUrl]: koldstart generates httpApiUrl, the url of the http api, which would replace this output: pick another name",
+		},
+		{
+			name: "the http api's domain target",
+			change: func(p *Project) {
+				p.HTTP.Domain = "orders.example.com"
+				p.Outputs["httpDomainTarget"] = Value{Literal: "d-1.execute-api.eu-west-1.amazonaws.com"}
+			},
+			want: "outputs[httpDomainTarget]: koldstart generates httpDomainTarget",
+		},
+		{
+			name: "the websocket api's url",
+			change: func(p *Project) {
+				fn := p.Functions["worker"]
+				fn.Events = append(fn.Events, Event{Type: EventWebSocket, Route: "$connect"})
+				p.Functions["worker"] = fn
+				p.Outputs["webSocketUrl"] = Value{Literal: "wss://x"}
+			},
+			want: "outputs[webSocketUrl]: koldstart generates webSocketUrl",
+		},
+		{
+			name: "a function's url",
+			change: func(p *Project) {
+				fn := p.Functions["api"]
+				fn.URL = &FunctionURL{Auth: "none"}
+				p.Functions["stripe-webhook"] = fn
+				p.Outputs["stripeWebhookUrl"] = Value{Literal: "https://x"}
+			},
+			want: "outputs[stripeWebhookUrl]: koldstart generates stripeWebhookUrl, the url of function stripe-webhook",
 		},
 	}
 	for _, tt := range tests {
@@ -334,6 +392,117 @@ func TestValidate(t *testing.T) {
 				t.Errorf("Validate = %v, want an error with %q", err, tt.want)
 			}
 		})
+	}
+}
+
+// TestValidateOutputs checks the outputs a deploy can resolve pass, and so do the names koldstart
+// generates for another configuration, but not for this one.
+func TestValidateOutputs(t *testing.T) {
+	tests := []struct {
+		name   string
+		change func(p *Project)
+	}{
+		{
+			name: "a string, a ref, a join and the account",
+			change: func(p *Project) {
+				p.Outputs["name"] = Value{Literal: "orders"}
+				p.Outputs["arn"] = Value{Join: []Value{{Literal: "arn:"}, {Pseudo: PseudoPartition}, {Literal: ":dynamodb:eu-west-1:"}, {Pseudo: PseudoAccountID}, {Literal: ":table/"}, {Ref: &Ref{Resource: "orders", Attribute: "TableName"}}}}
+			},
+		},
+		{
+			name: "the url of a function without one",
+			change: func(p *Project) {
+				p.Outputs["workerUrl"] = Value{Literal: "https://x"}
+			},
+		},
+		{
+			name: "the websocket api's url without websocket routes",
+			change: func(p *Project) {
+				p.Outputs["webSocketUrl"] = Value{Literal: "wss://x"}
+			},
+		},
+		{
+			name: "the domain target without a domain",
+			change: func(p *Project) {
+				p.Outputs["httpDomainTarget"] = Value{Literal: "x"}
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, err := Decode(readFixture(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			tt.change(p)
+			if err := p.Validate(); err != nil {
+				t.Errorf("Validate = %v, want nil", err)
+			}
+		})
+	}
+}
+
+// TestGeneratedOutputs checks the names of the outputs a deploy adds follow what the project
+// deploys: an http api once a function has a route, its domain, a websocket api and the urls of
+// functions.
+func TestGeneratedOutputs(t *testing.T) {
+	route := Event{Type: EventHTTPRoute, Method: "GET", Path: "/"}
+	tests := []struct {
+		name    string
+		project Project
+		want    []string
+	}{
+		{name: "nothing", project: Project{}, want: nil},
+		{
+			name:    "a domain without routes",
+			project: Project{HTTP: &HTTP{Domain: "orders.example.com"}, Functions: map[string]Function{"api": {}}},
+			want:    nil,
+		},
+		{
+			name:    "routes",
+			project: Project{Functions: map[string]Function{"api": {Events: []Event{route}}}},
+			want:    []string{OutputHTTPAPIURL},
+		},
+		{
+			name:    "routes and a domain",
+			project: Project{HTTP: &HTTP{Domain: "orders.example.com"}, Functions: map[string]Function{"api": {Events: []Event{route}}}},
+			want:    []string{OutputHTTPAPIURL, OutputHTTPDomainTarget},
+		},
+		{
+			name: "a websocket route and function urls",
+			project: Project{Functions: map[string]Function{
+				"chat":           {Events: []Event{{Type: EventWebSocket, Route: "$default"}}},
+				"stripe-webhook": {URL: &FunctionURL{Auth: "none"}},
+				"worker":         {},
+			}},
+			want: []string{"stripeWebhookUrl", OutputWebSocketURL},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := slices.Sorted(maps.Keys(tt.project.GeneratedOutputs()))
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("GeneratedOutputs = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestURLOutput checks a function's name of dashes is joined into one word for its url's output.
+func TestURLOutput(t *testing.T) {
+	tests := []struct {
+		name string
+		want string
+	}{
+		{name: "api", want: "apiUrl"},
+		{name: "stripe-webhook", want: "stripeWebhookUrl"},
+		{name: "notify-customers-now", want: "notifyCustomersNowUrl"},
+		{name: "Api-v2", want: "ApiV2Url"},
+	}
+	for _, tt := range tests {
+		if got := URLOutput(tt.name); got != tt.want {
+			t.Errorf("URLOutput(%q) = %q, want %q", tt.name, got, tt.want)
+		}
 	}
 }
 

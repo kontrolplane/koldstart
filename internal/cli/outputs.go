@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -74,7 +73,8 @@ func (s *stage) outputs(st *state.State) (map[string]string, error) {
 }
 
 // outputValue resolves an output against the state: a string, a ref(), a join of them, or a value
-// of the account.
+// of the account. config.Load refuses a secret or kdst.stageOutput() in outputs, so neither gets
+// here.
 func (s *stage) outputValue(st *state.State, v config.Value) (string, error) {
 	switch {
 	case v.Ref != nil:
@@ -102,42 +102,29 @@ func (s *stage) outputValue(st *state.State, v config.Value) (string, error) {
 			return "amazonaws.com.cn", nil
 		}
 		return "amazonaws.com", nil
-	case v.Secret != nil || v.Output != nil:
-		return "", errors.New("an output is a string, a ref() or a join() of them")
 	}
 	return v.Literal, nil
 }
 
-// camelCase joins the words of a name of dashes, as an output's name does: stripe-webhook is
-// stripeWebhook.
-func camelCase(name string) string {
-	words := strings.Split(name, "-")
-	for i, w := range words[1:] {
-		if w != "" {
-			words[i+1] = strings.ToUpper(w[:1]) + w[1:]
-		}
-	}
-	return strings.Join(words, "")
-}
-
-// urlOutputs are the urls of the functions that have one, as <function>Url with the function's
-// name in camel case, stripeWebhookUrl for stripe-webhook, and of the http api, as httpApiUrl. With a custom domain, httpDomainTarget is where its dns record points.
+// urlOutputs are the outputs config.GeneratedOutputs names, from the state: the urls of the
+// functions that have one, as config.URLOutput names them, of the http api and of the websocket
+// api. With a custom domain, httpDomainTarget is where its dns record points.
 func (s *stage) urlOutputs(st *state.State) map[string]string {
 	out := map[string]string{}
 	for name := range s.Functions {
 		if r := st.Resources[desired.URLID(name)]; r != nil {
-			out[camelCase(name)+"Url"] = r.Attributes["FunctionUrl"]
+			out[config.URLOutput(name)] = r.Attributes["FunctionUrl"]
 		}
 	}
 	if r := st.Resources[desired.HTTPAPIID]; r != nil {
-		out["httpApiUrl"] = r.Attributes["ApiEndpoint"]
+		out[config.OutputHTTPAPIURL] = r.Attributes["ApiEndpoint"]
 	}
 	if r := st.Resources[desired.WebSocketID]; r != nil {
-		out["webSocketUrl"] = r.Attributes["ApiEndpoint"] + "/" + r.Attributes["Stage"]
+		out[config.OutputWebSocketURL] = r.Attributes["ApiEndpoint"] + "/" + r.Attributes["Stage"]
 	}
 	if r := st.Resources[desired.DomainID]; r != nil {
-		out["httpApiUrl"] = "https://" + r.PhysicalID
-		out["httpDomainTarget"] = r.Attributes["RegionalDomainName"]
+		out[config.OutputHTTPAPIURL] = "https://" + r.PhysicalID
+		out[config.OutputHTTPDomainTarget] = r.Attributes["RegionalDomainName"]
 	}
 	return out
 }

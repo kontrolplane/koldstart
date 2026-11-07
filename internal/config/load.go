@@ -130,10 +130,25 @@ func (p *Project) Validate() error {
 			}
 		})
 	}
+	generated := p.GeneratedOutputs()
 	for _, name := range slices.Sorted(maps.Keys(p.Outputs)) {
-		v.value("outputs["+name+"]", p.Outputs[name])
+		v.output(name, p.Outputs[name], generated)
 	}
 	return errors.Join(v.errs...)
+}
+
+// output checks an output is one a deploy can resolve from the state, before anything is
+// applied, and is not one the deploy adds itself, which would replace it.
+func (v *validator) output(name string, val Value, generated map[string]string) {
+	where := "outputs[" + name + "]"
+	if what, ok := generated[name]; ok {
+		v.errorf("%s: koldstart generates %s, %s, which would replace this output: pick another name", where, name, what)
+	}
+	if what := notOutput(val); what != "" {
+		v.errorf("%s: %s cannot be an output: give a string, a kdst.ref(), a kdst.join() of them or a value of the account, kdst.accountId, kdst.partition or kdst.urlSuffix", where, what)
+		return
+	}
+	v.value(where, val)
 }
 
 // validator collects what Validate finds.

@@ -455,7 +455,7 @@ outputs {
 }
 ```
 
-An output is a string, a `kdst.ref()`, a `kdst.join()` or a value of the account; a secret or `kdst.stageOutput()` is not one. Every deploy resolves them, records them in the state and prints them, with `httpApiUrl`, `webSocketUrl`, `httpDomainTarget` with a domain, and a `<function>Url` for each function url. `kdst outputs` prints what the last deploy recorded, one `name = value` a line, and `-o json` prints them as one json object, `{}` when there are none:
+An output is a string, a `kdst.ref()`, a `kdst.join()` or a value of the account; a secret or `kdst.stageOutput()` is not one, and `plan` and `deploy` refuse it before they change anything. An output cannot take the name of one koldstart generates for the configuration. Every deploy resolves them, records them in the state and prints them, with `httpApiUrl`, `webSocketUrl`, `httpDomainTarget` with a domain, and a `<function>Url` for each function url. `kdst outputs` prints what the last deploy recorded, one `name = value` a line, and `-o json` prints them as one json object, `{}` when there are none:
 
 ```bash
 kdst outputs -o json | jq -r .table
