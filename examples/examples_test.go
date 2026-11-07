@@ -91,10 +91,10 @@ func TestExamplesEvaluate(t *testing.T) {
 	}
 }
 
-// TestDemoEvaluates checks the shop make local and make vhs deploy to floci evaluates through its
-// own PklProject, which depends on the schema in this tree, as each file of it is deployed, for
-// each stage, and passes the checks of a deploy.
-func TestDemoEvaluates(t *testing.T) {
+// TestDemonstrationEvaluates checks the checkout service make local and make vhs deploy to floci evaluates
+// through its own PklProject, which depends on the schema in this tree, each release of it on
+// each of its stages, and passes the checks of a deploy.
+func TestDemonstrationEvaluates(t *testing.T) {
 	if os.Getenv("CI") == "" && os.Getenv(pkl.EnvBinary) == "" {
 		if _, err := exec.LookPath("pkl"); err != nil {
 			t.Skip("no pkl on the PATH")
@@ -104,16 +104,18 @@ func TestDemoEvaluates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("finding pkl: %v", err)
 	}
-	dir := filepath.Join("..", "hack", "demo", "shop")
-	tests := []struct {
+	dir := filepath.Join("..", "hack", "demonstration", "checkout")
+	tests := make([]struct {
 		file  string
 		stage string
-	}{
-		{file: "koldstart.first.pkl", stage: "dev"},
-		{file: "koldstart.pkl", stage: "dev"},
-		{file: "koldstart.pkl", stage: "prod"},
-		{file: "koldstart.first.pkl", stage: "pr-128"},
-		{file: "koldstart.next.pkl", stage: "dev"},
+	}, 0, 15)
+	for _, file := range []string{"koldstart.first.pkl", "koldstart.carts.pkl", "koldstart.pkl", "koldstart.monitoring.pkl", "koldstart.next.pkl"} {
+		for _, stage := range []string{"development", "staging", "production"} {
+			tests = append(tests, struct {
+				file  string
+				stage string
+			}{file, stage})
+		}
 	}
 	for _, tt := range tests {
 		t.Run(tt.file+"/"+tt.stage, func(t *testing.T) {

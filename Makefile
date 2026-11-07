@@ -64,23 +64,24 @@ emulator-down:
 test-emulator:
 	KOLDSTART_TEST_ENDPOINT=http://127.0.0.1:4566 go test -race -count=1 -run Emulator ./...
 
-# Floci with the shop in hack/demo/shop deployed to dev, prod and pr-128, invoked, and given an
-# hour of metrics, for kdst ui to look at. It takes a minute and a half, and again after floci
-# restarts, as floci keeps nothing. make local-ui opens kdst ui on it.
+# Floci with the checkout service in hack/demonstration/checkout deployed to development, staging and
+# production over a few releases by its team, invoked, and given an hour of metrics, for kdst ui
+# to look at. It takes four minutes, and again after floci restarts, as floci keeps nothing. make
+# local-ui opens kdst ui on it.
 local: build emulator
-	hack/demo/seed.sh
+	hack/demonstration/seed.sh
 
-# kdst ui on the shop make local deployed, through the local profile of hack/floci/aws-config,
-# whatever aws settings the shell has.
+# kdst ui on the checkout service make local deployed, on its development stage, through the
+# local profile of hack/floci/aws-config, whatever aws settings the shell has.
 local-ui: build
-	cd hack/demo/shop && env -u AWS_ENDPOINT_URL -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN -u AWS_SHARED_CREDENTIALS_FILE -u AWS_REGION -u AWS_DEFAULT_REGION -u KOLDSTART_CONFIG -u KOLDSTART_STAGE AWS_CONFIG_FILE=../../floci/aws-config ../../../bin/kdst ui --profile local
+	cd hack/demonstration/checkout && env -u AWS_ENDPOINT_URL -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN -u AWS_SHARED_CREDENTIALS_FILE -u AWS_REGION -u AWS_DEFAULT_REGION -u KOLDSTART_CONFIG -u KOLDSTART_STAGE AWS_CONFIG_FILE=../../floci/aws-config ../../../bin/kdst ui --profile local --stage development
 
 # The recording of kdst ui in the README, assets/cassette.gif and the screenshots in
-# assets/pages/, made with vhs, ffmpeg and ttyd. It deploys the shop in hack/demo/shop to a floci
-# of its own on 127.0.0.1:4567, which it starts afresh and removes again, so make emulator's is
-# left alone.
+# assets/pages/, made with vhs, ffmpeg and ttyd. It deploys the checkout service in
+# hack/demonstration/checkout to a floci of its own on 127.0.0.1:4567, which it starts afresh and removes
+# again, so make emulator's is left alone.
 vhs: build
 	docker compose -f vhs/docker-compose.yaml down
 	docker compose -f vhs/docker-compose.yaml up --detach --wait
-	KOLDSTART_DEMO_CONFIG=$(CURDIR)/vhs/aws-config KOLDSTART_DEMO_PROFILE=vhs hack/demo/seed.sh
+	KOLDSTART_DEMONSTRATION_CONFIG=$(CURDIR)/vhs/aws-config KOLDSTART_DEMONSTRATION_PROFILE=vhs hack/demonstration/seed.sh
 	vhs vhs/cassette.tape; status=$$?; docker compose -f vhs/docker-compose.yaml down; exit $$status

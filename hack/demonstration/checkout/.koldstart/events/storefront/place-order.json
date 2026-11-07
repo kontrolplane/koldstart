@@ -1,0 +1,13 @@
+{
+  "version": "2.0",
+  "routeKey": "POST /orders",
+  "rawPath": "/orders",
+  "body": "{\"cartId\": \"cart-8f2a91\"}",
+  "requestContext": {
+    "http": {
+      "method": "POST",
+      "path": "/orders",
+      "sourceIp": "81.204.17.42"
+    }
+  }
+}

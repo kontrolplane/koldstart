@@ -1,22 +1,36 @@
 #!/bin/sh
-# Deploys the shop in hack/demo/shop to floci, dev twice and prod and pr-128 once, invokes its
-# functions with the events kept for them, a few of which fail, and writes what cloudwatch would
-# hold of them and floci does not, so kdst ui has a history, logs, invocations and metrics to
-# show. make local runs it against the floci of make emulator, with the local profile of
-# hack/floci/aws-config, and make vhs against its own, with KOLDSTART_DEMO_CONFIG and
-# KOLDSTART_DEMO_PROFILE set, both after building bin/kdst. The aws settings of the shell are
-# never used, so it cannot deploy to a real account: the profile names floci, and the variables
-# that would take precedence over it, or over the shop's region, configuration and stages, are
-# unset.
+# Deploys the checkout service in hack/demonstration/checkout to floci as its team would have over a few
+# days, development, staging and production each in its own steps, then invokes its functions with
+# the events kept for them, a few of which fail, and has backfill write what an account would hold
+# of it and floci does not: parameters, an hour of metrics, lambda's own log lines, and a deploy to
+# staging github actions left unfinished. make local runs it against the floci of make emulator,
+# with the local profile of hack/floci/aws-config, and make vhs against its own, with
+# KOLDSTART_DEMONSTRATION_CONFIG and KOLDSTART_DEMONSTRATION_PROFILE set, both after building bin/kdst.
+#
+# The aws settings of the shell are never used, so it cannot deploy to a real account: the profile
+# names floci, and the variables that would take precedence over it, or over the service's region,
+# configuration and stages, are unset.
 set -eu
 
-cd "$(dirname "$0")/shop"
-export AWS_CONFIG_FILE="${KOLDSTART_DEMO_CONFIG:-$(cd ../../floci && pwd)/aws-config}"
-export AWS_PROFILE="${KOLDSTART_DEMO_PROFILE:-local}"
+cd "$(dirname "$0")/checkout"
+export AWS_CONFIG_FILE="${KOLDSTART_DEMONSTRATION_CONFIG:-$(cd ../../floci && pwd)/aws-config}"
+export AWS_PROFILE="${KOLDSTART_DEMONSTRATION_PROFILE:-local}"
 unset AWS_DEFAULT_PROFILE AWS_ENDPOINT_URL AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SHARED_CREDENTIALS_FILE AWS_REGION AWS_DEFAULT_REGION KOLDSTART_CONFIG KOLDSTART_STAGE
 kdst=../../../bin/kdst
 
-# invoke sends an event n times, and goes on when the function fails.
+# deploy deploys a release to a stage as someone. koldstart names whoever deploys from github
+# actions by GITHUB_ACTOR, so a deploy here passes as one, under the name of the person or the
+# bot, with a run of its own.
+deploy() {
+  who=$1
+  stage=$2
+  config=$3
+  run=$((11873519000 + $(date +%s) % 1000))
+  GITHUB_ACTIONS=true GITHUB_ACTOR="$who" GITHUB_SERVER_URL=https://github.com GITHUB_REPOSITORY=acme/checkout GITHUB_RUN_ID=$run \
+    $kdst deploy --stage "$stage" --config "$config" --yes
+}
+
+# invoke sends an event to a function n times, and goes on when the function fails.
 invoke() {
   stage=$1
   function=$2
@@ -28,33 +42,109 @@ invoke() {
   done
 }
 
-# The ui counts writes of the state less than a minute apart as one deploy, so the second deploy
-# of dev waits for the minute to pass.
-first=$(date +%s)
-$kdst deploy --stage dev --config koldstart.first.pkl --yes
-$kdst deploy --stage prod --yes
-$kdst deploy --stage pr-128 --config koldstart.first.pkl --yes
+# say says what the seed does next, as each step can take a while.
+say() {
+  printf '\n\033[1m==> %s\033[0m\n' "$1"
+}
 
-invoke prod api list-products 6
-invoke prod api get-order 4
-invoke prod api place-order 3
-invoke prod worker jobs 2
+# later waits for the minute since the last round of deploys to pass, as the ui counts writes of a
+# state less than a minute apart as one deploy.
+round=$(date +%s)
+later() {
+  say "waiting for the minute to pass, so the next deploys count as deploys of their own"
+  while [ $(($(date +%s) - round)) -le 65 ]; do
+    sleep 1
+  done
+  round=$(date +%s)
+}
 
-while [ $(($(date +%s) - first)) -le 65 ]; do
-  sleep 1
-done
-$kdst deploy --stage dev --yes
+say "parameters for each stage in parameter store"
+go run ../backfill parameters
 
-invoke dev report daily 2
-invoke dev worker jobs 3
-invoke dev api list-products 5
-invoke dev api get-order 3
-invoke dev api place-order 4
-invoke dev api empty-order 1
-invoke dev api missing-order 2
-invoke dev api get-order 2
-invoke dev api place-order 2
-invoke dev api empty-order 1
-invoke dev api list-products 2
+# The first release: products, orders and payments. Anouk sets up staging and production by hand,
+# Daan his development stage.
+say "release 1 of 3: products, orders and payments"
+deploy anouk-de-vries production koldstart.first.pkl
+deploy anouk-de-vries staging koldstart.first.pkl
+deploy daan-bakker development koldstart.first.pkl
+invoke development storefront list-products 2
+invoke development storefront place-order 1
 
-go run ../cloudwatch
+# Carts and customer emails, merged and shipped by the pipeline after Daan tried them.
+later
+say "release 2 of 3: carts and customer emails"
+deploy daan-bakker development koldstart.carts.pkl
+deploy github-actions[bot] staging koldstart.carts.pkl
+deploy github-actions[bot] production koldstart.carts.pkl
+
+# The webhook and the nightly reconciliation. The pipeline's deploy to production also adds
+# sentry's layer, at a version not published to the account yet, and stops part of the way.
+later
+say "release 3 of 3: the payment provider's webhook and the nightly reconciliation, its deploy to production failing on a layer"
+deploy sanne-visser development koldstart.pkl
+deploy github-actions[bot] staging koldstart.pkl
+deploy github-actions[bot] production koldstart.monitoring.pkl || true
+
+# The layer reverted, and production deployed again.
+later
+say "release 3 of 3 again, to production, without the layer"
+deploy github-actions[bot] production koldstart.pkl
+
+say "invoking production, the customers' traffic"
+{
+  invoke production storefront list-products 6
+  invoke production storefront read-cart 3
+  invoke production storefront add-to-cart 3
+  invoke production storefront place-order 4
+  invoke production storefront read-order 3
+  invoke production storefront read-missing-order 1
+  invoke production storefront read-missing-cart 1
+  invoke production storefront add-unknown-product 1
+  invoke production storefront place-order-from-empty-cart 1
+  invoke production storefront add-malformed-item 1
+  invoke production storefront list-products 2
+} &
+{
+  invoke production payments payment-batch 3
+  invoke production payments declined-card 1
+  invoke production payments payment-batch 1
+  invoke production payments slow-provider 1
+} &
+{
+  invoke production notify-customers order-confirmed 2
+  invoke production notify-customers order-shipped 2
+  invoke production notify-customers order-disputed 1
+} &
+{
+  invoke production stripe-webhook payment-succeeded 3
+  invoke production stripe-webhook forged-signature 1
+  invoke production reconcile nightly 1
+} &
+wait
+
+say "invoking staging and development, the team's own requests"
+{
+  invoke staging storefront list-products 2
+  invoke staging storefront place-order 1
+  invoke staging storefront read-order 1
+} &
+{
+  invoke staging payments payment-batch 1
+  invoke staging notify-customers order-confirmed 1
+  invoke staging stripe-webhook payment-succeeded 1
+} &
+{
+  invoke development storefront list-products 1
+  invoke development storefront add-to-cart 1
+  invoke development storefront add-malformed-item 1
+  invoke development storefront place-order 1
+} &
+{
+  invoke development payments declined-card 1
+  invoke development stripe-webhook forged-signature 1
+} &
+wait
+
+say "metrics, lambda's own log lines and an unfinished deploy to staging"
+go run ../backfill
+say "done"

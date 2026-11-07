@@ -6,7 +6,7 @@
 
 `koldstart` deploys serverless applications to `AWS Lambda`. You describe your functions, the events that trigger them and the resources they use in a [pkl](https://pkl-lang.org/) file, and koldstart builds, packages and deploys them into your own AWS account. It is free to use without limits: no license key, no hosted dashboard, no telemetry and nothing running outside your account. `kdst` is the short name for the same binary.
 
-<img width="1500" alt="kdst ui demo" src="./assets/cassette.gif">
+<img width="1500" alt="kdst ui demonstration" src="./assets/cassette.gif">
 
 ---
 
@@ -351,7 +351,7 @@ make check
 make vhs
 ```
 
-`make test` runs the unit tests, against fakes and an in-memory state, with no aws account. `make emulator test-emulator` runs the tests that talk to aws against floci, and `make emulator-down` stops it. `make local` deploys the shop in [hack/demo/shop](./hack/demo/shop) to that floci, with three stages, invocations, failures and an hour of metrics, and `make local-ui` opens `kdst ui` on it through the `local` profile of [hack/floci/aws-config](./hack/floci/aws-config). `make check` runs what CI runs. `make vhs` records the gif above and a screenshot of each page in `assets/pages/`, against the same shop deployed to a floci of its own on 127.0.0.1:4567. `go test -tags e2e ./test/e2e/...` deploys [examples/full-featured](./examples/full-featured) to a real account, with the credentials you have, and removes it again. [CONTRIBUTING.md](./CONTRIBUTING.md) and [AGENTS.md](./AGENTS.md) have the rest.
+`make test` runs the unit tests, against fakes and an in-memory state, with no aws account. `make emulator test-emulator` runs the tests that talk to aws against floci, and `make emulator-down` stops it. `make local` deploys the checkout service in [hack/demonstration/checkout](./hack/demonstration/checkout) to that floci, to development, staging and production as a team would over a few releases, with invocations, failures, an hour of metrics and a deploy left locked, and `make local-ui` opens `kdst ui` on it through the `local` profile of [hack/floci/aws-config](./hack/floci/aws-config). `make check` runs what CI runs. `make vhs` records the gif above and a screenshot of each page in `assets/pages/`, against the same service deployed to a floci of its own on 127.0.0.1:4567. `go test -tags e2e ./test/e2e/...` deploys [examples/full-featured](./examples/full-featured) to a real account, with the credentials you have, and removes it again. [CONTRIBUTING.md](./CONTRIBUTING.md) and [AGENTS.md](./AGENTS.md) have the rest.
 
 ## license
 

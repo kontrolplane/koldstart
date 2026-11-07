@@ -7,11 +7,13 @@ Set TypingSpeed 100ms
 Output ./assets/cassette.gif
 
 Hide
-  Type@10ms "go build -o bin/koldstart ./cmd/koldstart && cd hack/demo/shop && clear && AWS_CONFIG_FILE=../../../vhs/aws-config ../../../bin/koldstart --profile vhs ui --config koldstart.next.pkl"
+  Type@10ms "go build -o bin/koldstart ./cmd/koldstart && cd hack/demonstration/checkout && clear && AWS_CONFIG_FILE=../../../vhs/aws-config ../../../bin/koldstart --profile vhs ui --stage development --config koldstart.next.pkl"
   Enter
-  Wait+Screen@60s /1 of 3/
+  Wait+Screen@60s /1 of 5/
   Type "q"
-  Wait+Screen@10s /pr-128/
+  Wait+Screen@10s /production/
+  Down
+  Wait+Screen@10s /storefront/
   Sleep 1s
 Show
 
@@ -21,13 +23,15 @@ Screenshot ./assets/pages/stages/overview.png
 
 Sleep 500ms
 Enter
-Wait+Screen@10s /[0-9]ms/
+Wait+Screen@10s /p99/
+Sleep 1s
+Down@600ms 3
 Sleep 2s
 
 Screenshot ./assets/pages/stage/functions.png
 
 Sleep 500ms
-Tab
+Type "2"
 Sleep 2s
 Down@600ms 2
 Sleep 1s
@@ -37,9 +41,7 @@ Sleep 2s
 Screenshot ./assets/pages/stage/resources.png
 
 Sleep 500ms
-Tab
-Sleep 2s
-Down
+Type "3"
 Sleep 2s
 
 Screenshot ./assets/pages/stage/outputs.png
@@ -54,8 +56,8 @@ Screenshot ./assets/pages/output/details.png
 Sleep 500ms
 Type "q"
 Sleep 1s
-Tab
-Wait+Screen@10s /~1/
+Type "4"
+Wait+Screen@10s /failed/
 Sleep 2s
 
 Screenshot ./assets/pages/stage/history.png
@@ -70,7 +72,7 @@ Screenshot ./assets/pages/deploy/changes.png
 Sleep 500ms
 Type "q"
 Sleep 1s
-Tab
+Type "1"
 Sleep 1s
 Enter
 Wait+Screen@10s /successful/
@@ -79,7 +81,7 @@ Sleep 2s
 Screenshot ./assets/pages/function/overview.png
 
 Sleep 500ms
-Tab
+Type "2"
 Wait+Screen@10s /following/
 Sleep 2s
 Type "s"
@@ -111,7 +113,7 @@ Sleep 1s
 Type "q"
 Wait+Screen@10s /following/
 Sleep 1s
-Tab
+Type "3"
 Wait+Screen@10s /cold start/
 Sleep 2s
 Down@600ms 2
@@ -120,7 +122,7 @@ Sleep 2s
 Screenshot ./assets/pages/function/invocations.png
 
 Sleep 500ms
-Tab
+Type "4"
 Sleep 2s
 Down@600ms 4
 Sleep 1s
@@ -133,11 +135,11 @@ Screenshot ./assets/pages/function/invoke.png
 Sleep 500ms
 Type "q"
 Sleep 1s
-Tab
+Type "2"
 Sleep 1s
 Type "G"
 Sleep 1s
-Up@600ms 2
+Up@600ms 4
 Sleep 1s
 Enter
 Wait+Screen@10s /applied with/
@@ -159,6 +161,14 @@ Screenshot ./assets/pages/resource/applied.png
 
 Sleep 500ms
 Type "q"
+Sleep 1s
+Type "q"
+Wait+Screen@10s /staging/
+Sleep 1s
+Up
+Sleep 1s
+Enter
+Wait+Screen@10s /1 of 5/
 Sleep 1s
 Type "d"
 Wait+Screen@60s /planned at/

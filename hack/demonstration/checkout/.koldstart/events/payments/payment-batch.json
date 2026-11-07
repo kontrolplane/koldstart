@@ -1,0 +1,14 @@
+{
+  "Records": [
+    {
+      "messageId": "b1d0f3a2-6c51-4e0e-9a43-7f2c1e9d4a10",
+      "body": "{\"orderId\": \"order-20483\", \"amount\": 72.5, \"currency\": \"EUR\", \"card\": \"4242424242424242\"}",
+      "eventSource": "aws:sqs"
+    },
+    {
+      "messageId": "5e8a2c91-0b7d-4f36-8e12-c4a9d3f60b27",
+      "body": "{\"orderId\": \"order-20484\", \"amount\": 22, \"currency\": \"EUR\", \"card\": \"5555555555554444\"}",
+      "eventSource": "aws:sqs"
+    }
+  ]
+}

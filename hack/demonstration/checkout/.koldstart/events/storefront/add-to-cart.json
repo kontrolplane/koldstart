@@ -1,0 +1,16 @@
+{
+  "version": "2.0",
+  "routeKey": "POST /carts/{cartId}/items",
+  "rawPath": "/carts/cart-8f2a91/items",
+  "pathParameters": {
+    "cartId": "cart-8f2a91"
+  },
+  "body": "{\"productId\": \"wool-beanie\", \"quantity\": 1}",
+  "requestContext": {
+    "http": {
+      "method": "POST",
+      "path": "/carts/cart-8f2a91/items",
+      "sourceIp": "81.204.17.42"
+    }
+  }
+}

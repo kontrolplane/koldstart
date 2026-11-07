@@ -1,66 +1,38 @@
-// The shop make local and make vhs deploy to floci, for kdst ui to look at and for the recording
-// of it in the README. Its PklProject depends on the schema in this tree. Floci's cloud control
-// returns no Arn, so nothing links a resource or refers to its Arn: the worker names its queue by
-// the arn floci gives it, in floci's account.
+// The checkout service of a web shop, which make local and make vhs deploy to floci for kdst ui to
+// look at and for the recording of it in the README. hack/demonstration/seed.sh deploys it to development,
+// staging and production in the steps a team would: koldstart.first.pkl, koldstart.carts.pkl and
+// then this file, with a deploy to production in between that fails on a layer not published
+// yet, koldstart.monitoring.pkl. The parts are in checkout.pkl, and its PklProject depends on the
+// schema in this tree.
 amends "@koldstart/Project.pkl"
 
 import "@koldstart/kdst.pkl"
+import "checkout.pkl"
 
-app = "shop"
-region = "eu-west-1"
-
-tags {
-  ["team"] = "checkout"
-}
+app = checkout.app
+region = checkout.region
+tags = checkout.tags
 
 functions {
-  ["api"] {
-    memory = if (kdst.stage == "prod") 1024 else 256
-    timeout = 10.s
-    environment {
-      ["ORDERS_TABLE"] = kdst.ref("orders", "TableName")
-      ["CURRENCY"] = "EUR"
-    }
-    events {
-      kdst.get("/products")
-      kdst.get("/orders/{id}")
-      kdst.post("/orders")
-    }
-  }
-  ["worker"] {
-    timeout = 30.s
-    environment {
-      ["ORDERS_TABLE"] = kdst.ref("orders", "TableName")
-    }
-    events {
-      kdst.fromQueue("arn:aws:sqs:eu-west-1:000000000000:shop-\(kdst.stage)-jobs")
-    }
-  }
-  ["report"] {
-    memory = 512
-    timeout = 1.min
-    events {
-      (kdst.schedule("cron(0 7 * * ? *)")) { enabled = kdst.stage == "prod" }
-    }
-  }
+  ["storefront"] = checkout.storefront
+  ["payments"] = checkout.payments
+  ["notify-customers"] = checkout.notifyCustomers
+  ["stripe-webhook"] = checkout.stripeWebhook
+  ["reconcile"] = checkout.reconcile
 }
 
 resources {
-  ["orders"] = (kdst.table("id")) {
-    properties {
-      TableName = "shop-\(kdst.stage)-orders"
-    }
-  }
-  ["jobs"] = (kdst.queue()) {
-    properties {
-      QueueName = "shop-\(kdst.stage)-jobs"
-      VisibilityTimeout = 60
-    }
-  }
+  ["orders"] = checkout.orders
+  ["carts"] = checkout.carts
+  ["payment-requests"] = checkout.paymentRequests
+  ["failed-payments"] = checkout.failedPayments
+  ["order-notifications"] = checkout.orderNotifications
+  ["receipts"] = checkout.receipts
 }
 
 outputs {
   ["ordersTable"] = kdst.ref("orders", "TableName")
-  ["docs"] = "https://github.com/kontrolplane/koldstart/tree/main/hack/demo/shop"
-  ["features"] = #"{"checkout":true,"reviews":false,"currencies":["EUR","GBP","USD"],"limits":{"basket":50,"perMinute":120}}"#
+  ["receiptsBucket"] = kdst.ref("receipts", "BucketName")
+  ["runbook"] = checkout.runbook
+  ["featureFlags"] = checkout.featureFlags
 }

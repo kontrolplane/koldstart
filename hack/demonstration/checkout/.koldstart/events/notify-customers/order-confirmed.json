@@ -1,0 +1,11 @@
+{
+  "Records": [
+    {
+      "EventSource": "aws:sns",
+      "Sns": {
+        "MessageId": "3f6e2a1c-8d4b-4e7f-9a20-5c1b7d3e9f48",
+        "Message": "{\"type\": \"order.confirmed\", \"orderId\": \"order-20483\", \"email\": \"marieke.dejong@example.com\"}"
+      }
+    }
+  ]
+}

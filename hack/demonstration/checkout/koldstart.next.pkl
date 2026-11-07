@@ -1,0 +1,26 @@
+// The change the recording plans on development: more memory and a log level for the storefront,
+// a route to take an item out of a cart, bigger batches of payments, and a longer visibility
+// timeout for their queue.
+amends "koldstart.pkl"
+
+import "@koldstart/kdst.pkl"
+import "checkout.pkl"
+
+functions {
+  ["storefront"] {
+    memory = 1024
+    environment { ["LOG_LEVEL"] = "debug" }
+    events { kdst.del("/carts/{cartId}/items/{itemId}") }
+  }
+  ["payments"] {
+    events = new {
+      (kdst.fromQueue(checkout.arn("sqs", "payment-requests"))) { batchSize = 10 }
+    }
+  }
+}
+
+resources {
+  ["payment-requests"] {
+    properties { VisibilityTimeout = 60 }
+  }
+}

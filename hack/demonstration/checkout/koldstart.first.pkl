@@ -1,0 +1,38 @@
+// The checkout service as it first went out: products and orders, and payments taken from a
+// queue, without carts, notifications, the payment provider's webhook or the nightly
+// reconciliation, which koldstart.carts.pkl and koldstart.pkl add.
+amends "@koldstart/Project.pkl"
+
+import "@koldstart/kdst.pkl"
+import "checkout.pkl"
+
+app = checkout.app
+region = checkout.region
+tags = checkout.tags
+
+functions {
+  ["storefront"] = (checkout.storefront) {
+    memory = 512
+    environment = new {
+      ["ORDERS_TABLE"] = kdst.ref("orders", "TableName")
+      ["PAYMENT_REQUESTS_QUEUE"] = checkout.arn("sqs", "payment-requests")
+      ["CURRENCY"] = "EUR"
+    }
+    events = new {
+      kdst.get("/products")
+      kdst.post("/orders")
+      kdst.get("/orders/{orderId}")
+    }
+  }
+  ["payments"] = checkout.payments
+}
+
+resources {
+  ["orders"] = checkout.orders
+  ["payment-requests"] = checkout.paymentRequests
+}
+
+outputs {
+  ["ordersTable"] = kdst.ref("orders", "TableName")
+  ["runbook"] = checkout.runbook
+}

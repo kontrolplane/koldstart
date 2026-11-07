@@ -1,0 +1,9 @@
+{
+  "Records": [
+    {
+      "messageId": "9c4f1e27-3a8b-4d65-b0f2-1e7d5a3c8b94",
+      "body": "{\"orderId\": \"order-20485\", \"amount\": 43.5, \"currency\": \"EUR\", \"card\": \"4000000000000002\"}",
+      "eventSource": "aws:sqs"
+    }
+  ]
+}

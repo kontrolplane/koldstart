@@ -1,0 +1,11 @@
+{
+  "Records": [
+    {
+      "EventSource": "aws:sns",
+      "Sns": {
+        "MessageId": "c81e5a27-4b9d-4f02-a6c3-2e7f1d8b9a60",
+        "Message": "{\"type\": \"order.disputed\", \"orderId\": \"order-20412\", \"email\": \"fleur.smit@example.com\"}"
+      }
+    }
+  ]
+}

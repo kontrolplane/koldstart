@@ -1,4 +1,4 @@
-# A second Floci, on 127.0.0.1:4567, that make vhs deploys the demo to and records against, so the
+# A second Floci, on 127.0.0.1:4567, that make vhs deploys the demonstration to and records against, so the
 # one make emulator starts keeps its state. Its containers and volumes are named under their own
 # namespace, and ecr, which koldstart's zips do not need, is off so no registry is started. The
 # image is the one docker-compose.yaml pins.

@@ -1,0 +1,30 @@
+// The checkout service's second release: carts, and emails to customers on the topic of order
+// notifications. koldstart.pkl adds the payment provider's webhook and the nightly
+// reconciliation.
+amends "@koldstart/Project.pkl"
+
+import "@koldstart/kdst.pkl"
+import "checkout.pkl"
+
+app = checkout.app
+region = checkout.region
+tags = checkout.tags
+
+functions {
+  ["storefront"] = checkout.storefront
+  ["payments"] = checkout.payments
+  ["notify-customers"] = checkout.notifyCustomers
+}
+
+resources {
+  ["orders"] = checkout.orders
+  ["carts"] = checkout.carts
+  ["payment-requests"] = checkout.paymentRequests
+  ["order-notifications"] = checkout.orderNotifications
+}
+
+outputs {
+  ["ordersTable"] = kdst.ref("orders", "TableName")
+  ["runbook"] = checkout.runbook
+  ["featureFlags"] = checkout.featureFlags
+}
