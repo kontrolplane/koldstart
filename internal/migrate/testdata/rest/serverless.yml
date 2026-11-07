@@ -10,6 +10,16 @@ provider:
         type: request
         functionName: auth
         identitySource: $request.header.Authorization
+  apiGateway:
+    timeoutInMillis: 10000
+    apiKeys:
+      - partners
+    usagePlan:
+      quota:
+        limit: 1000
+        period: DAY
+    binaryMediaTypes:
+      - image/png
 
 custom:
   pool: arn:aws:cognito-idp:eu-west-1:123456789012:userpool/eu-west-1_Ab12Cd34
@@ -119,6 +129,26 @@ functions:
           method: get
           path: mock
           integration: mock
+      - http:
+          method: get
+          path: reports/{proxy+}
+          timeoutInMillis: 5500
+          private: true
+          request:
+            parameters:
+              querystrings:
+                from: true
+              headers:
+                X-Tenant:
+                  required: true
+              paths:
+                proxy: true
+      - http:
+          method: get
+          path: tokens
+          authorizer:
+            name: auth
+            identitySource: method.request.querystring.token
 
 resources:
   Resources:

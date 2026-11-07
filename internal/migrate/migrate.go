@@ -122,8 +122,12 @@ type converter struct {
 	usesParams   bool
 	conditions   map[string]string
 	// restAuthorizers are the authorizers the routes of the rest api take, converted, which go
-	// in http.authorizers.
+	// in rest.authorizers, and privateNoted says the todo of the api key of the private routes is
+	// written.
 	restAuthorizers []*restAuthorizer
+	privateNoted    bool
+	// restRoutes says a route of the rest api was converted.
+	restRoutes bool
 }
 
 // addedResource is a resource of an event that serverless.yml names but does not declare, and
@@ -217,6 +221,7 @@ func (c *converter) convert() (*Result, error) {
 	}
 	c.tags(&w, provider)
 	c.http(&w, provider)
+	c.rest(&w)
 	if expr := str(get(provider, "websocketsApiRouteSelectionExpression")); expr != "" {
 		w.blank()
 		w.line("websocket { routeSelection = %s }", quote(expr))
@@ -335,15 +340,14 @@ func (c *converter) tags(w *writer, provider *yaml.Node) {
 	w.close()
 }
 
-// http writes the stage's http api: its cors, authorizers, those of the rest api's routes
-// among them, and access logs.
+// http writes the stage's http api: its cors, authorizers and access logs.
 func (c *converter) http(w *writer, provider *yaml.Node) {
 	api := get(provider, "httpApi")
 	cors, authorizers, logs := get(api, "cors"), get(api, "authorizers"), get(get(provider, "logs"), "httpApi")
 	if isFalse(logs) {
 		logs = nil
 	}
-	if cors == nil && authorizers == nil && logs == nil && len(c.restAuthorizers) == 0 {
+	if cors == nil && authorizers == nil && logs == nil {
 		return
 	}
 	w.blank()
@@ -358,13 +362,10 @@ func (c *converter) http(w *writer, provider *yaml.Node) {
 	default:
 		w.line("accessLogs = new {}")
 	}
-	if len(keys(authorizers)) > 0 || len(c.restAuthorizers) > 0 {
+	if len(keys(authorizers)) > 0 {
 		w.open("authorizers")
 		for _, name := range keys(authorizers) {
 			c.authorizer(w, name, get(authorizers, name))
-		}
-		for _, a := range c.restAuthorizers {
-			c.writeRestAuthorizer(w, a)
 		}
 		w.close()
 	}
@@ -827,7 +828,7 @@ func (c *converter) url(w *writer, where string, n *yaml.Node) {
 		return
 	}
 	auth := "none"
-	if str(get(n, "authorizer")) == "aws_iam" {
+	if str(get(n, "authorizer")) == authIAM {
 		auth = "iam"
 	}
 	cors := get(n, "cors")
@@ -983,7 +984,7 @@ func (c *converter) plugin(name string) hint {
 	case "serverless-webpack":
 		return hint{Drop, "koldstart bundles with esbuild itself"}
 	case "serverless-offline":
-		return hint{Drop, c.name + " offline serves the http routes on this machine"}
+		return hint{Drop, c.name + " offline serves the http and rest routes on this machine"}
 	case "serverless-iam-roles-per-function":
 		return hint{Drop, "every function has a role of its own already"}
 	case "serverless-prune-plugin":
@@ -1015,7 +1016,6 @@ var (
 		key string
 		hint
 	}{
-		{"apiGateway", hint{Add, "koldstart deploys an http api, not a rest api: set what it needs on http"}},
 		{"deploymentBucket", hint{Drop, "koldstart keeps its zips and state in a bucket of its own"}},
 		{"versionFunctions", hint{Drop, "koldstart publishes versions only of functions with provisionedConcurrency or snapStart"}},
 	}
@@ -1055,11 +1055,12 @@ func (c *converter) leftOver() {
 		c.todo(Review, "provider.iam.role", "every function gets a role of its own: give each what it needs with permissions or link")
 	}
 	if tracing := get(get(provider, "tracing"), "apiGateway"); isTrue(tracing) {
-		c.todo(Review, "provider.tracing.apiGateway", "an http api has no x-ray tracing: the functions trace with tracing")
+		c.todo(Review, "provider.tracing.apiGateway", "koldstart's apis have no x-ray tracing: the functions trace with tracing")
 	}
+	c.apiGateway(provider)
 	logs := get(provider, "logs")
 	if get(logs, "restApi") != nil {
-		c.todo(Add, "provider.logs.restApi", "the routes of the rest api are on the http api: give it access logs with http.accessLogs")
+		c.todo(Add, "provider.logs.restApi", "koldstart has no access logs of the rest api yet")
 	}
 	if get(logs, "websocket") != nil {
 		c.todo(Add, "provider.logs.websocket", "koldstart has no access logs of the websocket api yet")

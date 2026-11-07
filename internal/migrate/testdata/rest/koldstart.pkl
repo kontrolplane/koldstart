@@ -16,42 +16,42 @@ http {
         "$request.header.Authorization"
       }
     }
-    // TODO: the authorizer is one of the http api now: it gets the event of payload 2.0, with identitySource and routeArn in place of authorizationToken and methodArn, and returns { isAuthorized, context } in place of an iam policy
-    ["auth-2"] = new kdst.LambdaAuthorizer {
+  }
+}
+
+rest {
+  authorizers {
+    ["auth"] = new kdst.TokenAuthorizer {
       functionName = "auth"
-      identity {
-        "$request.header.Authorization"
-      }
       ttl = 300.s
     }
-    // TODO: the authorizer is one of the http api now: it gets the event of payload 2.0, with identitySource and routeArn in place of authorizationToken and methodArn, and returns { isAuthorized, context } in place of an iam policy
-    ["requestAuth"] = new kdst.LambdaAuthorizer {
+    ["requestAuth"] = new kdst.RequestAuthorizer {
       functionName = "requestAuth"
       identity {
-        "$request.header.X-Token"
-        "$request.querystring.token"
+        "method.request.header.X-Token"
+        "method.request.querystring.token"
       }
       ttl = 60.s
     }
-    // TODO: the authorizer is one of the http api now: it gets the event of payload 2.0, with identitySource and routeArn in place of authorizationToken and methodArn, and returns { isAuthorized, context } in place of an iam policy
-    // TODO: the http api refuses a request without an Authorization header before it calls the authorizer: set identity to what every request has
-    ["requestAuth-2"] = new kdst.LambdaAuthorizer {
+    ["requestAuth-2"] = new kdst.RequestAuthorizer {
       functionName = "requestAuth"
     }
-    // TODO: the authorizer is one of the http api now: it gets the event of payload 2.0, with identitySource and routeArn in place of authorizationToken and methodArn, and returns { isAuthorized, context } in place of an iam policy
-    // TODO: the http api has no identityValidationExpression: check the token against ^Bearer [-0-9a-zA-Z._]+$ in the authorizer
-    ["auth-3"] = new kdst.LambdaAuthorizer {
+    ["auth-2"] = new kdst.TokenAuthorizer {
       functionName = "auth"
-      identity {
-        "$request.header.Authorization"
-      }
+      validation = "^Bearer [-0-9a-zA-Z._]+$"
       ttl = 300.s
     }
-    // TODO: set audience to the ids of the user pool's app clients: the http api takes a token only when its aud or client_id is one of them, where the rest api took one of any client of the pool
-    // TODO: the function finds the token's claims in requestContext.authorizer.jwt.claims now, not requestContext.authorizer.claims
-    ["cognito"] = new kdst.JwtAuthorizer {
-      issuer = "https://cognito-idp.eu-west-1.amazonaws.com/eu-west-1_Ab12Cd34"
-      audience { "<app client id>" }
+    ["cognito"] = new kdst.CognitoAuthorizer {
+      userPools { "arn:aws:cognito-idp:eu-west-1:123456789012:userpool/eu-west-1_Ab12Cd34" }
+    }
+    ["users"] = new kdst.CognitoAuthorizer {
+      userPools { kdst.ref("UserPool", "Arn") }
+    }
+    // TODO: the rest api takes the token of a token or cognito authorizer from a header: set header to the one callers send it in
+    ["auth-3"] = new kdst.TokenAuthorizer {
+      functionName = "auth"
+      header = "<header>"
+      ttl = 300.s
     }
   }
 }
@@ -69,74 +69,92 @@ functions {
     runtime = "nodejs22.x"
     handler = "src/api.handler"
     events {
-      // TODO: a route of the rest api is one of the http api now: check the function takes the event of payload 2.0, not 1.0, and does without request validation, api keys and usage plans
-      (kdst.get("/accounts")) {
-        authorizer = "auth-2"
+      (kdst.rest("GET", "/accounts")) {
+        authorizer = "auth"
+        timeout = 10.s
       }
-      // TODO: a route of the rest api is one of the http api now: check the function takes the event of payload 2.0, not 1.0, and does without request validation, api keys and usage plans
-      (kdst.post("/accounts")) {
-        authorizer = "auth-2"
+      (kdst.rest("POST", "/accounts")) {
+        authorizer = "auth"
+        timeout = 10.s
       }
-      // TODO: a route of the rest api is one of the http api now: check the function takes the event of payload 2.0, not 1.0, and does without request validation, api keys and usage plans
-      (kdst.get("/accounts/{id}")) {
+      (kdst.rest("GET", "/accounts/{id}")) {
         authorizer = "requestAuth"
+        timeout = 10.s
       }
-      // TODO: a route of the rest api is one of the http api now: check the function takes the event of payload 2.0, not 1.0, and does without request validation, api keys and usage plans
-      (kdst.del("/accounts/{id}")) {
+      (kdst.rest("DELETE", "/accounts/{id}")) {
         authorizer = "requestAuth-2"
+        timeout = 10.s
       }
-      // TODO: a route of the rest api is one of the http api now: check the function takes the event of payload 2.0, not 1.0, and does without request validation, api keys and usage plans
-      (kdst.put("/accounts/{id}")) {
-        authorizer = "auth-3"
+      (kdst.rest("PUT", "/accounts/{id}")) {
+        authorizer = "auth-2"
+        timeout = 10.s
       }
-      // TODO: a route of the rest api is one of the http api now: check the function takes the event of payload 2.0, not 1.0, and does without request validation, api keys and usage plans
-      (kdst.get("/internal")) {
+      // TODO: callers sign their requests and need execute-api:Invoke on the api koldstart makes, a new one: update their policies to its id, which restApiUrl has
+      (kdst.rest("GET", "/internal")) {
         iam = true
+        timeout = 10.s
       }
-      // TODO: a route of the rest api is one of the http api now: check the function takes the event of payload 2.0, not 1.0, and does without request validation, api keys and usage plans
-      (kdst.post("/internal")) {
+      // TODO: callers sign their requests and need execute-api:Invoke on the api koldstart makes, a new one: update their policies to its id, which restApiUrl has
+      (kdst.rest("POST", "/internal")) {
         iam = true
+        timeout = 10.s
       }
-      // TODO: a route of the rest api is one of the http api now: check the function takes the event of payload 2.0, not 1.0, and does without request validation, api keys and usage plans
-      // TODO: the http api hands the function every claim of the token
-      (kdst.get("/me")) {
+      (kdst.rest("GET", "/me")) {
         authorizer = "cognito"
         scopes {
           "ledger/read"
         }
+        timeout = 10.s
       }
-      // TODO: a route of the rest api is one of the http api now: check the function takes the event of payload 2.0, not 1.0, and does without request validation, api keys and usage plans
-      // TODO: the route is open now, as a jwt authorizer takes the issuer of a user pool as a string, https://cognito-idp.<region>.amazonaws.com/<pool id>, not a ref: give it an authorizer of http.authorizers, or iam = true
-      // was: {name: users, type: COGNITO_USER_POOLS, arn: !GetAtt UserPool.Arn}
-      kdst.patch("/me")
-      // TODO: a route of the rest api is one of the http api now: check the function takes the event of payload 2.0, not 1.0, and does without request validation, api keys and usage plans
-      // TODO: the route is open now, as it names an authorizer of the rest api by its id, which the http api cannot use: give it an authorizer of http.authorizers, or iam = true
+      (kdst.rest("PATCH", "/me")) {
+        authorizer = "users"
+        timeout = 10.s
+      }
+      // TODO: the route is open now, as it names an authorizer of another rest api by its id, which koldstart's cannot use: give it an authorizer of rest.authorizers, or iam = true
       // was: {type: COGNITO_USER_POOLS, authorizerId: !Ref ApiGatewayAuthorizer}
-      kdst.get("/shared")
-      // TODO: a route of the rest api is one of the http api now: check the function takes the event of payload 2.0, not 1.0, and does without request validation, api keys and usage plans
-      // TODO: the route is open now, as a lambda authorizer is a function of the project, and arn:aws:lambda:eu-west-1:123456789012:function:shared-auth is not one: give it an authorizer of http.authorizers, or iam = true
-      // was: arn:aws:lambda:eu-west-1:123456789012:function:shared-auth
-      kdst.get("/external")
-      // TODO: a route of the rest api is one of the http api now: check the function takes the event of payload 2.0, not 1.0, and does without request validation, api keys and usage plans
-      // TODO: the route is open now, as it took only requests with an api key, which an http api has none of: give it an authorizer of http.authorizers, or iam = true
-      kdst.get("/partners")
-      // TODO: a route of the rest api is one of the http api now: check the function takes the event of payload 2.0, not 1.0, and does without request validation, api keys and usage plans
-      // TODO: an http api has no api keys: the route takes requests without one now, which its authorizer still checks
-      (kdst.post("/partners")) {
-        iam = true
+      (kdst.rest("GET", "/shared")) {
+        timeout = 10.s
       }
-      // TODO: a route of the rest api is one of the http api now: check the function takes the event of payload 2.0, not 1.0, and does without request validation, api keys and usage plans
-      // TODO: the http api checks no parameters or bodies: check them in the function
-      // was: {parameters: {querystrings: {dryRun: false}}, schemas: {application/json: {type: object}}}
-      // TODO: an http api has one cors for all its routes: set it in http.cors
+      // TODO: the route is open now, as a lambda authorizer is a function of the project, and arn:aws:lambda:eu-west-1:123456789012:function:shared-auth is not one: give it an authorizer of rest.authorizers, or iam = true
+      // was: arn:aws:lambda:eu-west-1:123456789012:function:shared-auth
+      (kdst.rest("GET", "/external")) {
+        timeout = 10.s
+      }
+      // TODO: koldstart makes an api key of its own for the private routes: hand callers its value, aws apigateway get-api-key --include-value --api-key with the id the output restApiKeyId has
+      (kdst.rest("GET", "/partners")) {
+        private = true
+        timeout = 10.s
+      }
+      // TODO: callers sign their requests and need execute-api:Invoke on the api koldstart makes, a new one: update their policies to its id, which restApiUrl has
+      (kdst.rest("POST", "/partners")) {
+        iam = true
+        private = true
+        timeout = 10.s
+      }
+      // TODO: koldstart's rest api checks no bodies: check them in the function
+      // was: {application/json: {type: object}}
+      // TODO: koldstart's rest api answers no preflight requests: add kdst.rest("OPTIONS", "/orders") to a function that answers them, and set the cors headers in the function's responses
       // was: true
-      // TODO: the http api waits for the function, as it has no async invocation: hand slow work to a queue
-      kdst.post("/orders")
-      // TODO: a route of the rest api is one of the http api now: check the function takes the event of payload 2.0, not 1.0, and does without request validation, api keys and usage plans
-      // TODO: the function gets the request and returns the response as the proxy integration does, as the http api has no lambda integration: its request templates and response are gone
-      kdst.post("/legacy")
-      // TODO: an http api of koldstart routes to its function alone: it has no mock integration
+      // TODO: the route waits for the function, as koldstart's rest api has no async invocation: hand slow work to a queue
+      (kdst.rest("POST", "/orders")) {
+        timeout = 10.s
+      }
+      // TODO: the route reaches its function by the lambda proxy integration, the function gets the request and returns the response as it does: the request templates and the response are gone
+      (kdst.rest("POST", "/legacy")) {
+        timeout = 10.s
+      }
+      // TODO: koldstart's rest api reaches its function by the lambda proxy integration alone: it has no mock integration
       // was: {method: get, path: mock, integration: mock}
+      (kdst.rest("GET", "/reports/{proxy+}")) {
+        private = true
+        requiredQuery { "from" }
+        requiredHeaders { "X-Tenant" }
+        timeout = 5500.ms
+      }
+      (kdst.rest("GET", "/tokens")) {
+        authorizer = "auth-3"
+        timeout = 10.s
+      }
     }
   }
 }
