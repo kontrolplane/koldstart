@@ -87,9 +87,27 @@ func CacheDir() (string, error) {
 
 // Find returns the pkl binary to use: $KOLDSTART_PKL, else a pkl on the PATH that is new enough,
 // else the pinned download in the cache, downloading it first when it is not there yet.
+func Find(ctx context.Context) (string, error) {
+	if path, err := Installed(ctx); err != nil || path != "" {
+		return path, err
+	}
+	dir, err := CacheDir()
+	if err != nil {
+		return "", err
+	}
+	name, err := asset(runtime.GOOS, runtime.GOARCH, runtime.GOOS == "linux" && isMusl())
+	if err != nil {
+		return "", err
+	}
+	return download(ctx, http.DefaultClient, downloadURL, dir, name)
+}
+
+// Installed returns the pkl binary Find would use without downloading one: $KOLDSTART_PKL, else
+// a pkl on the PATH that is new enough, else the pinned download already in the cache. It
+// returns "" when there is none of them.
 //
 //nolint:gosec // the user names the binary in $KOLDSTART_PKL
-func Find(ctx context.Context) (string, error) {
+func Installed(ctx context.Context) (string, error) {
 	if path := os.Getenv(EnvBinary); path != "" {
 		if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
 			return "", fmt.Errorf("%s is %s, which does not exist: set it to a pkl binary, or unset it", EnvBinary, path)
@@ -107,11 +125,21 @@ func Find(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	name, err := asset(runtime.GOOS, runtime.GOARCH, runtime.GOOS == "linux" && isMusl())
-	if err != nil {
-		return "", err
+	if path := cachedBinary(dir); fileExists(path) {
+		return path, nil
 	}
-	return download(ctx, http.DefaultClient, downloadURL, dir, name)
+	return "", nil
+}
+
+// cachedBinary is where the pinned pkl is kept in the cache dir.
+func cachedBinary(dir string) string {
+	return filepath.Join(dir, "pkl", Version, "pkl")
+}
+
+// fileExists reports whether path is a file that can be read.
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // Download fetches the pinned pkl built for glibc on goos and goarch into dir, checked against
@@ -139,8 +167,8 @@ func download(ctx context.Context, client *http.Client, base, dir, name string) 
 	if !ok {
 		return "", fmt.Errorf("no checksum for %s", name)
 	}
-	path := filepath.Join(dir, "pkl", Version, "pkl")
-	if _, err := os.Stat(path); err == nil {
+	path := cachedBinary(dir)
+	if fileExists(path) {
 		return path, nil
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
