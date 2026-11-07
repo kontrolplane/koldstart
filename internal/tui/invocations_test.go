@@ -39,6 +39,44 @@ func TestRequestRow(t *testing.T) {
 	}
 }
 
+// TestInvocationsNarrow checks the invocations tab keeps what a failed invocation failed with as
+// the terminal narrows, leaving out the memory first, then what was billed and the cold start.
+func TestInvocationsNarrow(t *testing.T) {
+	tests := []struct {
+		name   string
+		w, h   int
+		shown  []string
+		hidden []string
+	}{
+		{name: "the smallest", w: 78, h: 22, shown: []string{"request", "duration", "error", "Error: connect ECONNREFU"}, hidden: []string{"memory", "billed", "cold start"}},
+		{name: "80 wide", w: 80, h: 24, shown: []string{"request", "duration", "error", "Error: connect ECONNREFUSE"}, hidden: []string{"memory", "billed", "cold start"}},
+		{name: "100 wide", w: 100, h: 30, shown: []string{"billed", "cold start", "error", "Error: connect ECONNREFUSE"}, hidden: []string{"memory"}},
+		{name: "120 wide", w: 120, h: 40, shown: []string{"billed", "memory", "cold start", "Error: connect ECONNREFUSED 127."}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v := screen(ivdOpen(t, tt.w, tt.h))
+			var header string
+			for line := range strings.SplitSeq(v, "\n") {
+				if strings.Contains(line, "duration") {
+					header = line
+					break
+				}
+			}
+			for _, want := range tt.shown {
+				if !strings.Contains(v, want) {
+					t.Errorf("%q is not shown:\n%s", want, v)
+				}
+			}
+			for _, gone := range tt.hidden {
+				if strings.Contains(header, gone) {
+					t.Errorf("%q is shown: %s", gone, header)
+				}
+			}
+		})
+	}
+}
+
 // TestFailure checks which lines say an invocation failed or timed out.
 func TestFailure(t *testing.T) {
 	tests := []struct {
