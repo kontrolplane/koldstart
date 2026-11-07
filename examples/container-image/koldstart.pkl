@@ -1,0 +1,18 @@
+amends "@koldstart/Project.pkl"
+
+import "@koldstart/kdst.pkl"
+
+app = "status"
+region = "eu-west-1"
+
+functions {
+  ["status"] {
+    memory = 128
+    image {
+      buildArgs {
+        ["VERSION"] = "1.0.0"
+      }
+    }
+    url = new { auth = "none" }
+  }
+}
