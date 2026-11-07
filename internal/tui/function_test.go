@@ -245,7 +245,7 @@ func TestOverviewStates(t *testing.T) {
 			name:       "an emulator",
 			metricsErr: errAWS,
 			liveErr:    errAWS,
-			want:       []string{"could not read the metrics: aws said no", "could not read it from lambda: aws said no"},
+			want:       []string{"could not read the metrics: aws said no", "could not read it from lambda: aws said"},
 			notWant:    []string{"changed outside koldstart", "✓ what koldstart deployed", "p99"},
 		},
 		{
@@ -384,8 +384,8 @@ func fdRowText(m model) string {
 func TestOverviewEnvironmentAndTriggers(t *testing.T) {
 	v := screen(pressKeys(t, started(t, fdFull(t)), "enter"))
 	for _, want := range []string{
-		"environment 5", "BILLING_URL   = output billing/prod.url", "DATABASE_URL  = postgres://app:" + hidden + "@db:5432/orders",
-		"KEY           = ssm:/orders/key", "STRIPE_SECRET = " + hidden, "TABLE         = orders",
+		"environment 5", "BILLING_URL  output billing/prod.url", "DATABASE_URL  postgres://app:" + hidden + "@db:5432/orders",
+		"KEY  ssm:/orders/key", "STRIPE_SECRET  " + hidden, "TABLE  orders",
 		"invoked by 4", "url  https://abc.lambda-url.eu-west-1.on.aws/", "route  GET /orders",
 		"schedule  rate(5 minutes) Europe/Amsterdam", "queue  orders-dev-jobs",
 	} {

@@ -248,7 +248,7 @@ func (m model) appliedLines(width int) (lazyLines, int) {
 
 // wrappedRow is rowIn with its value wrapped onto the lines below the first rather than cut.
 func wrappedRow(labels int, label string, value cell, width int) []string {
-	room := max(1, width-labels)
+	room := max(1, width-labels-rowInset)
 	parts := wrapCell(value, room)
 	out := make([]string, 0, len(parts))
 	for i, part := range parts {
@@ -256,7 +256,7 @@ func wrappedRow(labels int, label string, value cell, width int) []string {
 			out = append(out, rowIn(labels, label, part, width))
 			continue
 		}
-		out = append(out, strings.Repeat(" ", labels)+renderCell(part, column{width: room}, nil))
+		out = append(out, strings.Repeat(" ", rowInset+labels)+renderCell(part, column{width: room}, nil))
 	}
 	return out
 }

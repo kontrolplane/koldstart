@@ -3,6 +3,7 @@ package tui
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"maps"
 	"sync"
 	"time"
@@ -206,6 +207,13 @@ func (s *stageState) historyRows() ([]string, []tableRow) {
 	var keys []string
 	var rows []tableRow
 	all := deploys(s.history)
+	var listed []deploySummary
+	for i, d := range all {
+		if sum, ok := s.summaries[pairOf(all, i).key]; ok && s.filter.matches(formatTime(d[0].LastModified), d[0].ID, sum.who) {
+			listed = append(listed, sum)
+		}
+	}
+	widths := countWidths(listed)
 	for i, d := range all {
 		v, at := d[0], formatTime(d[0].LastModified)
 		sum, read := s.summaries[pairOf(all, i).key]
@@ -229,7 +237,7 @@ func (s *stageState) historyRows() ([]string, []tableRow) {
 			text(formatAgo(v.LastModified), styles.ToneBody),
 			text(at, styles.ToneMuted),
 			by,
-			changesCell(sum, read),
+			changesCell(sum, read, widths),
 			deployNote(sum, v.Latest),
 			took,
 			text(formatInt(len(d)), styles.ToneBody),
@@ -239,25 +247,38 @@ func (s *stageState) historyRows() ([]string, []tableRow) {
 	return keys, rows
 }
 
-// changesCell is what a deploy changed in counts, +3 ~1 -0, a count of none faint: an ellipsis
-// while it is read, and a dash where it cannot be.
-func changesCell(sum deploySummary, read bool) cell {
+// countWidths is how wide the added, changed and removed counts of the deploys listed are, at
+// most, so each lines up under the same count of the other deploys.
+func countWidths(summaries []deploySummary) [3]int {
+	var w [3]int
+	for _, sum := range summaries {
+		for i, n := range []int{sum.added, sum.changed, sum.removed} {
+			w[i] = max(w[i], len(formatInt(n)))
+		}
+	}
+	return w
+}
+
+// changesCell is what a deploy changed in counts, +3 ~1 -0, a count of none faint, each count
+// padded to widths so the counts of the deploys line up: an ellipsis while it is read, and a dash
+// where it cannot be.
+func changesCell(sum deploySummary, read bool, widths [3]int) cell {
 	switch {
 	case !read:
 		return text("…", styles.ToneFaint)
 	case sum.err != "":
 		return text("-", styles.ToneFaint)
 	}
-	count := func(mark string, n int, tone styles.Tone) styles.Span {
+	count := func(mark string, n, width int, tone styles.Tone) styles.Span {
 		if n == 0 {
 			tone = styles.ToneFaint
 		}
-		return styles.S(mark+formatInt(n), tone)
+		return styles.S(mark+fmt.Sprintf("%-*s", width, formatInt(n)), tone)
 	}
 	return cell{
-		count("+", sum.added, styles.ToneSuccess), styles.S(" ", styles.ToneFaint),
-		count("~", sum.changed, styles.ToneWarning), styles.S(" ", styles.ToneFaint),
-		count("-", sum.removed, styles.ToneDanger),
+		count("+", sum.added, widths[0], styles.ToneSuccess), styles.S(" ", styles.ToneFaint),
+		count("~", sum.changed, widths[1], styles.ToneWarning), styles.S(" ", styles.ToneFaint),
+		count("-", sum.removed, widths[2], styles.ToneDanger),
 	}
 }
 

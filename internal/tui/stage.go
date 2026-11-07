@@ -468,7 +468,8 @@ func (s stageState) metricCells(name string) (calls, errs, p99 cell) {
 }
 
 // activityCell draws a function's invocations of the last hour as a sparkline, in danger where
-// the hour had errors, and nothing while they are read or when there were none.
+// the hour had errors, its quiet minutes dotted as on the function's overview, so the line always
+// spans the hour and ends at now; nothing while they are read or when there were none.
 func (s stageState) activityCell(name string) cell {
 	mt, ok := s.metrics[name]
 	if !ok || peak(mt.Invocations) == 0 {
@@ -478,7 +479,7 @@ func (s stageState) activityCell(name string) cell {
 	if peak(mt.Errors) > 0 {
 		tone = styles.ToneDanger
 	}
-	return text(sparkline(mt.Invocations, sparkWidth), tone)
+	return sparkCell(mt.Invocations, sparkWidth, tone)
 }
 
 // outputValue draws an output on one line, with a hint of what more it holds: json, a list or

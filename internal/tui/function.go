@@ -348,11 +348,26 @@ func row(label string, value cell, width int) string {
 	return rowIn(labelWidth, label, value, width)
 }
 
+// rowInset is where the rows of a page start: past the column the cursor marks a row in and a
+// space, as a table's rows do, while its title, facts and section headers start a column in.
+const rowInset = 2
+
+// insetLines are lines drawn rowInset in, as rows are: text in the body of a page, as an output's
+// value or the lines of a log.
+func insetLines(lines []string) []string {
+	out := make([]string, len(lines))
+	for i, l := range lines {
+		out[i] = pad(rowInset, nil) + l
+	}
+	return out
+}
+
 // rowIn is row with labels as wide as labels, for the names of a resource's attributes, which
-// run longer than the labels koldstart writes.
+// run longer than the labels koldstart writes. It starts at rowInset, so the labels of every page
+// end in the same column.
 func rowIn(labels int, label string, value cell, width int) string {
 	l := styles.Fg(styles.ToneFaint).Width(labels).Align(lipgloss.Right).PaddingRight(2).Render(truncate(label, labels-2))
-	return l + renderCell(value, column{width: max(1, width-labels)}, nil)
+	return pad(rowInset, nil) + l + renderCell(value, column{width: max(1, width-labels-rowInset)}, nil)
 }
 
 // labelsFor is how wide labels for names are drawn: the longest with its padding, at least
@@ -454,6 +469,9 @@ type overviewColumn struct {
 	// header is the line of the header of the section the next row is the first of, -1 when it
 	// is not the first.
 	header int
+	// headers are the lines that are a section's header, drawn from the gutter rather than after
+	// it, as a page's other section headers start a column before its rows.
+	headers map[int]bool
 }
 
 func newOverviewColumn(width int) *overviewColumn {
@@ -474,12 +492,19 @@ func (c *overviewColumn) section(title, count string) {
 		c.add("")
 	}
 	c.header = len(c.lines)
-	c.add(sectionHeader(title, count, c.width))
+	if c.headers == nil {
+		c.headers = map[int]bool{}
+	}
+	c.headers[len(c.lines)] = true
+	c.add(sectionHeader(title, count, c.width+overviewGutter))
 }
 
-// note appends what a section says in place of its rows, or above them, wrapped to the column.
+// note appends what a section says in place of its rows, or above them, wrapped to the column,
+// where the values of its rows start, as relay sets a panel's notes.
 func (c *overviewColumn) note(n cell) {
-	c.add(cellLines(n, c.width)...)
+	for _, l := range cellLines(n, max(1, c.width-labelWidth)) {
+		c.add(pad(labelWidth, nil) + l)
+	}
 }
 
 // row appends a row whose lines are the cells of each, in cols.
@@ -526,9 +551,12 @@ func (c *overviewColumn) draw(scroll, height, cursor int) string {
 	scroll = max(0, min(scroll, maxOffset(len(c.lines), height)))
 	out := make([]string, 0, height)
 	for i := scroll; i < min(len(c.lines), scroll+height); i++ {
-		if cursor >= 0 && c.rowOf[i] == cursor {
+		switch {
+		case cursor >= 0 && c.rowOf[i] == cursor:
 			out = append(out, cursorMark(styles.P.Selection)+c.lit[i])
-		} else {
+		case c.headers[i]:
+			out = append(out, c.lines[i])
+		default:
 			out = append(out, pad(overviewGutter, nil)+c.lines[i])
 		}
 	}
@@ -707,16 +735,15 @@ func (m model) functionOverview() functionOverview {
 
 // overviewHead is the function's name, the facts of it below as far as they fit, and a notice of
 // what lambda runs that koldstart did not deploy, so it is in sight however far the columns
-// scroll; each line in the gutter, and a blank line after.
+// scroll; from the gutter, as a page's title starts a column before its rows, and a blank line
+// after.
 func (m model) overviewHead(width int) []string {
 	f := m.state.function
 	name := styles.Span{Text: styles.Clean(cmpOr(f.lambdaName, f.name)), Tone: styles.ToneText, Bold: true}
+	width += overviewGutter
 	lines := append([]string{renderCell(cell{name}, column{width: width}, nil)}, packCells(m.functionFacts(), width)...)
 	if notice := m.driftNotice(width); len(notice) > 0 {
 		lines = append(append(lines, ""), notice...)
-	}
-	for i, l := range lines {
-		lines[i] = pad(overviewGutter, nil) + l
 	}
 	return append(lines, "")
 }
@@ -1047,8 +1074,8 @@ func (m model) metricSection(c *overviewColumn) {
 		{label: "invocations", points: mt.Invocations, tone: styles.ToneAccent, total: text(count(sum.Invocations), styles.ToneBody), format: count, unit: perMinute},
 		{label: "errors", points: mt.Errors, tone: styles.ToneDanger, total: text(count(sum.Errors), errTone), format: count, unit: perMinute},
 		{label: "throttles", points: mt.Throttles, tone: styles.ToneWarning, total: text(count(sum.Throttles), throttleTone), format: count, unit: perMinute},
-		{label: "duration", points: mt.DurationP99, tone: styles.ToneInfo, total: cell{styles.S("p99 ", styles.ToneFaint), styles.S(formatMillis(sum.DurationP99), styles.ToneBody)}, format: formatMillis, gauge: true},
-		{label: "concurrency", points: mt.Concurrency, tone: styles.ToneMuted, total: cell{styles.S("max ", styles.ToneFaint), styles.S(count(peak(mt.Concurrency)), styles.ToneBody)}, format: count, gauge: true},
+		{label: "duration", points: mt.DurationP99, tone: styles.ToneInfo, stat: "p99", total: text(formatMillis(sum.DurationP99), styles.ToneBody), format: formatMillis, gauge: true},
+		{label: "concurrency", points: mt.Concurrency, tone: styles.ToneMuted, stat: "max", total: text(count(peak(mt.Concurrency)), styles.ToneBody), format: count, gauge: true},
 	}, c.width)...)
 }
 
@@ -1060,6 +1087,9 @@ type metricSeries struct {
 	label  string
 	points []float64
 	tone   styles.Tone
+	// stat names what total is when it is not a sum, as p99 or max; it is drawn faint in a column
+	// of its own, so the numbers of every series line up.
+	stat   string
 	total  cell
 	format func(float64) string
 	unit   string
@@ -1106,18 +1136,21 @@ const sparkMin = 12
 // its range and its last point as far as they fit, and under them the hour they span. A series
 // of zeros is a dotted baseline, and one without points says so.
 func sparkLines(series []metricSeries, width int) []string {
-	points, totalW, rangeW, lastW := 0, 0, 0, 0
+	points, statW, totalW, rangeW, lastW := 0, 0, 0, 0, 0
 	ranges, lasts := make([]string, len(series)), make([]string, len(series))
 	for i, s := range series {
 		points = max(points, len(s.points))
 		ranges[i], lasts[i] = s.figures()
+		if s.stat != "" {
+			statW = max(statW, len(s.stat)+1)
+		}
 		totalW = max(totalW, ansi.StringWidth(plainText(s.total)))
 		rangeW = max(rangeW, ansi.StringWidth(ranges[i]))
 		if lasts[i] != "" {
 			lastW = max(lastW, len("last ")+ansi.StringWidth(lasts[i]))
 		}
 	}
-	room, need := width-labelWidth-2-totalW, min(sparkMin, points)
+	room, need := width-labelWidth-2-statW-totalW, min(sparkMin, points)
 	switch {
 	case room-2-rangeW-2-lastW >= need:
 	case room-2-rangeW >= need:
@@ -1132,19 +1165,19 @@ func sparkLines(series []metricSeries, width int) []string {
 		room -= 2 + lastW
 	}
 	spark := max(1, min(room, points))
-	cols := []column{{width: labelWidth - 2, right: true}, {width: 2}, {width: spark}, {width: 2}, {width: totalW, right: true}, {width: 2}, {width: rangeW, right: true}, {width: 2}, {width: lastW}}
+	cols := []column{{width: labelWidth - 2, right: true}, {width: 2}, {width: spark}, {width: 2}, {width: statW}, {width: totalW, right: true}, {width: 2}, {width: rangeW, right: true}, {width: 2}, {width: lastW}}
 	lines := make([]string, 0, len(series)+1)
 	for i, s := range series {
 		if len(s.points) == 0 {
 			lines = append(lines, strings.TrimRight(renderCell(text(s.label, styles.ToneFaint), cols[0], nil)+pad(2, nil)+renderCell(text("no data", styles.ToneFaint), column{width: max(1, width-labelWidth)}, nil), " "))
 			continue
 		}
-		cells := []cell{text(s.label, styles.ToneFaint), nil, sparkCell(s.points, spark, s.tone), nil, s.total, nil, text(ranges[i], styles.ToneMuted), nil, nil}
+		cells := []cell{text(s.label, styles.ToneFaint), nil, sparkCell(s.points, spark, s.tone), nil, text(s.stat, styles.ToneFaint), s.total, nil, text(ranges[i], styles.ToneMuted), nil, nil}
 		if peak(s.points) == 0 {
-			cells[4] = text(plainText(s.total), styles.ToneFaint)
+			cells[5] = text(plainText(s.total), styles.ToneFaint)
 		}
 		if lasts[i] != "" {
-			cells[8] = cell{styles.S("last ", styles.ToneFaint), styles.S(lasts[i], styles.ToneMuted)}
+			cells[9] = cell{styles.S("last ", styles.ToneFaint), styles.S(lasts[i], styles.ToneMuted)}
 		}
 		var b strings.Builder
 		for j, cl := range cells {
@@ -1291,16 +1324,16 @@ func (m model) envSection(c *overviewColumn) {
 		return
 	}
 	names := slices.Sorted(maps.Keys(f.env))
-	nameWidth := 0
+	nameWidth := labelWidth - 2
 	for _, k := range names {
 		nameWidth = max(nameWidth, ansi.StringWidth(styles.Clean(k)))
 	}
 	nameWidth = min(nameWidth, c.width/3)
-	cols := []column{{width: nameWidth}, {width: 3}, {width: max(1, c.width-nameWidth-3)}}
+	cols := []column{{width: nameWidth, right: true}, {width: 2}, {width: max(1, c.width-nameWidth-2)}}
 	for _, k := range names {
 		v := envValue(k, f.env[k])
 		v.Text = cutMiddle(styles.Clean(v.Text), cols[2].width)
-		c.row(detailRow{copy: envCopy(k, f.env[k])}, cols, []cell{text(styles.Clean(k), styles.ToneMuted), text(" = ", styles.ToneFaint), {v}})
+		c.row(detailRow{copy: envCopy(k, f.env[k])}, cols, []cell{text(styles.Clean(k), styles.ToneMuted), nil, {v}})
 	}
 }
 

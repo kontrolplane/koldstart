@@ -187,8 +187,8 @@ func (m model) outputBody() (lazyLines, int) {
 		out.join(j.lines(width))
 		return out, at
 	}
-	body := o.valueLines(v, width)
-	out.addDrawn(len(body), func(i int) string { return styles.Body(body[i]) })
+	body := o.valueLines(v, width-rowInset)
+	out.addDrawn(len(body), func(i int) string { return pad(rowInset, nil) + styles.Body(body[i]) })
 	return out, -1
 }
 
