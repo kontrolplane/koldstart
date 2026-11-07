@@ -1094,11 +1094,15 @@ func (m model) overviewHints() [][2]string {
 }
 
 // stageHints are the keys of the stage's tab: enter where a row opens, or folds on the heading
-// of a kind of resource, space where the resources fold, d only on the project's app, and ctrl+x
-// only while the stage is locked.
+// of a kind of resource while no filter holds text, space where the resources fold, c where a
+// row has something to copy, d only on the project's app, and ctrl+x only while the stage is
+// locked. A stage whose state could not be read has r, which reads it again.
 func (m model) stageHints() [][2]string {
 	k := m.keys
 	s := m.state.stage
+	if s.st == nil {
+		return [][2]string{hint(k.Refresh), hint(k.Help), hint(k.Quit)}
+	}
 	rows := len(s.tables[s.tab].rows) > 0
 	var h [][2]string
 	row, ok := s.selectedRow()
@@ -1106,9 +1110,7 @@ func (m model) stageHints() [][2]string {
 	switch {
 	case heading && s.filter.text == "":
 		h = append(h, [2]string{hint(k.View)[0] + "/" + hint(k.Fold)[0], "fold"})
-	case heading:
-		h = append(h, hint(k.View, "fold"))
-	case rows:
+	case rows && !heading:
 		h = append(h, hint(k.View))
 	}
 	if rows && !heading && s.tab == resourcesTab && s.filter.text == "" {
@@ -1125,7 +1127,7 @@ func (m model) stageHints() [][2]string {
 		h = append(h, hint(k.Unlock))
 	}
 	h = append(h, hint(k.Filter), hint(k.Remove))
-	if rows {
+	if rows && !heading {
 		h = append(h, hint(k.Copy))
 	}
 	return append(h, m.pauseHint(), hint(k.Help), hint(k.Quit))
