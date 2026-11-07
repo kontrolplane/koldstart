@@ -118,23 +118,6 @@ func (c *converter) routeAuthorizer(w *writer, where string, n *yaml.Node) {
 	}
 }
 
-// restEvent converts a route of the rest api to one of the http api, which is what koldstart
-// deploys, and notes what has no equivalent there.
-func (c *converter) restEvent(w *writer, where string, n *yaml.Node) {
-	method, path := route(str(n))
-	if n.Kind == yaml.MappingNode {
-		method, path = strings.ToUpper(str(get(n, "method"))), str(get(n, "path"))
-		if method == "*" || method == "" {
-			method = methodAny
-		}
-	}
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
-	}
-	c.leave(w, Review, where, "a route of the rest api is one of the http api now: check it does without request validation, api keys and usage plans", nil)
-	httpRoute(w, method, path, func(*writer) {})
-}
-
 // scheduleEvent writes a schedule for each rate: kdst.schedule("rate(1 hour)"), amended with
 // enabled, timezone and input.
 func (c *converter) scheduleEvent(w *writer, where string, n *yaml.Node) {
@@ -187,7 +170,7 @@ func (c *converter) helperSource(n *yaml.Node, attribute string) (string, bool) 
 	arn := arnOf(n)
 	name, arg := intrinsicOf(arn)
 	switch {
-	case name == "Fn::GetAtt":
+	case name == intrinsicGetAtt:
 		target, attr, _ := strings.Cut(arg.Value, ".")
 		if arg.Kind == yaml.SequenceNode && len(arg.Content) == 2 {
 			target, attr = arg.Content[0].Value, arg.Content[1].Value

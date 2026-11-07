@@ -1,0 +1,42 @@
+fix before you deploy:
+  functions.api.events[7].authorizer: set audience to the ids of the user pool's app clients: the http api takes a token only when its aud or client_id is one of them, where the rest api took one of any client of the pool
+  functions.api.events[8].authorizer: the route is open now, as a jwt authorizer takes the issuer of a user pool as a string, https://cognito-idp.<region>.amazonaws.com/<pool id>, not a ref: give it an authorizer of http.authorizers, or iam = true
+  functions.api.events[9].authorizer: the route is open now, as it names an authorizer of the rest api by its id, which the http api cannot use: give it an authorizer of http.authorizers, or iam = true
+  functions.api.events[10].authorizer: the route is open now, as a lambda authorizer is a function of the project, and arn:aws:lambda:eu-west-1:123456789012:function:shared-auth is not one: give it an authorizer of http.authorizers, or iam = true
+  functions.api.events[11].private: the route is open now, as it took only requests with an api key, which an http api has none of: give it an authorizer of http.authorizers, or iam = true
+
+left out, to write by hand:
+  functions.api.events[13].request: the http api checks no parameters or bodies: check them in the function
+  functions.api.events[13].cors: an http api has one cors for all its routes: set it in http.cors
+  functions.api.events[15]: an http api of koldstart routes to its function alone: it has no mock integration
+
+works differently, to check:
+  functions.api.events[0].authorizer: the authorizer is one of the http api now: it gets the event of payload 2.0, with identitySource and routeArn in place of authorizationToken and methodArn, and returns { isAuthorized, context } in place of an iam policy
+  functions.api.events[2].authorizer: the authorizer is one of the http api now: it gets the event of payload 2.0, with identitySource and routeArn in place of authorizationToken and methodArn, and returns { isAuthorized, context } in place of an iam policy
+  functions.api.events[3].authorizer: the authorizer is one of the http api now: it gets the event of payload 2.0, with identitySource and routeArn in place of authorizationToken and methodArn, and returns { isAuthorized, context } in place of an iam policy
+  functions.api.events[3].authorizer.identitySource: the http api refuses a request without an Authorization header before it calls the authorizer: set identity to what every request has
+  functions.api.events[4].authorizer: the authorizer is one of the http api now: it gets the event of payload 2.0, with identitySource and routeArn in place of authorizationToken and methodArn, and returns { isAuthorized, context } in place of an iam policy
+  functions.api.events[4].authorizer.identityValidationExpression: the http api has no identityValidationExpression: check the token against ^Bearer [-0-9a-zA-Z._]+$ in the authorizer
+  functions.api.events[7].authorizer: the function finds the token's claims in requestContext.authorizer.jwt.claims now, not requestContext.authorizer.claims
+  functions.api.events[0]: a route of the rest api is one of the http api now: check the function takes the event of payload 2.0, not 1.0, and does without request validation, api keys and usage plans
+  functions.api.events[1]: a route of the rest api is one of the http api now: check the function takes the event of payload 2.0, not 1.0, and does without request validation, api keys and usage plans
+  functions.api.events[2]: a route of the rest api is one of the http api now: check the function takes the event of payload 2.0, not 1.0, and does without request validation, api keys and usage plans
+  functions.api.events[3]: a route of the rest api is one of the http api now: check the function takes the event of payload 2.0, not 1.0, and does without request validation, api keys and usage plans
+  functions.api.events[4]: a route of the rest api is one of the http api now: check the function takes the event of payload 2.0, not 1.0, and does without request validation, api keys and usage plans
+  functions.api.events[5]: a route of the rest api is one of the http api now: check the function takes the event of payload 2.0, not 1.0, and does without request validation, api keys and usage plans
+  functions.api.events[6]: a route of the rest api is one of the http api now: check the function takes the event of payload 2.0, not 1.0, and does without request validation, api keys and usage plans
+  functions.api.events[7]: a route of the rest api is one of the http api now: check the function takes the event of payload 2.0, not 1.0, and does without request validation, api keys and usage plans
+  functions.api.events[8]: a route of the rest api is one of the http api now: check the function takes the event of payload 2.0, not 1.0, and does without request validation, api keys and usage plans
+  functions.api.events[9]: a route of the rest api is one of the http api now: check the function takes the event of payload 2.0, not 1.0, and does without request validation, api keys and usage plans
+  functions.api.events[10]: a route of the rest api is one of the http api now: check the function takes the event of payload 2.0, not 1.0, and does without request validation, api keys and usage plans
+  functions.api.events[11]: a route of the rest api is one of the http api now: check the function takes the event of payload 2.0, not 1.0, and does without request validation, api keys and usage plans
+  functions.api.events[12]: a route of the rest api is one of the http api now: check the function takes the event of payload 2.0, not 1.0, and does without request validation, api keys and usage plans
+  functions.api.events[12].private: an http api has no api keys: the route takes requests without one now, which its authorizer still checks
+  functions.api.events[13]: a route of the rest api is one of the http api now: check the function takes the event of payload 2.0, not 1.0, and does without request validation, api keys and usage plans
+  functions.api.events[13].async: the http api waits for the function, as it has no async invocation: hand slow work to a queue
+  functions.api.events[14]: a route of the rest api is one of the http api now: check the function takes the event of payload 2.0, not 1.0, and does without request validation, api keys and usage plans
+  functions.api.events[14].integration: the function gets the request and returns the response as the proxy integration does, as the http api has no lambda integration: its request templates and response are gone
+
+not needed in koldstart:
+  functions.api.events[7].authorizer.claims: the http api hands the function every claim of the token
+  custom: each ${self:custom...} got its value where it was used: pool
