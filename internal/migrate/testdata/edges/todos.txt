@@ -1,10 +1,10 @@
 fix before you deploy:
-  functions.worker.handler: set handler to the package to build, such as ./cmd/worker: koldstart builds go from source, not "bootstrap"
+  functions.worker.handler: set handler to the go package to build, such as ./cmd/worker, or the directory of a rust crate; or replace it with bootstrap, the binary your build writes: koldstart builds from source, not "bootstrap"
 
 left out, to write by hand:
   provider.environment.FROM_FILE: ${file(./config.json):key}: there is no ./config.json next to serverless.yml
   functions.image.image: koldstart builds images itself: give the function the dockerfile to build, with image { context; dockerfile }
-  functions.worker.layers: build what the layers hold into the binary: a go function takes no layers
+  functions.worker.layers: build what the layers hold into the binary: a go or rust function takes no layers
   resources.Resources.Seeder: cloud control creates AWS:: types only: do what the Custom::Seed did another way
   plugins.serverless-domain-manager: set http.domain and http.certificate
   plugins[1]: ./plugins/seed does not run in koldstart: do what it did another way
@@ -13,6 +13,7 @@ works differently, to check:
   provider.runtime: runs on nodejs22.x now, as koldstart does not build nodejs18.x: test it there
   functions.old_api: renamed old-api, as a name takes no _ or .: update what calls the function by name
   functions.reports.runtime: runs on python3.12 now, as koldstart does not build python3.9: test it there
+  functions.worker.runtime: runs on provided.al2023 now, as koldstart does not build provided.al2: test it there
   resources.Resources.Files.DeletionPolicy: retained, as koldstart has no Snapshot: take a snapshot before you remove it
   resources.Resources.Files.DependsOn: koldstart orders resources by their refs: refer with kdst.ref() to what it must wait for
   resources.Outputs.FilesArn.Export: koldstart has no exports: read the output in other apps with kdst.stageOutput()

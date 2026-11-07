@@ -66,9 +66,9 @@ functions {
   // was: {image: {image: '123456789012.dkr.ecr.eu-central-1.amazonaws.com/legacy:latest'}}
   ["worker"] {
     runtime = "provided.al2023"
-    // TODO: set handler to the package to build, such as ./cmd/worker: koldstart builds go from source, not "bootstrap"
+    // TODO: set handler to the go package to build, such as ./cmd/worker, or the directory of a rust crate; or replace it with bootstrap, the binary your build writes: koldstart builds from source, not "bootstrap"
     handler = "./cmd/worker"
-    // TODO: build what the layers hold into the binary: a go function takes no layers
+    // TODO: build what the layers hold into the binary: a go or rust function takes no layers
     // was: ['arn:aws:lambda:eu-central-1:123456789012:layer:tools:1']
     tracing = true
     environment {

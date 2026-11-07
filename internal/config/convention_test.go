@@ -23,13 +23,20 @@ func TestInfer(t *testing.T) {
 		{name: "javascript module", files: []string{"src/api.mjs"}, runtime: DefaultNode, handler: "src/api.handler"},
 		{name: "typescript beside its javascript", files: []string{"src/api.ts", "src/api.js"}, runtime: DefaultNode, handler: "src/api.handler"},
 		{name: "python", files: []string{"src/api.py"}, runtime: DefaultPython, handler: "src/api.handler"},
-		{name: "go", files: []string{"cmd/api/main.go"}, runtime: RuntimeGo, handler: "./cmd/api"},
+		{name: "go", files: []string{"cmd/api/main.go"}, runtime: RuntimeProvided, handler: "./cmd/api"},
+		{name: "rust", files: []string{"cmd/api/Cargo.toml", "cmd/api/src/main.rs"}, runtime: RuntimeProvided, handler: "./cmd/api"},
+		{name: "handler of a rust crate", files: []string{"lambdas/orders/Cargo.toml"}, fn: Function{Handler: "lambdas/orders"}, runtime: RuntimeProvided, handler: "lambdas/orders"},
+		{name: "bootstrap", files: []string{"src/api.ts"}, fn: Function{Bootstrap: "dist/api"}, runtime: RuntimeProvided},
+		{name: "bootstrap with a handler", fn: Function{Bootstrap: "dist/api", Handler: "function.handler"}, runtime: RuntimeProvided, handler: "function.handler"},
+		{name: "bootstrap with its runtime", fn: Function{Runtime: RuntimeProvided, Bootstrap: "dist/api"}, runtime: RuntimeProvided},
+		{name: "handler of no file or directory", fn: Function{Handler: "dist/api"}, err: "handler dist/api names no file and function, such as src/api.handler, or directory to build, such as ./cmd/api: set runtime, or bootstrap for a binary built elsewhere"},
+		{name: "rust beside node", files: []string{"src/api.ts", "cmd/api/Cargo.toml"}, err: "src/api.ts and cmd/api/ are both here: set runtime to nodejs22.x or provided.al2023"},
 		{name: "runtime set", files: []string{"src/api.ts"}, fn: Function{Runtime: RuntimeNode24}, runtime: RuntimeNode24, handler: "src/api.handler"},
-		{name: "go runtime set", fn: Function{Runtime: RuntimeGo}, runtime: RuntimeGo, handler: "./cmd/api"},
+		{name: "go runtime set", fn: Function{Runtime: RuntimeProvided}, runtime: RuntimeProvided, handler: "./cmd/api"},
 		{name: "handler of a node file", files: []string{"lib/orders.ts"}, fn: Function{Handler: "lib/orders.main"}, runtime: DefaultNode, handler: "lib/orders.main"},
 		{name: "handler of a python file", files: []string{"app/main.py"}, fn: Function{Handler: "app/main.handler"}, runtime: DefaultPython, handler: "app/main.handler"},
-		{name: "handler of a go package", fn: Function{Handler: "./services/api"}, runtime: RuntimeGo, handler: "./services/api"},
-		{name: "handler of a go directory", files: []string{"services/api/main.go"}, fn: Function{Handler: "services/api"}, runtime: RuntimeGo, handler: "services/api"},
+		{name: "handler of a go package", fn: Function{Handler: "./services/api"}, runtime: RuntimeProvided, handler: "./services/api"},
+		{name: "handler of a go directory", files: []string{"services/api/main.go"}, fn: Function{Handler: "services/api"}, runtime: RuntimeProvided, handler: "services/api"},
 		{name: "both set", fn: Function{Runtime: RuntimePy312, Handler: "app.main"}, runtime: RuntimePy312, handler: "app.main"},
 		{name: "image", files: []string{"src/api.ts"}, fn: Function{Image: &Image{Dockerfile: "Dockerfile"}}},
 		{name: "nothing", files: []string{"src/other.ts"}, err: "function api: no src/api.ts, src/api.py or cmd/api/ here: set runtime and handler"},
@@ -65,6 +72,41 @@ func TestInfer(t *testing.T) {
 			got := p.Functions["api"]
 			if got.Runtime != tt.runtime || got.Handler != tt.handler {
 				t.Errorf("runtime %q, handler %q, want %q, %q", got.Runtime, got.Handler, tt.runtime, tt.handler)
+			}
+		})
+	}
+}
+
+// TestProvided checks which function on provided.al2023 is rust, by a Cargo.toml in the
+// directory of its handler, and the handler lambda is given: bootstrap, but for a bootstrap with
+// a handler of its own.
+func TestProvided(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "api"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "cmd", "api", "Cargo.toml"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name    string
+		fn      Function
+		rust    bool
+		handler string
+	}{
+		{name: "rust", fn: Function{Runtime: RuntimeProvided, Handler: "./cmd/api"}, rust: true, handler: "bootstrap"},
+		{name: "go", fn: Function{Runtime: RuntimeProvided, Handler: "./cmd/worker"}, handler: "bootstrap"},
+		{name: "bootstrap", fn: Function{Runtime: RuntimeProvided, Bootstrap: "dist/api"}, handler: "bootstrap"},
+		{name: "bootstrap with a handler", fn: Function{Runtime: RuntimeProvided, Bootstrap: "dist/api", Handler: "function.handler"}, handler: "function.handler"},
+		{name: "node", fn: Function{Runtime: RuntimeNode22, Handler: "src/api.handler"}, handler: "src/api.handler"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.fn.IsRust(root); got != tt.rust {
+				t.Errorf("IsRust = %v, want %v", got, tt.rust)
+			}
+			if got := tt.fn.LambdaHandler(); got != tt.handler {
+				t.Errorf("LambdaHandler = %q, want %q", got, tt.handler)
 			}
 		})
 	}

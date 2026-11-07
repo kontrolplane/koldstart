@@ -1,6 +1,7 @@
 // Package build turns a function's code into the zip lambda runs: node bundled with esbuild, go
-// cross-compiled to a bootstrap binary, python with its dependencies installed by uv; and a
-// container image function into its image.
+// cross-compiled to a bootstrap binary, rust built into one with cargo lambda, an executable
+// built elsewhere zipped as one, python with its dependencies installed by uv; and a container
+// image function into its image.
 package build
 
 import (
@@ -37,12 +38,21 @@ type Target struct {
 // Linux is the os lambda runs functions on, and containers run.
 const Linux = "linux"
 
+// goARM64 and goAMD64 are the architectures lambda runs functions on, as go names them.
+const (
+	goARM64 = "arm64"
+	goAMD64 = "amd64"
+)
+
+// bootstrapFile is the file of the zip the provided.al2023 runtime runs.
+const bootstrapFile = "bootstrap"
+
 // LambdaTarget returns the platform lambda runs a function of the architecture on.
 func LambdaTarget(architecture string) Target {
 	if architecture == config.ArchX8664 {
-		return Target{GOOS: Linux, GOARCH: "amd64"}
+		return Target{GOOS: Linux, GOARCH: goAMD64}
 	}
-	return Target{GOOS: Linux, GOARCH: "arm64"}
+	return Target{GOOS: Linux, GOARCH: goARM64}
 }
 
 // Builder builds the functions of the project in Root.
@@ -95,8 +105,8 @@ func (b Builder) Files(ctx context.Context, name string, fn config.Function, tar
 			return nil, fmt.Errorf("building %s: %w", name, err)
 		}
 		return files, nil
-	case fn.IsGo():
-		file, err := b.golang(ctx, fn, target)
+	case fn.IsProvided():
+		file, err := b.provided(ctx, name, fn, target)
 		if err != nil {
 			return nil, fmt.Errorf("building %s: %w", name, err)
 		}

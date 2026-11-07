@@ -442,10 +442,14 @@ func orEmpty(n *yaml.Node) *yaml.Node {
 var (
 	nodeRuntimes   = []string{"nodejs22.x", "nodejs24.x"}
 	olderNode      = []string{"nodejs14.x", "nodejs16.x", "nodejs18.x", "nodejs20.x"}
-	customRuntime  = []string{"provided", "provided.al2", config.RuntimeGo, "go1.x"}
+	customRuntime  = []string{"provided", "provided.al2", config.RuntimeProvided, "go1.x"}
 	pythonRuntimes = []string{config.RuntimePy312, config.RuntimePy313}
 	olderPython    = []string{"python3.7", "python3.8", "python3.9", "python3.10", "python3.11"}
 )
+
+// rustRuntime is the runtime the serverless-rust plugin builds a function of with cargo, and
+// deploys on provided.al2. Its handler is the crate, or the crate and its binary, crate.bin.
+const rustRuntime = "rust"
 
 // unconverted are the keys of a function that are not converted: the kind of todo each is, and
 // what to do instead.
@@ -473,36 +477,54 @@ func (c *converter) function(w *writer, name string, fn, provider *yaml.Node) {
 	if runtime == "" {
 		runtime, runtimeAt = str(get(provider, "runtime")), "provider.runtime"
 	}
+	from := runtime
 	switch {
 	case slices.Contains(nodeRuntimes, runtime):
 	case slices.Contains(olderNode, runtime):
 		c.todo(Review, runtimeAt, upgraded(runtime, config.RuntimeNode22))
 		runtime = config.RuntimeNode22
+	case runtime == rustRuntime:
 	case slices.Contains(customRuntime, runtime):
-		runtime = config.RuntimeGo
+		if runtime != config.RuntimeProvided {
+			c.todo(Review, runtimeAt, upgraded(runtime, config.RuntimeProvided))
+		}
+		runtime = config.RuntimeProvided
 	case slices.Contains(pythonRuntimes, runtime):
 	case slices.Contains(olderPython, runtime):
 		c.todo(Review, runtimeAt, upgraded(runtime, config.RuntimePy312))
 		runtime = config.RuntimePy312
 	default:
-		what := fmt.Sprintf("koldstart does not build %s: build the function from a dockerfile with image, or port it to node, python or go", runtime)
+		what := fmt.Sprintf("koldstart does not build %s: build the function from a dockerfile with image, set bootstrap to a binary built for linux, or port it to node, python, go or rust", runtime)
 		c.leave(w, Add, where, what, keyed(name, fn))
 		return
 	}
 
+	if from == rustRuntime {
+		runtime = config.RuntimeProvided
+	}
 	w.open(fmt.Sprintf("[%s]", quote(pklName)))
 	w.line("runtime = %s", quote(runtime))
 	handler := str(get(fn, "handler"))
-	if runtime == config.RuntimeGo {
+	switch {
+	case from == rustRuntime:
+		c.leave(w, Fix, where+".handler", rustHandler(handler, pklName), nil)
+		handler = "./cmd/" + pklName
+	case from == "go1.x":
 		c.leave(w, Fix, where+".handler", fmt.Sprintf("set handler to the package to build, such as ./cmd/%s: koldstart builds go from source, not %q", pklName, handler), nil)
+		handler = "./cmd/" + pklName
+	case runtime == config.RuntimeProvided:
+		c.leave(w, Fix, where+".handler", fmt.Sprintf("set handler to the go package to build, such as ./cmd/%s, or the directory of a rust crate; or replace it with bootstrap, the binary your build writes: koldstart builds from source, not %q", pklName, handler), nil)
+		if artifact := str(get(get(fn, "package"), "artifact")); artifact != "" {
+			c.leave(w, Fix, where+".package.artifact", fmt.Sprintf("koldstart zips the function itself, and takes no %s: set bootstrap to the binary in it, which your build writes, or build it from source with handler", artifact), nil)
+		}
 		handler = "./cmd/" + pklName
 	}
 	if strings.HasPrefix(runtime, "python") {
 		handler = pythonHandler(handler)
 	}
 	w.line("handler = %s", quote(handler))
-	if layers := get(fn, "layers"); layers != nil && runtime == config.RuntimeGo {
-		c.leaveOut(w, where+".layers", "build what the layers hold into the binary: a go function takes no layers", layers)
+	if layers := get(fn, "layers"); layers != nil && runtime == config.RuntimeProvided {
+		c.leaveOut(w, where+".layers", "build what the layers hold into the binary: a go or rust function takes no layers", layers)
 	} else if layers != nil {
 		c.member(w, where+".layers", "layers", layers)
 	}
@@ -527,6 +549,18 @@ func (c *converter) function(w *writer, name string, fn, provider *yaml.Node) {
 // keyed is n under its key, name: what a TODO comment shows of a function left out.
 func keyed(name string, n *yaml.Node) *yaml.Node {
 	return &yaml.Node{Kind: yaml.MappingNode, Content: []*yaml.Node{{Kind: yaml.ScalarNode, Tag: tagString, Value: name}, n}}
+}
+
+// rustHandler is the todo of the handler of a serverless-rust function called name: koldstart
+// takes the directory of the crate, and builds the crate's one binary or the one named after the
+// function.
+func rustHandler(handler, name string) string {
+	crate, binary, _ := strings.Cut(handler, ".")
+	what := fmt.Sprintf("set handler to the directory of the crate %s, with its Cargo.toml, such as ./cmd/%s", crate, name)
+	if binary != "" && binary != name {
+		what += fmt.Sprintf(", and name its binary %s rather than %s, or make it the crate's only one", name, binary)
+	}
+	return what + ": koldstart builds it there with cargo lambda"
 }
 
 // upgraded is the todo of a function that runs on a newer runtime than serverless.yml gave it.
@@ -988,6 +1022,8 @@ func (c *converter) plugin(name string) hint {
 		return hint{Drop, "every function has a role of its own already"}
 	case "serverless-prune-plugin":
 		return hint{Drop, "koldstart keeps the last 3 versions of a function with an alias, and publishes none for the rest"}
+	case "serverless-rust":
+		return hint{Review, "koldstart builds rust itself, with cargo lambda build --release for the function's architecture, not in the plugin's docker image: put what custom.rust passes to cargo, such as features, in each crate's Cargo.toml"}
 	case "serverless-python-requirements":
 		return hint{Drop, "koldstart installs requirements.txt or pyproject.toml with uv itself"}
 	case "serverless-domain-manager":

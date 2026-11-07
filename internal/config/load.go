@@ -207,16 +207,7 @@ func (v *validator) function(name string, fn Function) {
 	for i, l := range fn.Layers {
 		v.value(fmt.Sprintf("%s.layers[%d]", where, i), l)
 	}
-	switch {
-	case fn.IsImage() && (fn.Runtime != "" || fn.Handler != ""):
-		v.errorf("%s: a function with an image has no runtime or handler: the image says what it runs", where)
-	case fn.IsImage() && len(fn.Layers) > 0:
-		v.errorf("%s: a function with an image has no layers: put what they hold in the image", where)
-	case !fn.IsImage() && (fn.Runtime == "" || fn.Handler == ""):
-		v.errorf("%s: a function needs a runtime and a handler, or an image", where)
-	case fn.IsGo() && len(fn.Layers) > 0:
-		v.errorf("%s: a go function has no layers: build what they hold into the binary", where)
-	}
+	v.code(where, fn)
 	if len(fn.Bundle.Include) > 0 && !fn.IsPython() {
 		v.errorf("%s.bundle.include: only python functions take it", where)
 	}
@@ -235,6 +226,23 @@ func (v *validator) function(name string, fn Function) {
 	v.versions(where, fn)
 	if fn.LogFormat != LogFormatJSON && (fn.ApplicationLogLevel != "" || fn.SystemLogLevel != "") {
 		v.errorf("%s: the log levels apply to json logs alone: set logFormat = \"json\", or leave out the levels", where)
+	}
+}
+
+// code checks a function says what it runs one way: a runtime and a handler, a bootstrap, or an
+// image, with layers only where they can be used.
+func (v *validator) code(where string, fn Function) {
+	switch {
+	case fn.IsImage() && (fn.Runtime != "" || fn.Handler != "" || fn.Bootstrap != ""):
+		v.errorf("%s: a function with an image has no runtime, handler or bootstrap: the image says what it runs", where)
+	case fn.IsImage() && len(fn.Layers) > 0:
+		v.errorf("%s: a function with an image has no layers: put what they hold in the image", where)
+	case fn.Bootstrap != "" && !fn.IsProvided():
+		v.errorf("%s.bootstrap: a bootstrap runs on provided.al2023, not %s: leave out runtime, or set it to provided.al2023", where, fn.Runtime)
+	case !fn.IsImage() && fn.Bootstrap == "" && (fn.Runtime == "" || fn.Handler == ""):
+		v.errorf("%s: a function needs a runtime and a handler, a bootstrap, or an image", where)
+	case fn.IsProvided() && fn.Bootstrap == "" && len(fn.Layers) > 0:
+		v.errorf("%s: a go or rust function has no layers: build what they hold into the binary", where)
 	}
 }
 

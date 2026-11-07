@@ -79,7 +79,7 @@ koldstart calls the AWS APIs directly instead of generating CloudFormation, so t
 
 What was deployed is recorded in an S3 bucket in your account, created on the first deploy. A team and its CI share it without setting anything up, and a lock in the same bucket keeps two deploys of one stage from running at once. Every step is recorded before it is made, so a deploy that fails or is stopped halfway is finished by the next one, with nothing made twice.
 
-Functions are written in typescript, javascript, go or python, or are container images. Typescript is bundled with esbuild built into the binary, so packaging needs no node install. Go is cross-compiled to a `bootstrap` binary for the `provided.al2023` runtime. Python's dependencies are installed with uv for lambda's platform, native code included, from any machine. A container image is built with docker and pushed to ecr, and rebuilt only when what it is built from changes. Zips are built byte for byte the same from the same code, on a laptop and in CI, so their hash tells koldstart whether the code changed.
+Functions are written in typescript, javascript, go, python or rust, are a binary built elsewhere, or are container images. Typescript is bundled with esbuild built into the binary, so packaging needs no node install. Go is cross-compiled to a `bootstrap` binary for the `provided.al2023` runtime, and rust is built into one with cargo lambda; a `bootstrap` built by anything else, in any language that compiles to linux, is zipped as it is. Python's dependencies are installed with uv for lambda's platform, native code included, from any machine. A container image is built with docker and pushed to ecr, and rebuilt only when what it is built from changes. Zips are built byte for byte the same from the same code, on a laptop and in CI, so their hash tells koldstart whether the code changed.
 
 Functions are triggered by api gateway http and websocket routes, function urls, schedules, eventbridge rules, sqs queues, sns topics, kinesis and dynamodb streams, s3 buckets, cloudwatch log groups, and application load balancers. Anything else AWS offers goes in `resources`, with the same type names and properties as CloudFormation. Tables, buckets and other resources that hold data are kept when a stage is removed, and a plan that would replace one stops unless `--allow-replace` is passed. A resource made outside koldstart is taken over with `kdst import`.
 
@@ -102,11 +102,11 @@ koldstart evaluates configuration with the `pkl` binary. It uses the one `KOLDST
 
 A release of koldstart writes its own version's schema package into the `PklProject` of a new project, and pkl downloads it from that release on GitHub the first time the project is resolved. A build of a commit, as `go install` gives until a version is tagged, has no release to point at: it writes a dependency on the schema built into it instead, extracted to `~/.cache/koldstart/schema/`, so it works offline and needs nothing published.
 
-From the first release, 0.1.0, koldstart also installs with `brew install kontrolplane/tap/koldstart`, which installs `kdst` and pkl with it, as binaries for linux and macos on the [GitHub releases](https://github.com/kontrolplane/koldstart/releases), and as a container image, `ghcr.io/kontrolplane/koldstart`, for linux/amd64 and linux/arm64. The image holds koldstart, pkl, go and uv, so it builds typescript, javascript, go and python functions; node and docker are not in it, so `typecheck = true`, `invoke --local`, `offline` and container image functions run elsewhere.
+From the first release, 0.1.0, koldstart also installs with `brew install kontrolplane/tap/koldstart`, which installs `kdst` and pkl with it, as binaries for linux and macos on the [GitHub releases](https://github.com/kontrolplane/koldstart/releases), and as a container image, `ghcr.io/kontrolplane/koldstart`, for linux/amd64 and linux/arm64. The image holds koldstart, pkl, go and uv, so it builds typescript, javascript, go and python functions, and zips a `bootstrap`; node, docker, cargo and cargo lambda are not in it, so `typecheck = true`, `invoke --local`, `offline`, rust and container image functions run elsewhere.
 
 ## getting started
 
-`init` starts a project: a `koldstart.pkl` with one function behind `GET /hello`, its handler in typescript, or go or python with `--template go` or `--template python`, the `PklProject` that names the schema, and the entries koldstart needs in `.gitignore`. It keeps any other file that is there already, and writes over a `koldstart.pkl` only with `--force`.
+`init` starts a project: a `koldstart.pkl` with one function behind `GET /hello`, its handler in typescript, or go, python or rust with `--template go`, `--template python` or `--template rust`, the `PklProject` that names the schema, and the entries koldstart needs in `.gitignore`. It keeps any other file that is there already, and writes over a `koldstart.pkl` only with `--force`.
 
 ```bash
 kdst init orders
@@ -190,7 +190,7 @@ To keep a secret out of the configuration, add `.readAtRuntime()`: the variable 
 kdst invoke -f worker --local --path events/job.json
 ```
 
-A python function runs with the version of python its runtime names, which [uv](https://docs.astral.sh/uv/) finds or installs once, its dependencies installed for it. A container image function is built for this machine and runs in docker, pointed at the same emulator. A function's layers are not added here, so what they put under `/opt` is missing; koldstart says so when it runs one.
+A python function runs with the version of python its runtime names, which [uv](https://docs.astral.sh/uv/) finds or installs once, its dependencies installed for it. A go function is built for this machine, and so is a rust one, with cargo, as cargo lambda builds for linux alone; a `bootstrap` runs as it is, so here only when it is built for this machine, or is a script. A container image function is built for this machine and runs in docker, pointed at the same emulator. A function's layers are not added here, so what they put under `/opt` is missing; koldstart says so when it runs one.
 
 `offline` serves every http route of the stage on `127.0.0.1:3000`, or the port `--port` names, so the api can be called with curl or a browser while you work on it. A change to a source file rebuilds the functions, and the next request runs the new code:
 
@@ -281,7 +281,7 @@ Everything koldstart creates is tagged with its app, stage and node, together wi
 
 ## not supported yet
 
-- runtimes other than node, go and python, except in a container image
+- lambda's java, .NET and ruby runtimes: build a `bootstrap` for `provided.al2023`, or a container image
 - routes on the rest api of api gateway: they go to an http api
 - windows, other than through the container image
 

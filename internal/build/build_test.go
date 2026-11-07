@@ -184,7 +184,7 @@ func TestGoReproducible(t *testing.T) {
 		"go.mod":             "module example.com/orders\n\ngo 1.26\n",
 		"cmd/worker/main.go": "package main\n\nimport \"fmt\"\n\nfunc main() { fmt.Println(\"worker\") }\n",
 	}
-	fn := config.Function{Runtime: config.RuntimeGo, Handler: "./cmd/worker", Architecture: config.ArchARM64}
+	fn := config.Function{Runtime: config.RuntimeProvided, Handler: "./cmd/worker", Architecture: config.ArchARM64}
 
 	hashes := make([]string, 0, 2)
 	for range 2 {

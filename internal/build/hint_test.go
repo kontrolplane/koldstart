@@ -100,7 +100,7 @@ func TestGoNoModule(t *testing.T) {
 	write(t, root, map[string]string{"cmd/worker/main.go": "package main\n\nfunc main() {}\n"})
 	t.Setenv("GOFLAGS", "")
 	t.Setenv("GO111MODULE", "")
-	fn := config.Function{Runtime: config.RuntimeGo, Handler: "./cmd/worker", Architecture: config.ArchARM64}
+	fn := config.Function{Runtime: config.RuntimeProvided, Handler: "./cmd/worker", Architecture: config.ArchARM64}
 	_, err := Builder{Root: root, Stage: "dev"}.Build(context.Background(), "worker", fn)
 	if err == nil || !strings.Contains(err.Error(), "run go mod init <module path> in ") {
 		t.Errorf("Build = %v, want an error that says to run go mod init", err)

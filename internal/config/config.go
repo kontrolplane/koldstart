@@ -28,11 +28,11 @@ type WebSocket struct {
 
 // The runtimes a function can have.
 const (
-	RuntimeNode22 = "nodejs22.x"
-	RuntimeNode24 = "nodejs24.x"
-	RuntimeGo     = "provided.al2023"
-	RuntimePy312  = "python3.12"
-	RuntimePy313  = "python3.13"
+	RuntimeNode22   = "nodejs22.x"
+	RuntimeNode24   = "nodejs24.x"
+	RuntimeProvided = "provided.al2023"
+	RuntimePy312    = "python3.12"
+	RuntimePy313    = "python3.13"
 )
 
 // The architectures a function can have.
@@ -44,8 +44,14 @@ const (
 // Function is one lambda function.
 type Function struct {
 	Runtime string `json:"runtime"`
+	// Handler is, for node and python, the file and its function; for provided.al2023, the go
+	// package or the directory of the rust crate to build, or what a Bootstrap is told as
+	// _HANDLER.
 	Handler string `json:"handler"`
-	Memory  int    `json:"memory"`
+	// Bootstrap is an executable built elsewhere, relative to the project, that is zipped as the
+	// bootstrap provided.al2023 runs, in place of one koldstart builds.
+	Bootstrap string `json:"bootstrap"`
+	Memory    int    `json:"memory"`
 	// Timeout is in seconds.
 	Timeout      int    `json:"timeout"`
 	Architecture string `json:"architecture"`
@@ -138,9 +144,26 @@ func (f Function) IsNode() bool {
 	return f.Runtime == RuntimeNode22 || f.Runtime == RuntimeNode24
 }
 
-// IsGo reports whether the function is a go binary on the os-only runtime.
-func (f Function) IsGo() bool {
-	return f.Runtime == RuntimeGo
+// IsProvided reports whether the function runs on the os-only runtime, provided.al2023: a go or
+// rust binary koldstart builds, or a Bootstrap built elsewhere.
+func (f Function) IsProvided() bool {
+	return f.Runtime == RuntimeProvided
+}
+
+// IsRust reports whether the function is a rust crate on provided.al2023: the directory its
+// handler names in root, the project's directory, holds a Cargo.toml.
+func (f Function) IsRust(root string) bool {
+	return f.IsProvided() && f.Bootstrap == "" && crate(root, f.Handler)
+}
+
+// LambdaHandler is the handler lambda is given: bootstrap for provided.al2023, which runs the
+// bootstrap in the zip whatever the handler says, but a Bootstrap's own handler when it has one,
+// which it may read as _HANDLER.
+func (f Function) LambdaHandler() string {
+	if f.IsProvided() && (f.Bootstrap == "" || f.Handler == "") {
+		return "bootstrap"
+	}
+	return f.Handler
 }
 
 // FunctionURL is the function's own url.

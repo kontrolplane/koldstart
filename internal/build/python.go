@@ -29,7 +29,7 @@ func pythonPlatform(target Target) string {
 	if target.GOOS != Linux {
 		return ""
 	}
-	if target.GOARCH == "amd64" {
+	if target.GOARCH == goAMD64 {
 		return "x86_64-manylinux2014"
 	}
 	return "aarch64-manylinux2014"
