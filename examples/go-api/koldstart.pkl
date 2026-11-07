@@ -1,0 +1,23 @@
+amends "@koldstart/Project.pkl"
+
+import "@koldstart/kdst.pkl"
+
+app = "links"
+region = "eu-west-1"
+
+functions {
+  ["api"] {
+    memory = 256
+    link {
+      ["links"] = "readwrite"
+    }
+    events {
+      kdst.post("/links")
+      kdst.get("/{id}")
+    }
+  }
+}
+
+resources {
+  ["links"] = kdst.table("id")
+}

@@ -48,7 +48,11 @@ updates:
       prefix: chore(deps)
 
   - package-ecosystem: gomod
-    directory: /examples/full-featured
+    directories:
+      - /examples/full-featured
+      - /examples/go-api
+      - /examples/container-image
+      - /examples/websocket-chat
     schedule:
       interval: monthly
     commit-message:
@@ -57,6 +61,13 @@ updates:
       example:
         patterns:
           - "*"
+
+  - package-ecosystem: docker
+    directory: /examples/container-image
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: chore(examples)
 
   - package-ecosystem: npm
     directory: /examples/full-featured

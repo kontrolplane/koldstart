@@ -65,6 +65,14 @@ kdst deploy --stage prod
 
 `plan` shows what would change and touches nothing. `deploy` builds the functions, uploads them, shows the plan and applies it once you say yes.
 
+Smaller examples, each with a README of how to deploy it and what to call after:
+
+- [go-api](./examples/go-api): an http api in go, with a table
+- [python-schedule](./examples/python-schedule): python on a cron schedule, clearing expired rows from a table
+- [container-image](./examples/container-image): a function built from a dockerfile, on a function url
+- [websocket-chat](./examples/websocket-chat): a websocket api that keeps its connections in a table and sends each message to all of them
+- [stage-output](./examples/stage-output): two apps, one reading the other's url with `kdst.stageOutput()`
+
 ## highlights
 
 koldstart calls the AWS APIs directly instead of generating CloudFormation, so there is no stack to wait on and no 500 resource limit. When the only change is a function's code, a deploy uploads the new zip and makes one `UpdateFunctionCode` call, and for a function with provisioned concurrency or snapstart publishes a version and points its `live` alias at it. `kdst deploy function -f api` goes straight down that path.

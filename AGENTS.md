@@ -25,7 +25,7 @@ hack/schema/                packages the schema in pkl/ with the pkl koldstart p
 hack/pkl/                   downloads the pinned pkl for a platform, for the image
 hack/floci/                 the local aws profile for floci, for running kdst against it by hand
 hack/demonstration/         the checkout service make local and make vhs deploy to floci, the script that seeds it, and backfill, which writes what floci does not keep
-examples/                   example projects, each a go module of its own; examples_test.go checks they evaluate
+examples/                   example projects, one in each directory or, for stage-output, in each of its two; one with go is a go module of its own, tidied by make lint; examples_test.go checks they evaluate
 test/e2e/                   deploys examples/full-featured to a real account, behind the e2e build tag
 vhs/                        make vhs: the tape that records kdst ui for the README, its gif and a screenshot of each page, and the floci and profile it records against
 assets/                     the README's header, footer and cassette.gif, and the screenshots make vhs takes in pages/
