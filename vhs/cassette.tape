@@ -1,6 +1,6 @@
 Set FontSize 20
-Set Width 2000
-Set Height 1000
+Set Width 2400
+Set Height 1350
 Set BorderRadius 10
 Set TypingSpeed 100ms
 
