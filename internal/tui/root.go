@@ -927,7 +927,7 @@ func (m model) footer() string {
 		status = ansi.Truncate(status, budget, "…")
 	}
 	width := frameWidth - 3 - ansi.StringWidth(status)
-	left := fitHints(width, m.shortHelp()...)
+	left := m.fitHints(width, m.shortHelp()...)
 	if f := m.pageFilter(); f != nil && f.active {
 		left = f.view(width, m.keys)
 	}
@@ -957,12 +957,55 @@ func cutError(s string, width int) string {
 // minErrorTail is the least of the end of an error cutError keeps beside its head.
 const minErrorTail = 24
 
-// fitHints renders the hints that fit width, dropping them from the end but for the last two,
-// help and back or quit, which stay.
-func fitHints(width int, pairs ...[2]string) string {
+// How long a hint stays in a footer too narrow for all of them, by what its key does: the
+// lowest goes first.
+const (
+	// keepOther is a key that does one thing to what is under the cursor, as copy or pause.
+	keepOther = iota
+	// keepRefresh is r, which reads the page again.
+	keepRefresh
+	// keepSearch is a filter or a search, and the keys that step through its matches.
+	keepSearch
+	// keepEssential is the page's main action, its first hint, and the keys that move about it:
+	// up and down, enter, tab, and next and previous.
+	keepEssential
+)
+
+// hintKeep is how long the hint at i of a page's hints stays as the footer narrows, by its key,
+// as the key map names it.
+func (m model) hintKeep(i int, h [2]string) int {
+	k := m.keys
+	pair := func(a, b key.Binding) string { return a.Help().Key + "/" + b.Help().Key }
+	switch {
+	case i == 0:
+		return keepEssential
+	case slices.Contains([]string{upDown, k.View.Help().Key, k.NextTab.Help().Key, pair(k.Next, k.Previous), pair(k.NextDiff, k.PrevDiff), pair(k.PageUp, k.PageDown)}, h[0]):
+		return keepEssential
+	case slices.Contains([]string{k.Filter.Help().Key, pair(k.NextMatch, k.PrevMatch)}, h[0]):
+		return keepSearch
+	case h[0] == k.Refresh.Help().Key:
+		return keepRefresh
+	}
+	return keepOther
+}
+
+// fitHints renders the hints that fit width. While they do not, the one that keeps least, by
+// hintKeep, goes, the last of them first, but for the last two, help and back or quit, which
+// stay; what is left keeps its order.
+func (m model) fitHints(width int, pairs ...[2]string) string {
 	pairs = slices.Clone(pairs)
+	keep := make([]int, len(pairs))
+	for i, p := range pairs {
+		keep[i] = m.hintKeep(i, p)
+	}
 	for len(pairs) > 2 && ansi.StringWidth(hints(pairs...)) > width {
-		pairs = slices.Delete(pairs, len(pairs)-3, len(pairs)-2)
+		drop := len(pairs) - 3
+		for i := drop - 1; i >= 0; i-- {
+			if keep[i] < keep[drop] {
+				drop = i
+			}
+		}
+		pairs, keep = slices.Delete(pairs, drop, drop+1), slices.Delete(keep, drop, drop+1)
 	}
 	return hints(pairs...)
 }

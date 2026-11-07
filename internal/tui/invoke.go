@@ -707,8 +707,8 @@ func (m model) paneCopyValue() string {
 
 // invokeKeys are the footer's keys on the invoke tab: those of the json while it has them, with
 // esc back to the events last, where q is on every other page, and otherwise i first, as what
-// the tab is for, then enter into the json, v, e, scrolling and copying. The footer drops the
-// third from last first, so copying a path goes before v and i.
+// the tab is for, then enter into the json, v, e, scrolling and copying. Of the keys that keep
+// least the footer drops the last first, so copying a path goes before i and v.
 func (m model) invokeKeys() [][2]string {
 	k := m.keys
 	f := m.state.function

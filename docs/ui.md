@@ -13,6 +13,8 @@ The header shows the aws profile, `default` without one, the account, the region
 
 The frame's top border holds where the page sits, each step by its kind, as `stages › app checkout › stage production › function storefront › logs`; a narrow terminal folds the steps between into `…`, then leaves out their kinds. On a stage and on a function, the facts of it sit at the border's other end. A page with tabs numbers them, the open one bright over an accent underline, and its number opens it.
 
+The footer names the page's keys. Where they do not fit it leaves out first the keys that do one thing, as `c` and `p`, then `r`, then the filter or search, and keeps longest the page's main action, the keys that move about it, `↑/↓`, `enter`, `tab` and `n/p`, and `?` and back.
+
 A table of few rows leaves the room under it to what the row under the cursor holds, which `enter` opens: the stages to the stage's functions, each with its runtime, memory and what invokes it, beside its outputs; the functions tab to the function's overview, as its page draws it, with what lambda says of it now; and the outputs tab to the output's value, json indented.
 
 ## views
