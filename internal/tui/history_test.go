@@ -33,7 +33,8 @@ func sdRowText(m model, i int) string {
 }
 
 // TestHistoryRows checks each deploy says when it was, by whom, what it changed from the one
-// before, whether it stopped before it finished, and how long it took.
+// before, its counts padded to those of the first deploy, which added everything, whether it
+// stopped before it finished, and how long it took.
 func TestHistoryRows(t *testing.T) {
 	m := sdHistoryTab(t, sdStage(t, 3), 120, 40)
 	tests := []struct {
@@ -41,10 +42,10 @@ func TestHistoryRows(t *testing.T) {
 		row  int
 		want []string
 	}{
-		{name: "the current deploy, unfinished", row: 0, want: []string{"3h ago", "levi", "+3 ~1 -1", "✗ failed · current", " - 1 d00-0"}},
-		{name: "one of two writes", row: 1, want: []string{"8h ago", "ana", "+1 ~1 -0", "20s 2 d01-1"}},
-		{name: "a failed deploy", row: 2, want: []string{"13h ago", "ci@github-actions", "+3 ~1 -0", "✗ failed", "40s 3"}},
-		{name: "nothing added", row: 3, want: []string{"levi", "+0 ~1 -0", "1m 4"}},
+		{name: "the current deploy, unfinished", row: 0, want: []string{"3h ago", "levi", "+3   ~1 -1", "✗ failed · current", " - 1 d00-0"}},
+		{name: "one of two writes", row: 1, want: []string{"8h ago", "ana", "+1   ~1 -0", "20s 2 d01-1"}},
+		{name: "a failed deploy", row: 2, want: []string{"13h ago", "ci@github-actions", "+3   ~1 -0", "✗ failed", "40s 3"}},
+		{name: "nothing added", row: 3, want: []string{"levi", "+0   ~1 -0", "1m 4"}},
 		{name: "the first deploy", row: 49, want: []string{"+", "~0 -0"}},
 	}
 	for _, tt := range tests {
@@ -100,7 +101,7 @@ func TestHistoryUnreadable(t *testing.T) {
 	}
 	f.versionErr = nil
 	m = pressKeys(t, m, "r")
-	if got := sdRowText(m, 0); !strings.Contains(got, "levi") || !strings.Contains(got, "+3 ~1 -1") {
+	if got := sdRowText(m, 0); !strings.Contains(got, "levi") || !strings.Contains(got, "+3   ~1 -1") {
 		t.Errorf("after r: %q", got)
 	}
 }
@@ -150,10 +151,32 @@ func TestDeploySummary(t *testing.T) {
 	}
 }
 
+// TestChangesAlign checks the counts of the deploys line up, each padded to the widest of its
+// kind, so a deploy of 19 additions does not push the changes and removals of the others.
+func TestChangesAlign(t *testing.T) {
+	sums := map[string]deploySummary{"a": {added: 1, changed: 1}, "b": {added: 19, removed: 120}}
+	widths := countWidths([]deploySummary{sums["a"], sums["b"]})
+	if widths != [3]int{2, 1, 3} {
+		t.Fatalf("widths %v, want [2 1 3]", widths)
+	}
+	tests := []struct {
+		sum  deploySummary
+		want string
+	}{
+		{sum: sums["a"], want: "+1  ~1 -0  "},
+		{sum: sums["b"], want: "+19 ~0 -120"},
+	}
+	for _, tt := range tests {
+		if got := plainText(changesCell(tt.sum, true, widths)); got != tt.want {
+			t.Errorf("changes %q, want %q", got, tt.want)
+		}
+	}
+}
+
 // TestChangesCell checks the counts of a deploy's changes are in the tones of what they did,
 // and a count of none is faint.
 func TestChangesCell(t *testing.T) {
-	c := changesCell(deploySummary{added: 3, changed: 0, removed: 2}, true)
+	c := changesCell(deploySummary{added: 3, changed: 0, removed: 2}, true, [3]int{1, 1, 1})
 	tests := []struct {
 		part string
 		want styles.Tone
@@ -169,7 +192,7 @@ func TestChangesCell(t *testing.T) {
 			}
 		})
 	}
-	if got := plainText(changesCell(deploySummary{}, false)); got != "…" {
+	if got := plainText(changesCell(deploySummary{}, false, [3]int{1, 1, 1})); got != "…" {
 		t.Errorf("unread changes %q, want …", got)
 	}
 }

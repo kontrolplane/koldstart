@@ -215,13 +215,13 @@ func logLineText(e cli.LogEvent, width int) []string {
 	var out []string
 	if strings.TrimSpace(parts.message) != "" {
 		out = append(out, "", styles.SectionHeader("message", width))
-		for _, c := range logCells(parts.message, width) {
-			out = append(out, renderCell(c, column{width: width}, nil))
+		for _, c := range logCells(parts.message, width-rowInset) {
+			out = append(out, pad(rowInset, nil)+renderCell(c, column{width: width - rowInset}, nil))
 		}
 	}
 	if f, ok := cli.ReadFailure([]byte(parts.json)); ok && len(f.Trace) > 0 {
 		out = append(out, "", styles.SectionHeader("error", width))
-		out = append(out, traceLines(f, width)...)
+		out = append(out, insetLines(traceLines(f, width-rowInset))...)
 	}
 	if len(parts.pairs) > 0 {
 		out = append(out, "", styles.SectionHeader("fields", width))

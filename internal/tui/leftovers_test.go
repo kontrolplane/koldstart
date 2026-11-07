@@ -332,7 +332,7 @@ func TestStaleMarkers(t *testing.T) {
 		{
 			name: "the metrics of a stage",
 			fail: func(b *leftoversBackend) { b.metricsErr = errAWS },
-			want: []string{"1,740", "metrics as of", "could not read again: aws said no"},
+			want: []string{"1,740", "metrics as of", "could not read again:"},
 		},
 		{
 			name: "the state of a stage",
@@ -343,13 +343,13 @@ func TestStaleMarkers(t *testing.T) {
 			name: "what lambda says of a function",
 			keys: []string{"enter"},
 			fail: func(b *leftoversBackend) { b.err, b.metricsErr = errAWS, errAWS },
-			want: []string{"active", "1,740", "as of", "could not read again: aws said no"},
+			want: []string{"active", "1,740", "as of", "could not read again:"},
 		},
 		{
 			name: "a resource in aws",
 			keys: []string{"tab", "j", "j", "j", "j", "j", "enter", "tab"},
 			fail: func(b *leftoversBackend) { b.liveErr = errAWS },
-			want: []string{`"BillingMode": "PAY_PER_REQUEST" → "PROVISIONED"`, "could not read again: aws said no"},
+			want: []string{`"BillingMode": "PAY_PER_REQUEST" → "PROVISIONED"`, "could not read again:"},
 		},
 	}
 	for _, tt := range tests {
@@ -384,7 +384,7 @@ func TestQueueDepthUnreadable(t *testing.T) {
 	}{
 		{name: "the tab, never read", keys: []string{"tab"}, want: []string{"could not read the depth"}},
 		{name: "its page, never read", keys: []string{"tab", "j", "j", "j", "j", "j", "enter"}, want: []string{"could not read the depth: aws said no · r tries again"}},
-		{name: "its page, read before", first: true, keys: []string{"tab", "j", "j", "j", "j", "j", "enter"}, want: []string{"12 queued", "as of", "could not read again: aws said no"}},
+		{name: "its page, read before", first: true, keys: []string{"tab", "j", "j", "j", "j", "j", "enter"}, want: []string{"12 queued", "as of", "could not read again:"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

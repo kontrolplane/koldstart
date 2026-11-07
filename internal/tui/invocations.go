@@ -289,7 +289,7 @@ func (m model) invocationLines() lazyLines {
 	g := cache.gutter(r, shown)
 	blank, above := offsetCell("", g), ""
 	for _, e := range shown {
-		rows := cache.rows(e, r, g, width)
+		rows := cache.rows(e, r, g, width-rowInset)
 		first := blank
 		if offset := formatOffset(e.Time.Sub(r.start)); offset != above {
 			first, above = offsetCell(offset, g), offset
@@ -299,7 +299,7 @@ func (m model) invocationLines() lazyLines {
 			if i == 0 {
 				gutter = first
 			}
-			return renderCell(append(slices.Clip(gutter), rows[i]...), column{width: width}, nil)
+			return pad(rowInset, nil) + renderCell(append(slices.Clip(gutter), rows[i]...), column{width: width - rowInset}, nil)
 		})
 	}
 	return out
