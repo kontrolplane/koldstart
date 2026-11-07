@@ -19,8 +19,8 @@ unset AWS_DEFAULT_PROFILE AWS_ENDPOINT_URL AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_K
 kdst=../../../bin/kdst
 
 # deploy deploys a release to a stage as someone. koldstart names whoever deploys from github
-# actions by GITHUB_ACTOR, so a deploy here passes as one, under the name of the person or the
-# bot, with a run of its own.
+# actions by GITHUB_ACTOR, the person whose push or merge started the run, so a deploy here
+# passes as one, under that person's name, with a run of its own.
 deploy() {
   who=$1
   stage=$2
@@ -70,25 +70,27 @@ deploy daan-bakker development koldstart.first.pkl
 invoke development storefront list-products 2
 invoke development storefront place-order 1
 
-# Carts and customer emails, merged and shipped by the pipeline after Daan tried them.
+# Carts and customer emails. Daan tries them on development, merges them, and the pipeline his
+# merge starts ships them.
 later
 say "release 2 of 3: carts and customer emails"
 deploy daan-bakker development koldstart.carts.pkl
-deploy github-actions[bot] staging koldstart.carts.pkl
-deploy github-actions[bot] production koldstart.carts.pkl
+deploy daan-bakker staging koldstart.carts.pkl
+deploy daan-bakker production koldstart.carts.pkl
 
-# The webhook and the nightly reconciliation. The pipeline's deploy to production also adds
-# sentry's layer, at a version not published to the account yet, and stops part of the way.
+# The webhook and the nightly reconciliation, Sanne's. The pipeline her merge starts also adds
+# sentry's layer to production, at a version not published to the account yet, and stops part of
+# the way.
 later
 say "release 3 of 3: the payment provider's webhook and the nightly reconciliation, its deploy to production failing on a layer"
 deploy sanne-visser development koldstart.pkl
-deploy github-actions[bot] staging koldstart.pkl
-deploy github-actions[bot] production koldstart.monitoring.pkl || true
+deploy sanne-visser staging koldstart.pkl
+deploy sanne-visser production koldstart.monitoring.pkl || true
 
-# The layer reverted, and production deployed again.
+# Thijs reverts the layer, and his merge deploys production again.
 later
 say "release 3 of 3 again, to production, without the layer"
-deploy github-actions[bot] production koldstart.pkl
+deploy thijs-de-boer production koldstart.pkl
 
 say "invoking production, the customers' traffic"
 {

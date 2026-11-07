@@ -5,8 +5,8 @@
 //	backfill parameters   the parameters the service reads, before it is deployed
 //	backfill              once it is deployed and invoked: an hour of the metrics of each
 //	                      function, lambda's START, END and REPORT lines around each request in
-//	                      its log, and the lock of a deploy to staging that github actions has
-//	                      not finished
+//	                      its log, and the lock of a deploy to staging that a run of github
+//	                      actions Lotte started has not finished
 package main
 
 import (
@@ -259,8 +259,8 @@ func parameters(ctx context.Context, client *ssm.Client) error {
 	return nil
 }
 
-// lock leaves the lock of a deploy to staging that github actions started a few minutes ago and
-// has not finished, as a run that was cancelled leaves it.
+// lock leaves the lock of a deploy to staging that a run of github actions Lotte started a few
+// minutes ago has not finished, as a run that was cancelled leaves it.
 func lock(ctx context.Context, cfg aws.Config) error {
 	ident, err := sts.NewFromConfig(cfg).GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
 	if err != nil {
@@ -271,7 +271,7 @@ func lock(ctx context.Context, cfg aws.Config) error {
 		return err
 	}
 	return backend.Lock(ctx, app, "staging", state.LockInfo{
-		Who:       "github-actions[bot]",
+		Who:       "lotte-mulder",
 		Where:     "https://github.com/acme/checkout/actions/runs/11873520113",
 		Operation: "deploy",
 		Since:     time.Now().Add(-4 * time.Minute).UTC(),
