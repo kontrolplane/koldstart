@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/kontrolplane/koldstart/internal/cli"
 	"github.com/kontrolplane/koldstart/internal/desired"
 	"github.com/kontrolplane/koldstart/internal/engine"
@@ -37,7 +39,8 @@ type planGroup struct {
 	// key is what the group is folded by.
 	key  string
 	name string
-	// action is the action of a group by action, and counts the actions of a group by kind.
+	// action is the action of a group by action, and counts the changes of a group by kind of
+	// each action the plan has, in the plan's order, none where it has none of one.
 	action  engine.Action
 	counts  []cli.ActionCount
 	members []int
@@ -115,17 +118,22 @@ func newPlanFacts(plan *engine.Plan) *planFacts {
 		kinds[k] = append(kinds[k], i)
 		actions[c.Action] = append(actions[c.Action], i)
 	}
+	all := cli.PlanCounts(plan)
 	for k, members := range kinds {
 		if len(members) == 0 {
 			continue
 		}
-		sub := &engine.Plan{}
+		n := map[engine.Action]int{}
 		for _, i := range members {
-			sub.Changes = append(sub.Changes, engine.Change{Action: f.changes[i].Action})
+			n[f.changes[i].Action]++
 		}
-		f.byKind = append(f.byKind, planGroup{key: "kind/" + planKinds[k], name: planKinds[k], counts: cli.PlanCounts(sub), members: members})
+		counts := make([]cli.ActionCount, len(all))
+		for j, c := range all {
+			counts[j] = cli.ActionCount{Action: c.Action, N: n[c.Action]}
+		}
+		f.byKind = append(f.byKind, planGroup{key: "kind/" + planKinds[k], name: planKinds[k], counts: counts, members: members})
 	}
-	for _, c := range cli.PlanCounts(plan) {
+	for _, c := range all {
 		f.byAction = append(f.byAction, planGroup{key: "action/" + string(c.Action), name: cli.Verb(c.Action), action: c.Action, members: actions[c.Action]})
 	}
 	return f
@@ -172,10 +180,11 @@ const planDetailIndent = 8
 // planLines are the lines of the plan: the head, which stays in place, and the body of groups
 // and changes, each of which can be chosen. A group's heading counts its changes, and while
 // applying how many are done; a change lists the fields it changes, of a replace why it is one
-// and what it loses, and the error it failed with.
+// and what it loses, and the error it failed with. A row ends where the head does, and takes the
+// whole of it until the apply gives it a column of progress.
 func (m model) planLines() ([]string, pickList) {
 	p := m.state.plan
-	width := contentWidth - 5
+	width := detailWidth() - rowInset
 	if p.plan == nil {
 		return nil, pickList{}
 	}
@@ -186,7 +195,8 @@ func (m model) planLines() ([]string, pickList) {
 		body.lines.add(p.noChanges(width)...)
 		return head, body
 	}
-	cols := []column{{width: width - planStatusWidth - 1}, {width: 1}, {width: planStatusWidth, right: true}}
+	cols := planCols(width, p.progress != nil)
+	widths := widthsOf(groups)
 	pad := strings.Repeat(" ", planDetailIndent)
 	room := column{width: width - planDetailIndent}
 	for _, r := range rows {
@@ -197,14 +207,14 @@ func (m model) planLines() ([]string, pickList) {
 			}
 			folded := p.folded[g.key]
 			body.addDrawn(func() string {
-				return renderCell(groupCell(g, folded), cols[0], nil) + " " + renderCell(m.groupProgress(g, f), cols[2], nil)
-			}, func() string { return litRow(cols, groupCell(g, folded), nil, m.groupProgress(g, f)) })
+				return planRowLine(cols, groupCell(g, folded, widths), m.groupProgress(g, f), false)
+			}, func() string { return planRowLine(cols, groupCell(g, folded, widths), m.groupProgress(g, f), true) })
 			continue
 		}
 		c, d := f.changes[r.change], f.details[r.change]
 		body.addDrawn(func() string {
-			return renderCell(changeCell(c), cols[0], nil) + " " + renderCell(m.progressCell(c), cols[2], nil)
-		}, func() string { return litRow(cols, changeCell(c), nil, m.progressCell(c)) })
+			return planRowLine(cols, changeCell(c, cols[0].width), m.progressCell(c), false)
+		}, func() string { return planRowLine(cols, changeCell(c, cols[0].width), m.progressCell(c), true) })
 		var notes []cell
 		if len(c.Drift) > 0 {
 			notes = append(notes, text("▲ changed outside koldstart: "+strings.Join(c.Drift, ", "), styles.ToneWarning))
@@ -238,45 +248,113 @@ func (m model) planLines() ([]string, pickList) {
 	return head, body
 }
 
-// changeCell is the line of a change of the plan: its action and its id, the type of a resource,
-// and what is special about it.
-func changeCell(c engine.Change) cell {
-	line := cell{
-		styles.S(fmt.Sprintf("  %-4s", cli.Symbol(c.Action)), actionTones[c.Action]),
-		styles.S(c.ID, styles.ToneText),
+// planCols are the columns of a row of the plan in width: the change or heading, and with
+// progress a gap and planStatusWidth on the right for how far it got.
+func planCols(width int, progress bool) []column {
+	if !progress {
+		return []column{{width: width}}
 	}
+	return []column{{width: width - planStatusWidth - 1}, {width: 1}, {width: planStatusWidth, right: true}}
+}
+
+// planRowLine draws a row of the plan in cols, on the ground of the selection when lit.
+func planRowLine(cols []column, line, status cell, lit bool) string {
+	switch {
+	case lit && len(cols) == 1:
+		return litRow(cols, line)
+	case lit:
+		return litRow(cols, line, nil, status)
+	case len(cols) == 1:
+		return renderCell(line, cols[0], nil)
+	}
+	return renderCell(line, cols[0], nil) + " " + renderCell(status, cols[2], nil)
+}
+
+// planMinID is the fewest columns a change's id is cut to before what follows it is cut instead.
+const planMinID = 20
+
+// changeCell is the line of a change of the plan in width: its action and its id, the type of a
+// resource, and what is special about it. An id too long to leave room for what follows is cut
+// in the middle, as the end of an id names what it is.
+func changeCell(c engine.Change, width int) cell {
+	symbol := styles.S(fmt.Sprintf("  %-4s", cli.Symbol(c.Action)), actionTones[c.Action])
+	var after cell
 	if strings.HasPrefix(c.Type, "AWS::") {
-		line = append(line, styles.S("  "+typeName(c.Type), styles.ToneMuted))
+		after = append(after, styles.S("  "+typeName(c.Type), styles.ToneMuted))
 	}
 	switch {
 	case c.Resume:
-		line = append(line, styles.S("  "+cli.ResumeNote(c.Action), styles.ToneFaint))
+		after = append(after, styles.S("  "+cli.ResumeNote(c.Action), styles.ToneFaint))
 	case c.Gone:
-		line = append(line, styles.S("  deleted outside koldstart", styles.ToneWarning))
+		after = append(after, styles.S("  deleted outside koldstart", styles.ToneWarning))
 	}
-	return line
+	id := styles.Clean(c.ID)
+	room := width - ansi.StringWidth(symbol.Text)
+	if ansi.StringWidth(id)+cellWidth(after) > room {
+		id = cutMiddle(id, max(planMinID, room-cellWidth(after)))
+	}
+	return append(cell{symbol, styles.S(id, styles.ToneText)}, after...)
 }
 
-// groupCell is the heading of a group: ▾ over its changes, or ▸ when it is folded, its name, how
-// many changes it holds, and in a group by kind how many of each action.
-func groupCell(g planGroup, folded bool) cell {
+// headingWidths are how wide the parts of the headings of a plan's groups are drawn, so they
+// line up: the name, the count of changes, and the count of each action of a group by kind.
+type headingWidths struct {
+	name   int
+	total  int
+	counts []int
+}
+
+// widthsOf are the widths the headings of groups line up in.
+func widthsOf(groups []planGroup) headingWidths {
+	var w headingWidths
+	for _, g := range groups {
+		w.name = max(w.name, ansi.StringWidth(g.name))
+		w.total = max(w.total, len(formatInt(len(g.members))))
+		for i, n := range g.counts {
+			if i == len(w.counts) {
+				w.counts = append(w.counts, 0)
+			}
+			w.counts[i] = max(w.counts[i], ansi.StringWidth(cli.Symbol(n.Action)+formatInt(n.N)))
+		}
+	}
+	return w
+}
+
+// groupCell is the heading of a group: ▾ over its changes, or ▸ when it is folded, the symbol of
+// a group by action where its changes have theirs, its name, how many changes it holds, and in a
+// group by kind how many of each action, none faint, each padded to w so the headings line up.
+func groupCell(g planGroup, folded bool, w headingWidths) cell {
 	marker := "▾ "
 	if folded {
 		marker = "▸ "
 	}
 	c := cell{styles.S(marker, styles.ToneFaint)}
 	if g.action != "" {
-		c = append(c, styles.S(cli.Symbol(g.action)+" ", actionTones[g.action]))
+		c = append(c, styles.S(fmt.Sprintf("%-4s", cli.Symbol(g.action)), actionTones[g.action]))
 	}
-	c = append(c, styles.B(g.name, styles.ToneText), styles.S("  "+formatInt(len(g.members)), styles.ToneFaint))
-	for _, n := range g.counts {
-		c = append(c, styles.S("  "+cli.Symbol(n.Action)+formatInt(n.N), actionTones[n.Action]))
+	gap := strings.Repeat(" ", max(0, w.name-ansi.StringWidth(g.name))+2)
+	c = append(c, styles.B(g.name, styles.ToneText), styles.S(gap+fmt.Sprintf("%*s", w.total, formatInt(len(g.members))), styles.ToneFaint))
+	for i, n := range g.counts {
+		tone := actionTones[n.Action]
+		if n.N == 0 {
+			tone = styles.ToneFaint
+		}
+		space := " "
+		if i == 0 {
+			space = "  "
+		}
+		count := cli.Symbol(n.Action) + formatInt(n.N)
+		if i < len(w.counts) {
+			count = fmt.Sprintf("%-*s", w.counts[i], count)
+		}
+		c = append(c, styles.S(space, styles.ToneFaint), styles.S(count, tone))
 	}
 	return c
 }
 
 // groupProgress says how far the changes of a group got while applying: how many of them are
-// done, as 2/5, ✓ once all are, and how many failed.
+// done, as 2/5 done, ✓ once all are, and how many failed, the count last so the counts of the
+// headings line up.
 func (m model) groupProgress(g planGroup, f *planFacts) cell {
 	p := m.state.plan
 	if p.progress == nil {
@@ -294,14 +372,14 @@ func (m model) groupProgress(g planGroup, f *planFacts) cell {
 			done++
 		}
 	}
-	count := formatInt(done) + "/" + formatInt(len(g.members))
+	count := cell{styles.S(formatInt(done)+"/"+formatInt(len(g.members)), styles.ToneBody), styles.S(" done", styles.ToneFaint)}
 	switch {
 	case failed > 0:
-		return cell{styles.S("✗ "+formatInt(failed)+" failed", styles.ToneDanger), styles.S(" · "+count, styles.ToneFaint)}
+		return append(cell{styles.S("✗ "+formatInt(failed)+" failed", styles.ToneDanger), sep()}, count...)
 	case done == len(g.members):
-		return cell{styles.S("✓ ", styles.ToneSuccess), styles.S(count, styles.ToneBody)}
+		return append(cell{styles.S("✓ ", styles.ToneSuccess)}, count...)
 	}
-	return cell{styles.S(count, styles.ToneBody), styles.S(" done", styles.ToneFaint)}
+	return count
 }
 
 // markSpan is a span of a line of the plan, marked when it is the part of a value that changed.

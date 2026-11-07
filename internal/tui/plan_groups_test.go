@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -107,9 +108,19 @@ func pdHeadings(m model) []string {
 	return out
 }
 
+// pdByKind are the headings of pdPlan(14) by kind: how many changes each holds, and how many of
+// each action of the plan, in columns.
+var pdByKind = []string{
+	"functions                 3  +1 ~0 -/+0 -1 =0 <1",
+	"roles, logs and triggers  2  +0 ~1 -/+0 -0 =1 <0",
+	"http api                  3  +1 ~0 -/+1 -0 =0 <1",
+	"resources                 2  +0 ~1 -/+0 -1 =0 <0",
+	"other                     2  +0 ~0 -/+1 -0 =1 <0",
+}
+
 // TestPlanGroups checks the changes are grouped by kind, each heading with how many it holds and
 // how many of each action, and o groups them by action, in the order the summary counts them,
-// and back, keeping the cursor on its change.
+// each symbol where its changes have theirs, and back, keeping the cursor on its change.
 func TestPlanGroups(t *testing.T) {
 	m := pdPlanned(t, pdPlan(14).Changes...)
 	tests := []struct {
@@ -117,18 +128,22 @@ func TestPlanGroups(t *testing.T) {
 		keys []string
 		want []string
 	}{
-		{name: "by kind", want: []string{"functions  3  +1  -1  <1", "roles, logs and triggers  2  ~1  =1", "http api  3  +1  -/+1  <1", "resources  2  ~1  -1", "other  2  -/+1  =1"}},
-		{name: "by action", keys: []string{"o"}, want: []string{"+ create  2", "~ update  2", "-/+ replace  2", "- delete  2", "= leave in place  2", "< take over again  2"}},
-		{name: "by kind again", keys: []string{"o", "o"}, want: []string{"functions  3  +1  -1  <1", "roles, logs and triggers  2  ~1  =1", "http api  3  +1  -/+1  <1", "resources  2  ~1  -1", "other  2  -/+1  =1"}},
+		{name: "by kind", want: pdByKind},
+		{name: "by action", keys: []string{"o"}, want: []string{
+			"+   create           2",
+			"~   update           2",
+			"-/+ replace          2",
+			"-   delete           2",
+			"=   leave in place   2",
+			"<   take over again  2",
+		}},
+		{name: "by kind again", keys: []string{"o", "o"}, want: pdByKind},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			at := pdChoose(t, m, "route/GET /orders/0002")
 			at = pressKeys(t, at, tt.keys...)
 			got := pdHeadings(at)
-			for i := range got {
-				got[i] = strings.TrimSpace(strings.Split(got[i], "   ")[0])
-			}
 			if strings.Join(got, "\n") != strings.Join(tt.want, "\n") {
 				t.Errorf("headings:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(tt.want, "\n"))
 			}
@@ -295,8 +310,106 @@ func TestPlanHead(t *testing.T) {
 	}
 }
 
+// TestPlanHeadingsLineUp checks the totals of the headings are right aligned and each count by
+// action is padded to the widest of its column, so the counts of the groups line up.
+func TestPlanHeadingsLineUp(t *testing.T) {
+	var many []engine.Change
+	for i := range 10 {
+		many = append(many, engine.Change{ID: fmt.Sprintf("function/fn-%02d", i), Action: engine.Create})
+	}
+	route := engine.Change{ID: "route/GET /", Action: engine.Update}
+	tests := []struct {
+		name    string
+		changes []engine.Change
+		want    []string
+	}{
+		{name: "counts of two digits", changes: append(slices.Clone(many), route), want: []string{"functions  10  +10 ~0", "http api    1  +0  ~1"}},
+		{name: "one action", changes: []engine.Change{many[0], {ID: "resource/q", Action: engine.Create}}, want: []string{"functions  1  +1", "resources  1  +1"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := pdHeadings(pdPlanned(t, tt.changes...))
+			if strings.Join(got, "\n") != strings.Join(tt.want, "\n") {
+				t.Errorf("headings:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(tt.want, "\n"))
+			}
+		})
+	}
+}
+
+// TestPlanRowsEndWithTheHead checks the rows of a plan end in the column its head does, the
+// progress of a change under the time it was planned at, at every size.
+func TestPlanRowsEndWithTheHead(t *testing.T) {
+	tests := []struct {
+		name string
+		w, h int
+	}{
+		{name: "small", w: 80, h: 24},
+		{name: "medium", w: 120, h: 40},
+		{name: "large", w: 200, h: 60},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := pdPlanned(t, pdPlan(3).Changes...)
+			m, _ = update(t, m, tea.WindowSizeMsg{Width: tt.w, Height: tt.h})
+			m = applying(t, m)
+			ends := map[string]int{}
+			for line := range strings.SplitSeq(screen(m), "\n") {
+				end := ansi.StringWidth(strings.TrimRight(line, " │"))
+				switch {
+				case strings.Contains(line, "planned at"):
+					ends["head"] = end
+				case strings.Contains(line, "function/fn-0000"):
+					ends["change"] = end
+				case strings.Contains(line, "▾ functions"):
+					ends["heading"] = end
+				}
+			}
+			if ends["head"] == 0 || ends["change"] != ends["head"] || ends["heading"] != ends["head"] {
+				t.Errorf("the head ends in column %d, a change in %d and a heading in %d:\n%s", ends["head"], ends["change"], ends["heading"], screen(m))
+			}
+		})
+	}
+}
+
+// TestPlanLongID checks a change whose id is too long for its line is cut in the middle, keeping
+// the end of its id and its type in sight, planned and applying, and the change line takes the
+// width of the progress column until the apply needs it.
+func TestPlanLongID(t *testing.T) {
+	long := engine.Change{ID: "resource/" + strings.Repeat("very-long-name-", 10) + "end", Action: engine.Delete, Type: "AWS::DynamoDB::Table"}
+	tests := []struct {
+		name     string
+		applying bool
+	}{
+		{name: "planned"},
+		{name: "applying", applying: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := pdPlanned(t, long)
+			m, _ = update(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+			if tt.applying {
+				m = applying(t, m)
+			}
+			line := ""
+			for l := range strings.SplitSeq(screen(m), "\n") {
+				if strings.Contains(l, "dynamodb table") {
+					line = l
+				}
+			}
+			for _, want := range []string{"   -   resour", "…", "-end  dynamodb table"} {
+				if !strings.Contains(line, want) {
+					t.Errorf("the line does not say %q: %q", want, line)
+				}
+			}
+			if waiting := strings.Contains(line, "waiting"); waiting != tt.applying {
+				t.Errorf("the line says waiting %v, want %v: %q", waiting, tt.applying, line)
+			}
+		})
+	}
+}
+
 // TestPlanGroupProgress checks a group's heading counts its changes done while applying, ✓ once
-// all are, and how many failed.
+// all are, and how many failed, each ending in the count done so the counts line up.
 func TestPlanGroupProgress(t *testing.T) {
 	changes := []engine.Change{
 		{ID: "resource/a", Action: engine.Create}, {ID: "resource/b", Action: engine.Create}, {ID: "function/api", Action: engine.Update},
@@ -307,11 +420,11 @@ func TestPlanGroupProgress(t *testing.T) {
 		ended  bool
 		want   []string
 	}{
-		{name: "none done", want: []string{"resources  2  +2", "0/2 done", "0/1 done"}},
+		{name: "none done", want: []string{"resources  2  +2 ~0", "0/2 done", "0/1 done"}},
 		{name: "part way", events: []engine.Event{{ID: "resource/a", Action: engine.Create, Done: true}}, want: []string{"1/2 done"}},
-		{name: "all done", events: []engine.Event{{ID: "resource/a", Action: engine.Create, Done: true}, {ID: "resource/b", Action: engine.Create, Done: true}}, want: []string{"✓ 2/2"}},
-		{name: "failed", events: []engine.Event{{ID: "resource/a", Action: engine.Create, Done: true, Err: errAWS}}, want: []string{"✗ 1 failed · 0/2"}},
-		{name: "unchanged after all", ended: true, events: []engine.Event{{ID: "resource/a", Action: engine.Create, Done: true}}, want: []string{"✓ 2/2"}},
+		{name: "all done", events: []engine.Event{{ID: "resource/a", Action: engine.Create, Done: true}, {ID: "resource/b", Action: engine.Create, Done: true}}, want: []string{"✓ 2/2 done"}},
+		{name: "failed", events: []engine.Event{{ID: "resource/a", Action: engine.Create, Done: true, Err: errAWS}}, want: []string{"✗ 1 failed · 0/2 done"}},
+		{name: "unchanged after all", ended: true, events: []engine.Event{{ID: "resource/a", Action: engine.Create, Done: true}}, want: []string{"✓ 2/2 done"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
