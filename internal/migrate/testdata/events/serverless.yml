@@ -1,0 +1,112 @@
+service: Notifier
+
+provider:
+  name: aws
+  runtime: nodejs22.x
+  region: us-east-1
+  websocketsApiRouteSelectionExpression: $request.body.type
+  httpApi:
+    cors: true
+    authorizers:
+      users:
+        identitySource: $request.header.Authorization
+        issuerUrl: https://auth.example.com
+        audience:
+          - notifier
+
+functions:
+  realtime:
+    handler: src/realtime.handler
+    events:
+      - websocket: $default
+      - websocket:
+          route: $disconnect
+      - websocket:
+          route: chat
+  onOrder:
+    handler: src/orders.handler
+    events:
+      - eventBridge:
+          eventBus: orders
+          pattern:
+            source:
+              - orders.service
+            detail-type:
+              - OrderPlaced
+          input:
+            kind: order
+      - eventBridge:
+          schedule: rate(1 hour)
+  legacy:
+    handler: src/legacy.handler
+    events:
+      - alb:
+          listenerArn: arn:aws:elasticloadbalancing:us-east-1:123456789012:listener/app/legacy/50dc6c495c0c9188/f2f7dc8efc522ab2
+          priority: 10
+          multiValueHeaders: true
+          conditions:
+            path: /legacy/*
+            method:
+              - GET
+              - POST
+            header:
+              name: x-version
+              values: ["2"]
+  api:
+    handler: src/api.handler
+    url:
+      authorizer: aws_iam
+      cors:
+        allowedOrigins:
+          - https://example.com
+        maxAge: 300
+    events:
+      - httpApi:
+          method: GET
+          path: /me
+          authorizer:
+            name: users
+            scopes:
+              - profile
+      - httpApi: "*"
+      - http:
+          method: get
+          path: legacy/{id}
+  cron:
+    handler: src/cron.handler
+    events:
+      - schedule: rate(5 minutes)
+      - schedule:
+          rate:
+            - cron(0 9 ? * MON-FRI *)
+          enabled: false
+          input:
+            kind: report
+  listener:
+    handler: src/listener.handler
+    events:
+      - sns: alerts
+      - sns:
+          arn: arn:aws:sns:us-east-1:123456789012:billing
+          filterPolicy:
+            kind:
+              - invoice
+      - s3:
+          bucket: notifier-uploads
+          event: s3:ObjectCreated:*
+          rules:
+            - prefix: incoming/
+            - suffix: .png
+      - s3:
+          bucket: existing-archive
+          existing: true
+      - stream:
+          type: dynamodb
+          arn: arn:aws:dynamodb:us-east-1:123456789012:table/events/stream/2026-01-01T00:00:00.000
+          startingPosition: TRIM_HORIZON
+          batchWindow: 5
+      - websocket: $connect
+      - eventBridge:
+          pattern:
+            source:
+              - aws.ec2

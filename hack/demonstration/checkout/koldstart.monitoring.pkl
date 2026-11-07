@@ -1,0 +1,17 @@
+// A deploy that adds error monitoring to the storefront and payments with sentry's lambda layer,
+// pinned to a version the team had not published to the account yet: lambda refuses it, and the
+// deploy stops part of the way. The next deploy, of koldstart.pkl, takes the layer out again.
+amends "koldstart.pkl"
+
+import "@koldstart/kdst.pkl"
+
+functions {
+  ["storefront"] {
+    layers { "arn:aws:lambda:eu-west-1:000000000000:layer:sentry-node:12" }
+    environment { ["SENTRY_DSN"] = kdst.param("sentry-dsn") }
+  }
+  ["payments"] {
+    layers { "arn:aws:lambda:eu-west-1:000000000000:layer:sentry-node:12" }
+    environment { ["SENTRY_DSN"] = kdst.param("sentry-dsn") }
+  }
+}

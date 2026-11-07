@@ -1,0 +1,9 @@
+works differently, to check:
+  provider.stage: deploy with --stage prod, or set KOLDSTART_STAGE=prod: koldstart deploys to dev by default
+  provider.runtime: runs on nodejs22.x now, as koldstart does not build nodejs20.x: test it there
+  provider.iam.role.statements: every function got these statements: keep in each what it needs, or use link
+
+not needed in koldstart:
+  custom: each ${self:custom...} got its value where it was used: tableName
+  plugins.serverless-esbuild: koldstart bundles typescript with esbuild itself
+  plugins.serverless-offline: kdst offline serves the http and rest routes on this machine

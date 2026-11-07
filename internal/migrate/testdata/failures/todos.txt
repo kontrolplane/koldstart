@@ -1,0 +1,15 @@
+left out, to write by hand:
+  provider.logs.restApi: koldstart has no access logs of the rest api yet
+  provider.logs.websocket: koldstart has no access logs of the websocket api yet
+  functions.settle.snapStart: lambda takes snapStart for python alone of the runtimes koldstart builds
+  functions.settle.events[1].consumer: koldstart has no consumer yet
+
+works differently, to check:
+  provider.tracing.apiGateway: koldstart's apis have no x-ray tracing: the functions trace with tracing
+  functions.api.events[0].authorizer: callers sign their requests and need execute-api:Invoke on the api koldstart makes, a new one: update their policies to its id, which httpApiUrl has
+  functions.charge.provisionedConcurrency: it is on the function's live alias, which its events invoke: call the function as <name>:live to use it
+  functions.audit.events[2].deadLetterQueueArn: the queue's policy must let events.amazonaws.com send to it
+
+not needed in koldstart:
+  provider.versionFunctions: koldstart publishes versions only of functions with provisionedConcurrency or snapStart
+  provider.logs.frameworkLambda: koldstart deploys no functions of its own

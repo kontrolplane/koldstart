@@ -1,0 +1,166 @@
+// Converted from serverless.yml by kdst migrate.
+// A TODO comment marks each thing it could not convert, or converted differently.
+
+amends "@koldstart/Project.pkl"
+
+import "@koldstart/kdst.pkl"
+
+app = "ledger"
+region = "eu-west-1"
+
+http {
+  authorizers {
+    ["auth"] = new kdst.LambdaAuthorizer {
+      functionName = "auth"
+      identity {
+        "$request.header.Authorization"
+      }
+    }
+  }
+}
+
+rest {
+  authorizers {
+    ["auth"] = new kdst.TokenAuthorizer {
+      functionName = "auth"
+      ttl = 300.s
+    }
+    ["requestAuth"] = new kdst.RequestAuthorizer {
+      functionName = "requestAuth"
+      identity {
+        "method.request.header.X-Token"
+        "method.request.querystring.token"
+      }
+      ttl = 60.s
+    }
+    ["requestAuth-2"] = new kdst.RequestAuthorizer {
+      functionName = "requestAuth"
+    }
+    ["auth-2"] = new kdst.TokenAuthorizer {
+      functionName = "auth"
+      validation = "^Bearer [-0-9a-zA-Z._]+$"
+      ttl = 300.s
+    }
+    ["cognito"] = new kdst.CognitoAuthorizer {
+      userPools { "arn:aws:cognito-idp:eu-west-1:123456789012:userpool/eu-west-1_Ab12Cd34" }
+    }
+    ["users"] = new kdst.CognitoAuthorizer {
+      userPools { kdst.ref("UserPool", "Arn") }
+    }
+    // TODO: the rest api takes the token of a token or cognito authorizer from a header: set header to the one callers send it in
+    ["auth-3"] = new kdst.TokenAuthorizer {
+      functionName = "auth"
+      header = "<header>"
+      ttl = 300.s
+    }
+  }
+}
+
+functions {
+  ["auth"] {
+    runtime = "nodejs22.x"
+    handler = "src/auth.handler"
+  }
+  ["requestAuth"] {
+    runtime = "nodejs22.x"
+    handler = "src/request-auth.handler"
+  }
+  ["api"] {
+    runtime = "nodejs22.x"
+    handler = "src/api.handler"
+    events {
+      (kdst.rest("GET", "/accounts")) {
+        authorizer = "auth"
+        timeout = 10.s
+      }
+      (kdst.rest("POST", "/accounts")) {
+        authorizer = "auth"
+        timeout = 10.s
+      }
+      (kdst.rest("GET", "/accounts/{id}")) {
+        authorizer = "requestAuth"
+        timeout = 10.s
+      }
+      (kdst.rest("DELETE", "/accounts/{id}")) {
+        authorizer = "requestAuth-2"
+        timeout = 10.s
+      }
+      (kdst.rest("PUT", "/accounts/{id}")) {
+        authorizer = "auth-2"
+        timeout = 10.s
+      }
+      // TODO: callers sign their requests and need execute-api:Invoke on the api koldstart makes, a new one: update their policies to its id, which restApiUrl has
+      (kdst.rest("GET", "/internal")) {
+        iam = true
+        timeout = 10.s
+      }
+      // TODO: callers sign their requests and need execute-api:Invoke on the api koldstart makes, a new one: update their policies to its id, which restApiUrl has
+      (kdst.rest("POST", "/internal")) {
+        iam = true
+        timeout = 10.s
+      }
+      (kdst.rest("GET", "/me")) {
+        authorizer = "cognito"
+        scopes {
+          "ledger/read"
+        }
+        timeout = 10.s
+      }
+      (kdst.rest("PATCH", "/me")) {
+        authorizer = "users"
+        timeout = 10.s
+      }
+      // TODO: the route is open now, as it names an authorizer of another rest api by its id, which koldstart's cannot use: give it an authorizer of rest.authorizers, or iam = true
+      // was: {type: COGNITO_USER_POOLS, authorizerId: !Ref ApiGatewayAuthorizer}
+      (kdst.rest("GET", "/shared")) {
+        timeout = 10.s
+      }
+      // TODO: the route is open now, as a lambda authorizer is a function of the project, and arn:aws:lambda:eu-west-1:123456789012:function:shared-auth is not one: give it an authorizer of rest.authorizers, or iam = true
+      // was: arn:aws:lambda:eu-west-1:123456789012:function:shared-auth
+      (kdst.rest("GET", "/external")) {
+        timeout = 10.s
+      }
+      // TODO: koldstart makes an api key of its own for the private routes: hand callers its value, aws apigateway get-api-key --include-value --api-key with the id the output restApiKeyId has
+      (kdst.rest("GET", "/partners")) {
+        private = true
+        timeout = 10.s
+      }
+      // TODO: callers sign their requests and need execute-api:Invoke on the api koldstart makes, a new one: update their policies to its id, which restApiUrl has
+      (kdst.rest("POST", "/partners")) {
+        iam = true
+        private = true
+        timeout = 10.s
+      }
+      // TODO: koldstart's rest api checks no bodies: check them in the function
+      // was: {application/json: {type: object}}
+      // TODO: koldstart's rest api answers no preflight requests: add kdst.rest("OPTIONS", "/orders") to a function that answers them, and set the cors headers in the function's responses
+      // was: true
+      // TODO: the route waits for the function, as koldstart's rest api has no async invocation: hand slow work to a queue
+      (kdst.rest("POST", "/orders")) {
+        timeout = 10.s
+      }
+      // TODO: the route reaches its function by the lambda proxy integration, the function gets the request and returns the response as it does: the request templates and the response are gone
+      (kdst.rest("POST", "/legacy")) {
+        timeout = 10.s
+      }
+      // TODO: koldstart's rest api reaches its function by the lambda proxy integration alone: it has no mock integration
+      // was: {method: get, path: mock, integration: mock}
+      (kdst.rest("GET", "/reports/{proxy+}")) {
+        private = true
+        requiredQuery { "from" }
+        requiredHeaders { "X-Tenant" }
+        timeout = 5500.ms
+      }
+      (kdst.rest("GET", "/tokens")) {
+        authorizer = "auth-3"
+        timeout = 10.s
+      }
+    }
+  }
+}
+
+resources {
+  ["UserPool"] {
+    type = "AWS::Cognito::UserPool"
+  }
+}

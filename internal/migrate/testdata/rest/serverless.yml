@@ -1,0 +1,156 @@
+service: ledger
+
+provider:
+  name: aws
+  runtime: nodejs22.x
+  region: eu-west-1
+  httpApi:
+    authorizers:
+      auth:
+        type: request
+        functionName: auth
+        identitySource: $request.header.Authorization
+  apiGateway:
+    timeoutInMillis: 10000
+    apiKeys:
+      - partners
+    usagePlan:
+      quota:
+        limit: 1000
+        period: DAY
+    binaryMediaTypes:
+      - image/png
+
+custom:
+  pool: arn:aws:cognito-idp:eu-west-1:123456789012:userpool/eu-west-1_Ab12Cd34
+
+functions:
+  auth:
+    handler: src/auth.handler
+  requestAuth:
+    handler: src/request-auth.handler
+  api:
+    handler: src/api.handler
+    events:
+      - http:
+          method: get
+          path: accounts
+          authorizer: auth
+      - http:
+          method: post
+          path: accounts
+          authorizer:
+            name: auth
+      - http:
+          method: get
+          path: accounts/{id}
+          authorizer:
+            name: requestAuth
+            type: request
+            identitySource: method.request.header.X-Token, method.request.querystring.token
+            resultTtlInSeconds: 60
+      - http:
+          method: delete
+          path: accounts/{id}
+          authorizer:
+            arn: !GetAtt RequestAuthLambdaFunction.Arn
+            type: request
+            resultTtlInSeconds: 0
+      - http:
+          method: put
+          path: accounts/{id}
+          authorizer:
+            name: auth
+            identityValidationExpression: ^Bearer [-0-9a-zA-Z._]+$
+      - http:
+          method: get
+          path: internal
+          authorizer: aws_iam
+      - http:
+          method: post
+          path: internal
+          authorizer:
+            type: AWS_IAM
+      - http:
+          method: get
+          path: me
+          authorizer:
+            arn: ${self:custom.pool}
+            scopes:
+              - ledger/read
+            claims:
+              - email
+      - http:
+          method: patch
+          path: me
+          authorizer:
+            name: users
+            type: COGNITO_USER_POOLS
+            arn: !GetAtt UserPool.Arn
+      - http:
+          method: get
+          path: shared
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId: !Ref ApiGatewayAuthorizer
+      - http:
+          method: get
+          path: external
+          authorizer: arn:aws:lambda:eu-west-1:123456789012:function:shared-auth
+      - http:
+          method: get
+          path: partners
+          private: true
+      - http:
+          method: post
+          path: partners
+          private: true
+          authorizer: aws_iam
+      - http:
+          method: post
+          path: orders
+          cors: true
+          async: true
+          request:
+            parameters:
+              querystrings:
+                dryRun: false
+            schemas:
+              application/json:
+                type: object
+      - http:
+          method: post
+          path: legacy
+          integration: lambda
+          request:
+            template:
+              application/json: '{ "body": $input.json("$") }'
+      - http:
+          method: get
+          path: mock
+          integration: mock
+      - http:
+          method: get
+          path: reports/{proxy+}
+          timeoutInMillis: 5500
+          private: true
+          request:
+            parameters:
+              querystrings:
+                from: true
+              headers:
+                X-Tenant:
+                  required: true
+              paths:
+                proxy: true
+      - http:
+          method: get
+          path: tokens
+          authorizer:
+            name: auth
+            identitySource: method.request.querystring.token
+
+resources:
+  Resources:
+    UserPool:
+      Type: AWS::Cognito::UserPool

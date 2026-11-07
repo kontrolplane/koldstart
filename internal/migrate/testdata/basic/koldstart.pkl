@@ -1,0 +1,112 @@
+// Converted from serverless.yml by kdst migrate.
+// A TODO comment marks each thing it could not convert, or converted differently.
+// serverless.yml deployed to prod by default; koldstart deploys to dev: pass --stage prod.
+
+amends "@koldstart/Project.pkl"
+
+import "@koldstart/kdst.pkl"
+
+app = "orders"
+region = "eu-west-1"
+
+tags {
+  ["team"] = "payments"
+}
+
+functions {
+  ["api"] {
+    runtime = "nodejs22.x"
+    handler = "src/api.handler"
+    memory = 512
+    timeout = 10.s
+    architecture = "arm64"
+    environment {
+      ["TABLE_NAME"] = "orders-\(kdst.stage)"
+      ["API_KEY"] = kdst.ssm("/orders/api-key")
+      ["STAGE"] = kdst.stage
+      ["SIGNING_KEY"] = kdst.param("signing-key")
+      ["DB_PASSWORD"] = kdst.secret("db")
+      ["SENTRY_DSN"] = kdst.ssm("/shared/\(kdst.stage)/sentry-dsn")
+    }
+    permissions {
+      // TODO: serverless.yml gave these statements to every function: keep what this one needs, or use link.
+      new {
+        actions {
+          "dynamodb:GetItem"
+          "dynamodb:PutItem"
+        }
+        resources {
+          kdst.ref("OrdersTable", "Arn")
+        }
+      }
+    }
+    events {
+      kdst.get("/orders/{id}")
+      kdst.post("/orders")
+    }
+  }
+  ["worker"] {
+    runtime = "nodejs22.x"
+    handler = "src/worker.handler"
+    memory = 1024
+    timeout = 30.s
+    architecture = "arm64"
+    environment {
+      ["TABLE_NAME"] = "orders-\(kdst.stage)"
+      ["API_KEY"] = kdst.ssm("/orders/api-key")
+      ["STAGE"] = kdst.stage
+      ["QUEUE_URL"] = kdst.ref("JobsQueue", "Identifier")
+    }
+    permissions {
+      // TODO: serverless.yml gave these statements to every function: keep what this one needs, or use link.
+      new {
+        actions {
+          "dynamodb:GetItem"
+          "dynamodb:PutItem"
+        }
+        resources {
+          kdst.ref("OrdersTable", "Arn")
+        }
+      }
+    }
+    events {
+      (kdst.fromQueue("JobsQueue")) {
+        batchSize = 10
+        reportBatchItemFailures = true
+      }
+    }
+  }
+}
+
+resources {
+  ["OrdersTable"] {
+    type = "AWS::DynamoDB::Table"
+    deletionPolicy = "retain"
+    properties {
+      TableName = "orders-\(kdst.stage)"
+      BillingMode = "PAY_PER_REQUEST"
+      AttributeDefinitions {
+        new {
+          AttributeName = "id"
+          AttributeType = "S"
+        }
+      }
+      KeySchema {
+        new {
+          AttributeName = "id"
+          KeyType = "HASH"
+        }
+      }
+    }
+  }
+  ["JobsQueue"] {
+    type = "AWS::SQS::Queue"
+    properties {
+      VisibilityTimeout = 180
+    }
+  }
+}
+
+outputs {
+  ["TableName"] = kdst.ref("OrdersTable", "Identifier")
+}

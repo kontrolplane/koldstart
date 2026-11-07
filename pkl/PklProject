@@ -1,0 +1,22 @@
+// The schema package koldstart.pkl files amend. `make schema` builds it into .pkl-out/, and a
+// release attaches it to the tag's github release: the metadata at the package uri and the zip at
+// packageZipUrl. A project depends on version 0.1.0 with
+//
+//   ["koldstart"] { uri = "package://github.com/kontrolplane/koldstart/releases/download/v0.1.0/koldstart@0.1.0" }
+//
+// A dev build of koldstart extracts this directory into its cache, and a project depends on it
+// there with `["koldstart"] = import("<that directory>/PklProject")`.
+amends "pkl:Project"
+
+package {
+  name = "koldstart"
+  version = read?("env:KOLDSTART_VERSION") ?? "0.0.0"
+  baseUri = "package://github.com/kontrolplane/koldstart/releases/download/v\(version)/koldstart"
+  packageZipUrl = "https://github.com/kontrolplane/koldstart/releases/download/v\(version)/koldstart@\(version).zip"
+  license = "Apache-2.0"
+  sourceCode = "https://github.com/kontrolplane/koldstart"
+  description = "The schema of koldstart.pkl, the configuration of koldstart."
+  exclude {
+    "*.go"
+  }
+}

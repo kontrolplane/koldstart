@@ -1,0 +1,378 @@
+/// A koldstart project: the functions of an app, what invokes them, and the resources they use.
+///
+/// A `koldstart.pkl` amends this module, and imports `kdst.pkl` for `ref()`, the secrets, the
+/// stage and the events, from the koldstart dependency of the `PklProject` beside it:
+///
+/// ```
+/// amends "@koldstart/Project.pkl"
+/// import "@koldstart/kdst.pkl"
+/// ```
+///
+/// The `PklProject` names the package of a release once, and `kdst upgrade` moves it to another:
+///
+/// ```
+/// amends "pkl:Project"
+///
+/// dependencies {
+///   ["koldstart"] { uri = "package://github.com/kontrolplane/koldstart/releases/download/v0.1.0/koldstart@0.1.0" }
+/// }
+/// ```
+module koldstart.Project
+
+/// The version of this schema. koldstart refuses a file with a newer one than it reads. It goes
+/// up with `config.SchemaVersion` when what this module renders changes in a way an older
+/// koldstart cannot read: a new field it must act on, or a changed shape. Something an older one
+/// may safely ignore does not count.
+fixed schemaVersion: Int = 1
+
+/// The name of the application, in the name of everything deployed and in its state.
+app: String(matches(Regex(#"[a-z][a-z0-9-]{0,23}"#)))
+
+/// The aws region to deploy into. `--region` takes precedence.
+region: String?
+
+/// The stage from `--stage`, `dev` without it. Read only; inside functions and resources, read
+/// it as `kdst.stage`.
+fixed stage: String = read?("prop:stage") ?? "dev"
+
+/// The functions, by name.
+functions: Mapping<Name, Function>
+
+/// Any other aws resources, by name, created through the cloud control api.
+resources: Mapping<Name, Resource>
+
+/// Values printed by `kdst outputs` and shown in `kdst ui`.
+outputs: Mapping<String, Value>
+
+/// Tags added to everything koldstart creates, next to its own.
+tags: Mapping<String, String>
+
+/// The stage's http api, which all `kdst.HttpRoute`s share.
+http: Http
+
+/// The stage's rest api, api gateway's first kind of api, which all `kdst.RestRoute`s share.
+rest: Rest
+
+/// The stage's websocket api, for the functions with a `kdst.WebSocketRoute`.
+websocket: WebSocket
+
+/// The name of a function or resource. Functions and resources share one namespace.
+typealias Name = String(matches(Regex(#"[A-Za-z][A-Za-z0-9-]{0,39}"#)))
+
+/// A string, or a value known only while deploying.
+typealias Value = String|Ref|Secret|StageOutput|Join|Pseudo
+
+class Ref {
+  fixed `$koldstart`: "ref" = "ref"
+  resource: String
+  attribute: String
+}
+
+class Secret {
+  fixed `$koldstart`: "secret" = "secret"
+  source: "ssm"|"secretsmanager"
+  name: String(!isEmpty)
+  /// `"stage"` when [name] is under the app and stage, as `kdst.param()` and `kdst.secret()` give
+  /// it: koldstart reads `/<app>/<stage>/<name>` from ssm, or `<app>/<stage>/<name>` from secrets
+  /// manager. `"absolute"` reads [name] as it is.
+  scope: "absolute"|"stage" = "absolute"
+  key: String = ""
+  /// When true, the environment variable holds the arn, the function may read it, and the
+  /// function reads the value itself, so it is not in the function's configuration.
+  atRuntime: Boolean = false
+
+  /// This secret, one key of its json value.
+  function field(jsonKey: String): Secret = (this) { key = jsonKey }
+
+  /// This secret, read by the function when it starts rather than while deploying.
+  function readAtRuntime(): Secret = (this) { atRuntime = true }
+}
+
+/// Strings and refs joined into one string once the refs are known, such as an arn with a path
+/// after it.
+class Join {
+  fixed `$koldstart`: "join" = "join"
+  parts: List<String|Ref|Pseudo>(!isEmpty)
+}
+
+/// A value of the account and region the stage deploys to.
+class Pseudo {
+  fixed `$koldstart`: "pseudo" = "pseudo"
+  name: "accountId"|"partition"|"urlSuffix"
+}
+
+class StageOutput {
+  fixed `$koldstart`: "output" = "output"
+  app: String
+  stage: String
+  output: String
+  /// The region the stage is deployed in, when it is not this stage's.
+  region: String?
+  /// The account the stage is deployed in, when it is not this stage's. Its state bucket is read
+  /// with this stage's credentials, which its bucket policy must let in, or with `role`.
+  account: String(matches(Regex(#"\d{12}"#)))?
+  /// A role koldstart assumes to read the stage's state, such as
+  /// `arn:aws:iam::123456789012:role/koldstart-outputs`. The stage is in the role's account,
+  /// unless `account` says another.
+  role: String(startsWith("arn:"))?
+}
+
+class Function {
+  /// `nodejs22.x` or `nodejs24.x` for javascript and typescript, `provided.al2023` for go, rust
+  /// and a `bootstrap` built elsewhere, `python3.12` or `python3.13` for python. A function with
+  /// an `image` has none.
+  ///
+  /// Null infers it from the function's name, for `["api"]`: `nodejs22.x` for `src/api.ts` or
+  /// another javascript or typescript file, `python3.13` for `src/api.py`, `provided.al2023` for
+  /// go files or a `Cargo.toml` in `cmd/api/`; or from what `handler` or `bootstrap` names.
+  runtime: ("nodejs22.x"|"nodejs24.x"|"provided.al2023"|"python3.12"|"python3.13")?
+
+  /// For node and python, the file and its function, `src/api.handler`. For go, the package to
+  /// build, `./cmd/worker`; for rust, the directory of the crate's `Cargo.toml`, built with
+  /// cargo lambda. For a `bootstrap`, what it is told as `_HANDLER`. A function with an `image`
+  /// has none.
+  ///
+  /// Null infers it from the function's name and runtime: `src/<name>.handler` for node and
+  /// python, `./cmd/<name>` for go and rust; none for a `bootstrap`.
+  handler: String(!isEmpty)?
+
+  /// An executable built elsewhere, relative to the project, such as `dist/resize`: a binary for
+  /// linux and the function's `architecture`, or a script that starts with `#!`. It goes in the
+  /// zip as `bootstrap`, which the `provided.al2023` runtime runs, for any language that compiles
+  /// to one.
+  bootstrap: String(!isEmpty)?
+
+  /// A container image to build and run instead of a runtime: its dockerfile and the directory
+  /// it is built in.
+  image: Image?
+
+  /// Lambda layers, by their version's arn, for the runtimes that take them.
+  layers: Listing<Value>(length <= 5)
+
+  /// Memory in megabytes.
+  memory: Int(isBetween(128, 10240)) = 1024
+
+  /// At most 15 minutes.
+  timeout: Duration(isBetween(1.s, 15.min)) = 6.s
+
+  architecture: "arm64"|"x86_64" = "arm64"
+
+  /// The size of /tmp in megabytes.
+  ephemeralStorage: Int(isBetween(512, 10240)) = 512
+
+  reservedConcurrency: Int(isPositive)?
+
+  /// Instances kept started, on the function's `live` alias. A function with it, or with
+  /// `snapStart`, gets a version on every change and the alias pointed at it, and its events
+  /// invoke the alias.
+  provisionedConcurrency: Int(isPositive)?
+
+  /// For python: start from a snapshot of the function taken when a version is published, rather
+  /// than from nothing. Takes no `provisionedConcurrency`, `fileSystem`, or more than 512
+  /// megabytes of `ephemeralStorage`.
+  snapStart: Boolean = false
+
+  /// How many days the log group keeps logs.
+  logRetention: LogRetention = 30
+
+  environment: Mapping<String(matches(Regex(#"[A-Za-z_][A-Za-z0-9_]*"#))), Value>
+
+  /// What invokes the function, the event classes of `kdst.pkl`.
+  events: Listing<Event>
+
+  /// The function's own url. `auth` has no default: `"none"` makes it public.
+  url: FunctionUrl?
+
+  /// Statements added to the function's role.
+  permissions: Listing<Statement>
+
+  /// Resources of the project the function may use, by name: their names and arns become
+  /// environment variables, and a policy for the access is added to the role.
+  link: Mapping<String, "read"|"write"|"readwrite">
+
+  vpc: Vpc?
+
+  /// For node: packages to leave out of the bundle and copy from node_modules.
+  bundle: Bundle
+
+  /// For typescript: run `tsc --noEmit` before bundling.
+  typecheck: Boolean = false
+
+  /// Send traces to x-ray. The role may write them.
+  tracing: Boolean = false
+
+  /// A kms key of your own that encrypts the environment variables, by its arn, in place of
+  /// lambda's. The role may decrypt with it.
+  kmsKey: Value?
+
+  /// Tags of this function alone, next to `tags`.
+  tags: Mapping<String, String>
+
+  /// Where lambda sends an event it was handed without waiting, as from s3, sns or eventbridge,
+  /// once the function has failed on it every time: an sqs queue or sns topic, by its arn. The
+  /// role may send to it.
+  deadLetter: Value?
+
+  /// What lambda does with the events it is handed without waiting: how often it retries, how
+  /// long an event may wait, and where results go.
+  async: Async?
+
+  /// An efs access point to mount. The function needs a `vpc` that reaches the file system.
+  fileSystem: FileSystem?
+
+  /// `"json"` writes each line of the logs as json, with its level, and takes the levels below.
+  logFormat: "text"|"json" = "text"
+
+  /// For `"json"` logs: the lowest level of the function's own lines that is kept.
+  applicationLogLevel: ("TRACE"|"DEBUG"|"INFO"|"WARN"|"ERROR"|"FATAL")?
+
+  /// For `"json"` logs: the lowest level of lambda's own lines that is kept.
+  systemLogLevel: ("DEBUG"|"INFO"|"WARN")?
+}
+
+/// What lambda does with the events it is handed without waiting.
+class Async {
+  /// How often a failed event is tried again, at most 2, lambda's default.
+  maximumRetryAttempts: Int(isBetween(0, 2))?
+  /// How long an event may wait to be handed to the function, between a minute and six hours,
+  /// lambda's default.
+  maximumEventAge: Duration(isBetween(1.min, 6.h))?
+  /// Where the result of an event the function handled goes: an sqs queue, sns topic, event bus
+  /// or function, by its arn. The role may send to it.
+  onSuccess: Value?
+  /// Where an event goes once the function has failed on it every time, or it waited too long.
+  onFailure: Value?
+}
+
+/// An efs access point a function mounts.
+class FileSystem {
+  /// The access point's arn.
+  accessPoint: Value
+  /// Where it is mounted, under `/mnt/`.
+  mountPath: String(matches(Regex(#"/mnt/[A-Za-z0-9._/-]+"#)))
+}
+
+/// The days a log group can keep logs, as cloudwatch allows them.
+typealias LogRetention = Int(List(1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288, 3653).contains(this))
+
+class FunctionUrl {
+  /// `"iam"` requires signed requests, `"none"` makes the url public.
+  auth: "iam"|"none"
+  cors: Cors?
+}
+
+class Cors {
+  origins: Listing<String>
+  methods: Listing<String>
+  headers: Listing<String>
+  expose: Listing<String>
+  credentials: Boolean = false
+  maxAge: Duration = 0.s
+}
+
+class Statement {
+  effect: "Allow"|"Deny" = "Allow"
+  actions: Listing<String>(!isEmpty)
+  resources: Listing<Value>(!isEmpty)
+}
+
+class Vpc {
+  subnetIds: Listing<Value>(!isEmpty)
+  securityGroupIds: Listing<Value>(!isEmpty)
+}
+
+class Bundle {
+  externals: Listing<String>
+  /// Ship a source map, and turn on `--enable-source-maps`.
+  sourcemap: Boolean = false
+  /// For python: the files and directories to put in the zip, next to the dependencies. The
+  /// directory of the handler's module by default, or the module alone when it is at the root.
+  include: Listing<String>
+}
+
+/// A container image, built with docker for the function's architecture and pushed to an ecr
+/// repository koldstart makes for the app.
+class Image {
+  /// The dockerfile, relative to the project.
+  dockerfile: String = "Dockerfile"
+  /// The directory the image is built in, relative to the project.
+  context: String = "."
+  /// Build arguments, as `--build-arg`.
+  buildArgs: Mapping<String, String>
+  /// What the image runs, in place of its CMD, ENTRYPOINT and WORKDIR.
+  command: Listing<String>
+  entryPoint: Listing<String>
+  workingDirectory: String?
+}
+
+class Http {
+  /// A custom domain for the api, such as `api.example.com`.
+  domain: String?
+  /// The acm certificate of the domain, in the region of the api.
+  certificate: Value?
+  cors: Cors?
+  /// Authorizers routes pick with `authorizer = "name"`.
+  authorizers: Mapping<String, Authorizer>
+  /// The stage-wide request limit.
+  throttling: Throttling?
+  /// A line for every request, written to a log group koldstart makes,
+  /// `/aws/http-api/<app>-<stage>`.
+  accessLogs: AccessLogs?
+}
+
+/// The access logs of the http api.
+class AccessLogs {
+  /// Each line, with `$context` variables. By default json of the request's id, ip, time,
+  /// method, route, status, protocol and length.
+  format: String = #"{"requestId":"$context.requestId","ip":"$context.identity.sourceIp","requestTime":"$context.requestTime","httpMethod":"$context.httpMethod","routeKey":"$context.routeKey","status":"$context.status","protocol":"$context.protocol","responseLength":"$context.responseLength"}"#
+  /// How many days the log group keeps them.
+  retention: LogRetention = 30
+}
+
+class Rest {
+  /// Authorizers routes pick with `authorizer = "name"`: `kdst.TokenAuthorizer`,
+  /// `kdst.RequestAuthorizer` and `kdst.CognitoAuthorizer`.
+  authorizers: Mapping<String, RestAuthorizer>
+  /// The stage-wide request limit.
+  throttling: Throttling?
+}
+
+class WebSocket {
+  /// What picks the route of a message: a field of its json body, by default `action`.
+  routeSelection: String = "$request.body.action"
+}
+
+/// Base class of `kdst.JwtAuthorizer` and `kdst.LambdaAuthorizer`.
+abstract class Authorizer
+
+/// Base class of `kdst.TokenAuthorizer`, `kdst.RequestAuthorizer` and `kdst.CognitoAuthorizer`.
+abstract class RestAuthorizer
+
+class Throttling {
+  /// Requests per second.
+  rate: Number(isPositive)
+  burst: Int(isPositive)
+}
+
+/// Another aws resource. `kdst.table()`, `kdst.queue()`, `kdst.bucket()` and `kdst.topic()` give
+/// one with its type and properties filled in, which amends as one written out does.
+open class Resource {
+  /// The CloudFormation type name, such as `AWS::DynamoDB::Table`.
+  type: String(matches(Regex(#"AWS::[A-Za-z0-9]+::[A-Za-z0-9]+"#)))
+  /// The properties CloudFormation documents for the type.
+  properties: Dynamic = new Dynamic {}
+  /// Whether `kdst remove` and a replacement delete the resource. Without it, tables, buckets,
+  /// databases and other resources that hold data are retained.
+  deletionPolicy: ("retain"|"delete")?
+}
+
+/// Base class of the events in `kdst.pkl`.
+abstract class Event
+
+output {
+  renderer = new JsonRenderer {
+    converters {
+      [Duration] = (d) -> d.toUnit("s").value.toInt()
+    }
+  }
+}

@@ -1,0 +1,21 @@
+# go
+/bin/
+/dist/
+*.test
+*.out
+go.work
+
+# koldstart
+debug.log
+.koldstart/build/
+.pkl-out/
+
+# claude worktrees
+.claude/
+
+# editors
+.idea
+.vscode
+*.swp
+*~
+.DS_Store

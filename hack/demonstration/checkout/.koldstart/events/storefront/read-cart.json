@@ -1,0 +1,15 @@
+{
+  "version": "2.0",
+  "routeKey": "GET /carts/{cartId}",
+  "rawPath": "/carts/cart-8f2a91",
+  "pathParameters": {
+    "cartId": "cart-8f2a91"
+  },
+  "requestContext": {
+    "http": {
+      "method": "GET",
+      "path": "/carts/cart-8f2a91",
+      "sourceIp": "81.204.17.42"
+    }
+  }
+}

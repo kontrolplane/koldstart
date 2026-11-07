@@ -1,0 +1,8 @@
+{
+  "version": "2.0",
+  "routeKey": "GET /orders/{id}",
+  "rawPath": "/orders/1",
+  "headers": { "x-api-key": "change-me" },
+  "pathParameters": { "id": "1" },
+  "requestContext": { "http": { "method": "GET", "path": "/orders/1" } }
+}

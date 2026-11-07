@@ -1,0 +1,15 @@
+{
+  "version": "2.0",
+  "routeKey": "GET /orders/{orderId}",
+  "rawPath": "/orders/order-99999",
+  "pathParameters": {
+    "orderId": "order-99999"
+  },
+  "requestContext": {
+    "http": {
+      "method": "GET",
+      "path": "/orders/order-99999",
+      "sourceIp": "81.204.17.42"
+    }
+  }
+}

@@ -1,0 +1,38 @@
+// The checkout service of a web shop, which make local and make vhs deploy to floci for kdst ui to
+// look at and for the recording of it in the README. hack/demonstration/seed.sh deploys it to development,
+// staging and production in the steps a team would: koldstart.first.pkl, koldstart.carts.pkl and
+// then this file, with a deploy to production in between that fails on a layer not published
+// yet, koldstart.monitoring.pkl. The parts are in checkout.pkl, and its PklProject depends on the
+// schema in this tree.
+amends "@koldstart/Project.pkl"
+
+import "@koldstart/kdst.pkl"
+import "checkout.pkl"
+
+app = checkout.app
+region = checkout.region
+tags = checkout.tags
+
+functions {
+  ["storefront"] = checkout.storefront
+  ["payments"] = checkout.payments
+  ["notify-customers"] = checkout.notifyCustomers
+  ["stripe-webhook"] = checkout.stripeWebhook
+  ["reconcile"] = checkout.reconcile
+}
+
+resources {
+  ["orders"] = checkout.orders
+  ["carts"] = checkout.carts
+  ["payment-requests"] = checkout.paymentRequests
+  ["failed-payments"] = checkout.failedPayments
+  ["order-notifications"] = checkout.orderNotifications
+  ["receipts"] = checkout.receipts
+}
+
+outputs {
+  ["ordersTable"] = kdst.ref("orders", "TableName")
+  ["receiptsBucket"] = kdst.ref("receipts", "BucketName")
+  ["runbook"] = checkout.runbook
+  ["featureFlags"] = checkout.featureFlags
+}

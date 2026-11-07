@@ -1,0 +1,131 @@
+// Converted from serverless.yml by kdst migrate.
+// A TODO comment marks each thing it could not convert, or converted differently.
+
+amends "@koldstart/Project.pkl"
+
+import "@koldstart/kdst.pkl"
+
+app = "legacy"
+region = "eu-central-1"
+
+functions {
+  ["scraper"] {
+    runtime = "python3.12"
+    handler = "handler.main"
+    tracing = true
+    environment {
+      ["REGION"] = module.region
+      ["BUCKET"] = "\(module.app)-\(kdst.stage)-files"
+      // TODO: ${file(./config.json):key}: there is no ./config.json next to serverless.yml
+      // was: ${file(./config.json):key}
+      ["SHARED"] = kdst.stageOutput("shared", "prod", "QueueUrl")
+      ["PAYMENTS"] = (kdst.stageOutput("payments", "prod", "ApiUrl")) { region = "us-east-1" }
+      ["LOG_LEVEL"] = read?("env:LOG_LEVEL") ?? "info"
+    }
+  }
+  ["reports"] {
+    runtime = "python3.12"
+    handler = "src/reports.build"
+    layers {
+      "arn:aws:lambda:eu-central-1:123456789012:layer:pandas:4"
+    }
+    tracing = true
+    environment {
+      ["REGION"] = module.region
+      ["BUCKET"] = "\(module.app)-\(kdst.stage)-files"
+      // TODO: ${file(./config.json):key}: there is no ./config.json next to serverless.yml
+      // was: ${file(./config.json):key}
+      ["SHARED"] = kdst.stageOutput("shared", "prod", "QueueUrl")
+      ["PAYMENTS"] = (kdst.stageOutput("payments", "prod", "ApiUrl")) { region = "us-east-1" }
+      ["LOG_LEVEL"] = read?("env:LOG_LEVEL") ?? "info"
+    }
+  }
+  ["thumbs"] {
+    image {
+      context = "thumbnailer"
+      dockerfile = "thumbnailer/Dockerfile.lambda"
+      buildArgs {
+        ["SIZE"] = "256"
+      }
+      command {
+        "app.handler"
+      }
+    }
+    tracing = true
+    environment {
+      ["REGION"] = module.region
+      ["BUCKET"] = "\(module.app)-\(kdst.stage)-files"
+      // TODO: ${file(./config.json):key}: there is no ./config.json next to serverless.yml
+      // was: ${file(./config.json):key}
+      ["SHARED"] = kdst.stageOutput("shared", "prod", "QueueUrl")
+      ["PAYMENTS"] = (kdst.stageOutput("payments", "prod", "ApiUrl")) { region = "us-east-1" }
+      ["LOG_LEVEL"] = read?("env:LOG_LEVEL") ?? "info"
+    }
+  }
+  // TODO: koldstart builds images itself: give the function the dockerfile to build, with image { context; dockerfile }
+  // was: {image: {image: '123456789012.dkr.ecr.eu-central-1.amazonaws.com/legacy:latest'}}
+  ["worker"] {
+    runtime = "provided.al2023"
+    // TODO: set handler to the go package to build, such as ./cmd/worker, or the directory of a rust crate; or replace it with bootstrap, the binary your build writes: koldstart builds from source, not "bootstrap"
+    handler = "./cmd/worker"
+    // TODO: build what the layers hold into the binary: a go or rust function takes no layers
+    // was: ['arn:aws:lambda:eu-central-1:123456789012:layer:tools:1']
+    tracing = true
+    environment {
+      ["REGION"] = module.region
+      ["BUCKET"] = "\(module.app)-\(kdst.stage)-files"
+      // TODO: ${file(./config.json):key}: there is no ./config.json next to serverless.yml
+      // was: ${file(./config.json):key}
+      ["SHARED"] = kdst.stageOutput("shared", "prod", "QueueUrl")
+      ["PAYMENTS"] = (kdst.stageOutput("payments", "prod", "ApiUrl")) { region = "us-east-1" }
+      ["LOG_LEVEL"] = read?("env:LOG_LEVEL") ?? "info"
+    }
+  }
+  // TODO: renamed old-api, as a name takes no _ or .: update what calls the function by name
+  ["old-api"] {
+    runtime = "nodejs22.x"
+    handler = "src/api.handler"
+    reservedConcurrency = 5
+    tracing = true
+    tags {
+      ["owner"] = "api"
+    }
+    environment {
+      ["REGION"] = module.region
+      ["BUCKET"] = "\(module.app)-\(kdst.stage)-files"
+      // TODO: ${file(./config.json):key}: there is no ./config.json next to serverless.yml
+      // was: ${file(./config.json):key}
+      ["SHARED"] = kdst.stageOutput("shared", "prod", "QueueUrl")
+      ["PAYMENTS"] = (kdst.stageOutput("payments", "prod", "ApiUrl")) { region = "us-east-1" }
+      ["LOG_LEVEL"] = read?("env:LOG_LEVEL") ?? "info"
+      ["TOPIC"] = kdst.join(List("arn:aws:sns:\(module.region):", kdst.accountId, ":alerts"))
+    }
+  }
+}
+
+resources {
+  ["Files"] {
+    type = "AWS::S3::Bucket"
+    // TODO: retained, as koldstart has no Snapshot: take a snapshot before you remove it
+    deletionPolicy = "retain"
+    properties {
+      BucketName = "\(module.app)-\(kdst.stage)-files"
+      Tags {
+        new {
+          Key = "aws:cloudformation:custom"
+          Value = "yes"
+        }
+      }
+    }
+    // TODO: koldstart orders resources by their refs: refer with kdst.ref() to what it must wait for
+    // was: Seeder
+  }
+  // TODO: cloud control creates AWS:: types only: do what the Custom::Seed did another way
+  // was: {Type: 'Custom::Seed', Properties: {ServiceToken: !GetAtt SeedLambdaFunction.Arn}}
+}
+
+outputs {
+  // TODO: koldstart has no exports: read the output in other apps with kdst.stageOutput()
+  ["FilesArn"] = kdst.ref("Files", "Arn")
+  ["Joined"] = "a-b"
+}

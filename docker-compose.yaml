@@ -1,0 +1,11 @@
+# Floci, a local AWS emulator, for make test-emulator and for trying kdst against something that
+# is not an account. Lambda runs in the real runtime images, as containers Floci starts, so it
+# needs the docker socket. Pinned by digest beside its tag; dependabot moves both.
+services:
+  floci:
+    container_name: "${FLOCI_DOCKER_NAME:-koldstart-floci}"
+    image: floci/floci:2.4.0@sha256:5ee85db604c4aa74ac76e07ea5cc83086f37bb472bf3dbb97e34019e48efae9c
+    ports:
+      - "127.0.0.1:4566:4566"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock

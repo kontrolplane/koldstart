@@ -1,0 +1,5 @@
+left out, to write by hand:
+  functions.onOrder.events[1]: an EventRule needs a pattern: write a schedule as kdst.schedule("rate(...)")
+
+works differently, to check:
+  provider.endpointType: koldstart's rest api is regional, where serverless.yml's was edge-optimised: callers far from the region reach it through no cloudfront

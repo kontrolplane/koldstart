@@ -1,0 +1,15 @@
+amends "@koldstart/Project.pkl"
+
+import "@koldstart/kdst.pkl"
+
+app = "payments"
+region = "eu-west-1"
+
+functions {
+  ["api"] {
+    memory = 256
+    events {
+      kdst.post("/charges")
+    }
+  }
+}

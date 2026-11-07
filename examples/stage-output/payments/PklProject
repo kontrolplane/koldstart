@@ -1,0 +1,5 @@
+amends "pkl:Project"
+
+dependencies {
+  ["koldstart"] { uri = "package://github.com/kontrolplane/koldstart/releases/download/v0.1.0/koldstart@0.1.0" }
+}

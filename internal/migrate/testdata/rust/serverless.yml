@@ -1,0 +1,46 @@
+service: rusty
+
+plugins:
+  - serverless-rust
+
+provider:
+  name: aws
+  runtime: rust
+  region: eu-west-1
+  architecture: arm64
+  memorySize: 128
+
+custom:
+  rust:
+    dockerless: true
+    cargoFlags: "--features json"
+
+package:
+  individually: true
+
+functions:
+  hello:
+    handler: hello
+    events:
+      - httpApi:
+          path: /hello
+          method: get
+  jobs:
+    handler: workers.jobs-runner
+    layers:
+      - arn:aws:lambda:eu-west-1:123456789012:layer:tools:1
+  resize:
+    handler: bootstrap
+    runtime: provided.al2
+    architecture: x86_64
+    package:
+      artifact: build/resize.zip
+  legacy:
+    handler: bin/legacy
+    runtime: go1.x
+  current:
+    handler: bootstrap
+    runtime: provided.al2023
+  scripted:
+    handler: handler.main
+    runtime: ruby3.3

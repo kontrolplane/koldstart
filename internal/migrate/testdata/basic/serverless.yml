@@ -1,0 +1,79 @@
+service: orders
+frameworkVersion: "4"
+
+plugins:
+  - serverless-esbuild
+  - serverless-offline
+
+custom:
+  tableName: orders-${sls:stage}
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  region: eu-west-1
+  stage: prod
+  memorySize: 512
+  timeout: 10
+  architecture: arm64
+  environment:
+    TABLE_NAME: ${self:custom.tableName}
+    API_KEY: ${ssm:/orders/api-key}
+    STAGE: ${sls:stage}
+  tags:
+    team: payments
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - dynamodb:GetItem
+            - dynamodb:PutItem
+          Resource:
+            - !GetAtt OrdersTable.Arn
+
+functions:
+  api:
+    handler: src/api.handler
+    environment:
+      SIGNING_KEY: ${ssm:/${self:service}/${sls:stage}/signing-key}
+      DB_PASSWORD: ${ssm:/aws/reference/secretsmanager/orders/${opt:stage, 'dev'}/db~true}
+      SENTRY_DSN: ${ssm:/shared/${sls:stage}/sentry-dsn}
+    events:
+      - httpApi: GET /orders/{id}
+      - httpApi:
+          method: post
+          path: /orders
+  worker:
+    handler: src/worker.handler
+    memorySize: 1024
+    timeout: 30
+    environment:
+      QUEUE_URL: !Ref JobsQueue
+    events:
+      - sqs:
+          arn: !GetAtt JobsQueue.Arn
+          batchSize: 10
+          functionResponseType: ReportBatchItemFailures
+
+resources:
+  Resources:
+    OrdersTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+      Properties:
+        TableName: ${self:custom.tableName}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+    JobsQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        VisibilityTimeout: 180
+  Outputs:
+    TableName:
+      Value: !Ref OrdersTable

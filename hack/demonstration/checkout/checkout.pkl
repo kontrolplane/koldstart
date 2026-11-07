@@ -1,0 +1,133 @@
+/// The parts of the checkout service, each defined once, for the files of its releases to pick
+/// from: koldstart.first.pkl, koldstart.carts.pkl and koldstart.pkl.
+///
+/// Floci's cloud control returns no Arn, so nothing links a resource or refers to its Arn: the
+/// functions name their queue and topic by the arns floci gives them, in floci's account.
+module checkout
+
+import "@koldstart/Project.pkl"
+import "@koldstart/kdst.pkl"
+
+app = "checkout"
+region = "eu-west-1"
+
+tags: Mapping<String, String> = new {
+  ["team"] = "payments-platform"
+  ["cost-centre"] = "commerce"
+}
+
+/// Production takes the traffic: it gets more memory, and the nightly reconciliation runs there.
+production = kdst.stage == "production"
+
+/// The arn floci gives a queue or topic of this stage, by its name.
+function arn(service: String, name: String): String =
+  "arn:aws:\(service):eu-west-1:000000000000:checkout-\(kdst.stage)-\(name)"
+
+/// The routes of the shop's api: its products, carts and orders.
+storefront: Project.Function = new {
+  memory = if (production) 1024 else 512
+  timeout = 10.s
+  environment {
+    ["ORDERS_TABLE"] = kdst.ref("orders", "TableName")
+    ["CARTS_TABLE"] = kdst.ref("carts", "TableName")
+    ["PAYMENT_REQUESTS_QUEUE"] = arn("sqs", "payment-requests")
+    ["CURRENCY"] = "EUR"
+  }
+  events {
+    kdst.get("/products")
+    kdst.get("/carts/{cartId}")
+    kdst.post("/carts/{cartId}/items")
+    kdst.post("/orders")
+    kdst.get("/orders/{orderId}")
+  }
+}
+
+/// Charges the card of each order placed, through the payment provider.
+payments: Project.Function = new {
+  memory = 512
+  timeout = 5.s
+  environment {
+    ["ORDERS_TABLE"] = kdst.ref("orders", "TableName")
+    ["FAILED_PAYMENTS_QUEUE"] = arn("sqs", "failed-payments")
+    ["PAYMENT_PROVIDER"] = "stripe"
+  }
+  events {
+    (kdst.fromQueue(arn("sqs", "payment-requests"))) { batchSize = 5 }
+  }
+}
+
+/// Emails customers when their order is confirmed, shipped or refunded.
+notifyCustomers: Project.Function = new {
+  memory = 256
+  timeout = 10.s
+  environment {
+    ["SENDER_ADDRESS"] = "orders@example.com"
+  }
+  events {
+    kdst.fromTopic(arn("sns", "order-notifications"))
+  }
+}
+
+/// Takes the payment provider's events, signed with the webhook's secret.
+stripeWebhook: Project.Function = new {
+  memory = 256
+  timeout = 10.s
+  url = new { auth = "none" }
+  environment {
+    ["ORDERS_TABLE"] = kdst.ref("orders", "TableName")
+    ["STRIPE_WEBHOOK_SECRET"] = kdst.param("stripe-webhook-secret")
+  }
+}
+
+/// Matches the day's orders against the provider's payouts, and writes the receipts, at night.
+reconcile: Project.Function = new {
+  memory = 1024
+  timeout = 5.min
+  environment {
+    ["ORDERS_TABLE"] = kdst.ref("orders", "TableName")
+    ["RECEIPTS_BUCKET"] = kdst.ref("receipts", "BucketName")
+  }
+  events {
+    (kdst.schedule("cron(0 2 * * ? *)")) {
+      timezone = "Europe/Amsterdam"
+      enabled = production
+    }
+  }
+}
+
+orders: Project.Resource = (kdst.table("orderId")) {
+  properties { TableName = "checkout-\(kdst.stage)-orders" }
+}
+
+carts: Project.Resource = (kdst.table("cartId")) {
+  properties { TableName = "checkout-\(kdst.stage)-carts" }
+}
+
+paymentRequests: Project.Resource = (kdst.queue()) {
+  properties {
+    QueueName = "checkout-\(kdst.stage)-payment-requests"
+    VisibilityTimeout = 30
+  }
+}
+
+failedPayments: Project.Resource = (kdst.queue()) {
+  properties { QueueName = "checkout-\(kdst.stage)-failed-payments" }
+}
+
+orderNotifications: Project.Resource = (kdst.topic()) {
+  properties { TopicName = "checkout-\(kdst.stage)-order-notifications" }
+}
+
+receipts: Project.Resource = (kdst.bucket()) {
+  properties { BucketName = "checkout-\(kdst.stage)-receipts" }
+}
+
+runbook = "https://github.com/kontrolplane/koldstart/tree/main/hack/demonstration/checkout"
+
+/// The feature flags the storefront reads, as json on one line.
+featureFlags: String = new JsonRenderer { indent = "" }.renderValue(new Dynamic {
+  expressCheckout = production
+  giftCards = false
+  currencies { "EUR"; "GBP"; "USD" }
+  limits { itemsPerCart = 50; ordersPerMinute = 120 }
+})

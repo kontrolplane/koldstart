@@ -1,0 +1,466 @@
+/// What a `koldstart.pkl` uses inside its functions and resources: `ref()`, the secrets, the
+/// stage, the events and their helpers, the resource shorthands and the authorizers. Import it
+/// next to amending `Project.pkl`.
+module koldstart.kdst
+
+import "Project.pkl"
+
+/// The stage from `--stage`, `dev` without it.
+stage: String = read?("prop:stage") ?? "dev"
+
+/// Strings, refs and the account's values joined into one string once the refs are known:
+/// `kdst.join(List("arn:", kdst.partition, ":s3:::", kdst.ref("uploads", "BucketName"), "/*"))`.
+function join(values: List<String|Project.Ref|Project.Pseudo>): Project.Join = new { parts = values }
+
+/// The id of the account the stage deploys to.
+accountId: Project.Pseudo = new { name = "accountId" }
+
+/// The partition of the region the stage deploys to: `aws`, `aws-cn` or `aws-us-gov`.
+partition: Project.Pseudo = new { name = "partition" }
+
+/// The domain of aws's endpoints in the region: `amazonaws.com`, or `amazonaws.com.cn` in china.
+urlSuffix: Project.Pseudo = new { name = "urlSuffix" }
+
+/// An attribute of a function or resource of this project, such as its arn, once it exists.
+/// The attributes are the ones CloudFormation's `Fn::GetAtt` returns for the type.
+function ref(resourceName: String, attributeName: String): Project.Ref =
+  new { resource = resourceName; attribute = attributeName }
+
+/// A parameter of ssm parameter store under the app and stage, read while deploying. For app
+/// `shop` on stage `dev`, `kdst.param("api-key")` reads `/shop/dev/api-key`, and on `prod`
+/// `/shop/prod/api-key`. The name has no leading `/`, no `..` and no empty segments.
+function param(parameterName: String): Project.Secret =
+  new { source = "ssm"; scope = "stage"; name = relative("kdst.param", "kdst.ssm", "/<app>/<stage>/", parameterName) }
+
+/// A secret of secrets manager under the app and stage, read while deploying. For app `shop` on
+/// stage `dev`, `kdst.secret("db").field("password")` reads the key `password` of the json
+/// secret `shop/dev/db`. The name has no leading `/`, no `..` and no empty segments.
+function secret(secretName: String): Project.Secret =
+  new { source = "secretsmanager"; scope = "stage"; name = relative("kdst.secret", "kdst.secretsmanager", "<app>/<stage>/", secretName) }
+
+/// A parameter of ssm parameter store by its full name or arn, read while deploying:
+/// `kdst.ssm("/shared/sentry-dsn")`. For one of this app and stage, `kdst.param()` is shorter.
+function ssm(parameterName: String): Project.Secret = new { source = "ssm"; name = parameterName }
+
+/// A secret of secrets manager by its full name or arn, read while deploying.
+/// `.field("key")` takes one key of a json secret. For one of this app and stage, `kdst.secret()`
+/// is shorter.
+function secretsmanager(secretName: String): Project.Secret = new { source = "secretsmanager"; name = secretName }
+
+/// [name] when it can go after [prefix], else an error naming [helper], and [absolute] for the
+/// full name.
+local function relative(helper: String, absolute: String, prefix: String, name: String): String =
+  if (name.startsWith("/"))
+    throw("\(helper)(\"\(name)\"): the name goes after \(prefix): drop the leading /, or use \(absolute)(\"\(name)\") for the full name")
+  else if (name.isEmpty || name.endsWith("/") || name.contains("//") || name.contains(".."))
+    throw("\(helper)(\"\(name)\"): the name goes after \(prefix) and has no empty segments or ..: remove them, or use \(absolute)() for the full name")
+  else name
+
+/// An output of another app's stage, read from its state while deploying. One in another region
+/// or account amends it:
+///
+/// ```
+/// (kdst.stageOutput("payments", "prod", "apiUrl")) { region = "us-east-1" }
+/// ```
+function stageOutput(appName: String, stageName: String, outputName: String): Project.StageOutput =
+  new { app = appName; stage = stageName; output = outputName }
+
+/// A route of the stage's http api for GET requests to [path]: `kdst.get("/orders/{id}")`. The
+/// rest of an `HttpRoute` amends it: `(kdst.get("/orders")) { authorizer = "users" }`.
+function get(path: String): HttpRoute = route("GET", path)
+
+/// A route of the stage's http api for POST requests to [path]: `kdst.post("/orders")`.
+function post(path: String): HttpRoute = route("POST", path)
+
+/// A route of the stage's http api for PUT requests to [path].
+function put(path: String): HttpRoute = route("PUT", path)
+
+/// A route of the stage's http api for PATCH requests to [path].
+function patch(path: String): HttpRoute = route("PATCH", path)
+
+/// A route of the stage's http api for DELETE requests to [path]: `kdst.del("/orders/{id}")`.
+/// `delete` is a keyword of pkl.
+function del(path: String): HttpRoute = route("DELETE", path)
+
+/// A route of the stage's http api for HEAD requests to [path].
+function head(path: String): HttpRoute = route("HEAD", path)
+
+/// A route of the stage's http api for OPTIONS requests to [path].
+function options(path: String): HttpRoute = route("OPTIONS", path)
+
+/// A route of the stage's http api for requests of any method to [path]: `kdst.any("$default")`
+/// takes every request no other route does.
+function any(path: String): HttpRoute = route("ANY", path)
+
+/// A route of [routeMethod] requests to [routePath].
+local function route(routeMethod: String, routePath: String): HttpRoute =
+  new { method = routeMethod; path = routePath }
+
+/// A route of the stage's rest api for [routeMethod] requests to [routePath]:
+/// `kdst.rest("GET", "/orders/{id}")`, or `"ANY"` for every method. The rest of a `RestRoute`
+/// amends it: `(kdst.rest("POST", "/orders")) { private = true }`.
+function rest(routeMethod: String, routePath: String): RestRoute =
+  new { method = routeMethod; path = routePath }
+
+/// An eventbridge scheduler schedule: `kdst.schedule("rate(1 hour)")`. The rest of a `Schedule`
+/// amends it: `(kdst.schedule("cron(0 9 ? * MON-FRI *)")) { timezone = "Europe/Amsterdam" }`.
+function schedule(scheduleExpression: String): Schedule = new { expression = scheduleExpression }
+
+/// An event source mapping from an sqs queue: a queue of this project by its name,
+/// `kdst.fromQueue("jobs")`, which is `kdst.ref("jobs", "Arn")`, or any queue by its arn. The rest
+/// of a `Queue` amends it: `(kdst.fromQueue("jobs")) { batchSize = 5 }`.
+function fromQueue(queueNameOrArn: Project.Value): Queue = new { queue = source(queueNameOrArn, "Arn") }
+
+/// An sns subscription: a topic of this project by its name, `kdst.fromTopic("alerts")`, which is
+/// `kdst.ref("alerts", "TopicArn")`, or any topic by its arn.
+function fromTopic(topicNameOrArn: Project.Value): Topic = new { topic = source(topicNameOrArn, "TopicArn") }
+
+/// An event source mapping from a kinesis stream: one of this project by its name,
+/// `kdst.fromStream("clicks")`, which is `kdst.ref("clicks", "Arn")`, or any stream by its arn.
+function fromStream(streamNameOrArn: Project.Value): Stream = new { stream = source(streamNameOrArn, "Arn") }
+
+/// An event source mapping from a dynamodb table's stream: a table of this project by its name,
+/// `kdst.fromTableStream("orders")`, which is `kdst.ref("orders", "StreamArn")`, or any table's
+/// stream by its arn. The table needs a `StreamSpecification`.
+function fromTableStream(tableNameOrStreamArn: Project.Value): Stream =
+  new { stream = source(tableNameOrStreamArn, "StreamArn") }
+
+/// An s3 bucket notification: a bucket of this project by its name, `kdst.fromBucket("uploads")`,
+/// which is `kdst.ref("uploads", "BucketName")`, or any bucket by its arn, `arn:aws:s3:::<name>`.
+/// The rest of a `Bucket` amends it: `(kdst.fromBucket("uploads")) { prefix = "incoming/" }`.
+function fromBucket(bucketNameOrArn: Project.Value): Bucket = new {
+  bucket =
+    if (bucketNameOrArn is String && bucketNameOrArn.startsWith("arn:"))
+      if (bucketNameOrArn.matches(Regex(#"arn:[a-z-]+:s3:::[^/]+"#)))
+        bucketNameOrArn.substring(bucketNameOrArn.indexOf(":::") + 3, bucketNameOrArn.length)
+      else throw("kdst.fromBucket(\"\(bucketNameOrArn)\"): not the arn of a bucket: give arn:aws:s3:::<name>, or the name of a bucket of this project")
+    else source(bucketNameOrArn, "BucketName")
+}
+
+/// An eventbridge rule on the default bus that sends the events matching [eventPattern], an
+/// object or json, to the function: `kdst.fromEventBridge(new Dynamic { source { "orders" } })`.
+/// Another bus amends it: `(kdst.fromEventBridge(pattern)) { bus = "orders" }`.
+function fromEventBridge(eventPattern: Dynamic|Mapping<String, Any>|String): EventRule =
+  new { pattern = eventPattern }
+
+/// A subscription to a cloudwatch log group by its name: `kdst.fromLogs("/aws/lambda/other")`.
+/// A filter amends it: `(kdst.fromLogs("/ecs/web")) { filter = "ERROR" }`.
+function fromLogs(logGroupName: Project.Value): LogSubscription = new { logGroup = logGroupName }
+
+/// A route of the stage's websocket api: `kdst.fromWebSocket("$connect")`.
+function fromWebSocket(routeKey: String): WebSocketRoute = new { route = routeKey }
+
+/// [nameOrArn] as it is when it is an arn or a value known only while deploying, else the
+/// attribute [attributeName] of the resource of this project it names.
+local function source(nameOrArn: Project.Value, attributeName: String): Project.Value =
+  if (nameOrArn is String && !nameOrArn.startsWith("arn:")) ref(nameOrArn, attributeName) else nameOrArn
+
+/// A dynamodb table of on-demand billing, with point-in-time recovery on, keyed by the attribute
+/// [partitionKeyName], a string: `kdst.table("id")`. A sort key, a key of another type and any
+/// other property amend it: `(kdst.table("customer")) { sortKey = "createdAt"; sortKeyType = "N" }`.
+function table(partitionKeyName: String): Table = new { partitionKey = partitionKeyName }
+
+/// An sqs queue that keeps a message for 14 days, the most sqs allows, rather than 4:
+/// `kdst.queue()`. sqs encrypts it with keys of its own, and hides a received message for 30
+/// seconds; a function with a longer timeout needs a longer one:
+/// `(kdst.queue()) { properties { VisibilityTimeout = 60 } }`.
+function queue(): Project.Resource = new {
+  type = "AWS::SQS::Queue"
+  properties { MessageRetentionPeriod = 1209600 }
+}
+
+/// An s3 bucket with all public access blocked and its objects encrypted with keys of s3:
+/// `kdst.bucket()`. Other properties amend it:
+/// `(kdst.bucket()) { properties { VersioningConfiguration { Status = "Enabled" } } }`.
+function bucket(): Project.Resource = new {
+  type = "AWS::S3::Bucket"
+  properties {
+    PublicAccessBlockConfiguration {
+      BlockPublicAcls = true
+      BlockPublicPolicy = true
+      IgnorePublicAcls = true
+      RestrictPublicBuckets = true
+    }
+    BucketEncryption {
+      ServerSideEncryptionConfiguration { new { ServerSideEncryptionByDefault { SSEAlgorithm = "AES256" } } }
+    }
+  }
+}
+
+/// An sns topic: `kdst.topic()`.
+function topic(): Project.Resource = new { type = "AWS::SNS::Topic" }
+
+/// The type of a key of a dynamodb table: `S` a string, `N` a number, `B` binary.
+typealias KeyType = "S"|"N"|"B"
+
+/// A dynamodb table, as `kdst.table()` gives it: on-demand billing and point-in-time recovery,
+/// with the keys below. Its properties amend it as any resource's do.
+class Table extends Project.Resource {
+  type = "AWS::DynamoDB::Table"
+  /// The attribute of the partition key.
+  hidden partitionKey: String(!isEmpty)
+  hidden partitionKeyType: KeyType = "S"
+  /// The attribute of the sort key, when the table has one.
+  hidden sortKey: String(!isEmpty)?
+  hidden sortKeyType: KeyType = "S"
+  properties {
+    BillingMode = "PAY_PER_REQUEST"
+    AttributeDefinitions {
+      new { AttributeName = partitionKey; AttributeType = partitionKeyType }
+      when (sortKey != null) { new { AttributeName = sortKey; AttributeType = sortKeyType } }
+    }
+    KeySchema {
+      new { AttributeName = partitionKey; KeyType = "HASH" }
+      when (sortKey != null) { new { AttributeName = sortKey; KeyType = "RANGE" } }
+    }
+    PointInTimeRecoverySpecification { PointInTimeRecoveryEnabled = true }
+  }
+}
+
+/// A route on the stage's http api.
+class HttpRoute extends Project.Event {
+  fixed type: "httpRoute" = "httpRoute"
+  method: "GET"|"POST"|"PUT"|"PATCH"|"DELETE"|"HEAD"|"OPTIONS"|"ANY"
+  /// Such as `/orders/{id}`, `/files/{proxy+}`, or `$default`.
+  path: String
+  /// An authorizer of `http.authorizers`, by name.
+  authorizer: String?
+  /// For a jwt authorizer: the scopes the token must have.
+  scopes: Listing<String>
+  /// Take only requests signed with sigv4 by a caller that may `execute-api:Invoke` the route,
+  /// in place of an authorizer.
+  iam: Boolean = false
+  /// This route's own request limit, in place of the stage-wide one.
+  throttling: Project.Throttling?
+}
+
+/// A route on the stage's rest api, which hands its function the event of payload 1.0 by api
+/// gateway's lambda proxy integration, and returns what the function returns.
+class RestRoute extends Project.Event {
+  fixed type: "restRoute" = "restRoute"
+  method: "GET"|"POST"|"PUT"|"PATCH"|"DELETE"|"HEAD"|"OPTIONS"|"ANY"
+  /// Such as `/orders/{id}` or `/files/{proxy+}`, and `/` for the root.
+  path: String(startsWith("/"))
+  /// An authorizer of `rest.authorizers`, by name.
+  authorizer: String?
+  /// For a cognito authorizer: scopes of the access token, any one of which the route takes.
+  /// Without any, the route takes the user pool's id token.
+  scopes: Listing<String>
+  /// Take only requests signed with sigv4 by a caller that may `execute-api:Invoke` the route,
+  /// in place of an authorizer.
+  iam: Boolean = false
+  /// Take only requests with the stage's api key in the `x-api-key` header, next to any
+  /// authorizer. The output `restApiKeyId` is the key's id.
+  private: Boolean = false
+  /// Query string parameters a request must have: api gateway refuses one without them before it
+  /// calls the function.
+  requiredQuery: Listing<String(!isEmpty)>
+  /// Headers a request must have, as [requiredQuery].
+  requiredHeaders: Listing<String(!isEmpty)>
+  /// How long api gateway waits for the function, 29 seconds without it. Longer than 29 seconds
+  /// needs a raised quota of the account.
+  hidden timeout: Duration(isBetween(50.ms, 15.min))?
+  /// [timeout] in milliseconds, what koldstart reads.
+  fixed timeoutMillis: Int? = if (timeout == null) null else timeout.toUnit("ms").value.toInt()
+}
+
+/// An eventbridge rule that sends the events matching its pattern to the function.
+class EventRule extends Project.Event {
+  fixed type: "eventRule" = "eventRule"
+  /// The event pattern, as an object or as json: `new { source { "orders" } }`.
+  pattern: Dynamic|Mapping<String, Any>|String
+  /// The event bus, by its name or arn.
+  bus: Project.Value = "default"
+  /// What the function gets in place of the event, as json.
+  input: String?
+  /// What the function gets in place of the event: a part of it, by a json path such as
+  /// `$.detail`.
+  inputPath: String?
+  /// What the function gets in place of the event: a template filled in with parts of it.
+  inputTransformer: InputTransformer?
+  enabled: Boolean = true
+  /// How often eventbridge tries again to hand over an event, at most 185.
+  maximumRetryAttempts: Int(isBetween(0, 185))?
+  /// How long eventbridge tries to hand over an event, a minute to a day.
+  maximumEventAge: Duration(isBetween(1.min, 24.h))?
+  /// An sqs queue, by its arn, for the events eventbridge could not hand over. Its queue policy
+  /// must let `events.amazonaws.com` send to it.
+  deadLetter: Project.Value?
+}
+
+/// A template eventbridge fills in with parts of an event.
+class InputTransformer {
+  /// The parts, by name, as json paths: `["id"] = "$.detail.id"`.
+  paths: Mapping<String, String>
+  /// What the function gets, with `<id>` where each part goes.
+  template: String
+}
+
+/// A subscription to a cloudwatch log group: the function gets the lines that match [filter], a
+/// batch at a time.
+class LogSubscription extends Project.Event {
+  fixed type: "logSubscription" = "logSubscription"
+  /// The log group, by its name.
+  logGroup: Project.Value
+  /// A filter pattern. Empty matches every line.
+  filter: String = ""
+}
+
+/// A route of the stage's websocket api: `$connect`, `$disconnect`, `$default`, or a value of
+/// the route selection, such as `sendMessage`.
+class WebSocketRoute extends Project.Event {
+  fixed type: "webSocketRoute" = "webSocketRoute"
+  route: String(!isEmpty)
+}
+
+/// A rule of a load balancer's listener that forwards the requests it matches to the function.
+class LoadBalancer extends Project.Event {
+  fixed type: "loadBalancer" = "loadBalancer"
+  /// The listener's arn.
+  listener: Project.Value
+  /// Unique on the listener: lower numbers are matched first.
+  priority: Int(isBetween(1, 50000))
+  /// The paths, hosts and methods the rule matches; a request matches when it matches each
+  /// one given.
+  paths: Listing<String>
+  hosts: Listing<String>
+  methods: Listing<String>
+  /// Headers to match, by name, each to any of its values.
+  headers: Mapping<String, Listing<String>>
+  /// Query parameters to match, by key: `["format"] = "json"`.
+  query: Mapping<String, String>
+  /// The addresses requests come from, as cidr blocks.
+  sourceIps: Listing<String>
+  /// Hand the function headers and query parameters as lists, for those that repeat.
+  multiValueHeaders: Boolean = false
+}
+
+/// An eventbridge scheduler schedule.
+class Schedule extends Project.Event {
+  fixed type: "schedule" = "schedule"
+  /// `rate(5 minutes)`, `cron(0 9 ? * MON-FRI *)` or `at(2026-12-31T23:59:00)`.
+  expression: String(matches(Regex(#"(rate|cron|at)\(.+\)"#)))
+  timezone: String = "UTC"
+  /// The event, as json.
+  input: String?
+  enabled: Boolean = true
+}
+
+/// An event source mapping from an sqs queue.
+class Queue extends Project.Event {
+  fixed type: "queue" = "queue"
+  /// The queue's arn.
+  queue: Project.Value
+  batchSize: Int(isBetween(1, 10000)) = 10
+  maximumBatchingWindow: Duration(isBetween(0.s, 5.min)) = 0.s
+  /// The function returns the messages that failed, so only those are retried.
+  reportBatchItemFailures: Boolean = true
+  /// Filter patterns, as json.
+  filters: Listing<String>
+  /// How many functions read the queue at once, 2 to 1000. Null leaves it to lambda.
+  maximumConcurrency: Int(isBetween(2, 1000))?
+  /// False stops reading the queue, and keeps the mapping.
+  enabled: Boolean = true
+}
+
+/// An sns subscription.
+class Topic extends Project.Event {
+  fixed type: "topic" = "topic"
+  /// The topic's arn.
+  topic: Project.Value
+  /// A filter policy, as json.
+  filterPolicy: String?
+}
+
+/// An event source mapping from a kinesis stream or a dynamodb stream.
+class Stream extends Project.Event {
+  fixed type: "stream" = "stream"
+  /// The stream's arn.
+  stream: Project.Value
+  startingPosition: "LATEST"|"TRIM_HORIZON" = "LATEST"
+  batchSize: Int(isBetween(1, 10000)) = 100
+  maximumBatchingWindow: Duration(isBetween(0.s, 5.min)) = 0.s
+  reportBatchItemFailures: Boolean = true
+  filters: Listing<String>
+  /// How often a batch the function fails on is tried again. Null retries until its records
+  /// expire.
+  maximumRetryAttempts: Int(isBetween(0, 10000))?
+  /// How old a record may get before it is given up on, a minute to a week. Null keeps it until
+  /// it expires.
+  maximumRecordAge: Duration(isBetween(1.min, 7.d))?
+  /// Split a batch the function fails on in two, and try each half again.
+  bisectBatchOnFunctionError: Boolean = false
+  /// How many batches of one shard the function handles at once.
+  parallelizationFactor: Int(isBetween(1, 10)) = 1
+  /// For aggregates across batches: the length of the window the function keeps a state over.
+  tumblingWindow: Duration(isBetween(0.s, 15.min)) = 0.s
+  /// Where a batch that is given up on is recorded: an sqs queue, sns topic or s3 bucket, by its
+  /// arn. The role may send to it.
+  onFailure: Project.Value?
+  /// False stops reading the stream, and keeps the mapping.
+  enabled: Boolean = true
+}
+
+/// An s3 bucket notification.
+class Bucket extends Project.Event {
+  fixed type: "bucket" = "bucket"
+  /// The bucket's name.
+  bucket: Project.Value
+  /// Without any, `s3:ObjectCreated:*`.
+  events: Listing<String>
+  prefix: String?
+  suffix: String?
+}
+
+/// An authorizer that checks a jwt from an oidc issuer, such as cognito.
+class JwtAuthorizer extends Project.Authorizer {
+  fixed type: "jwt" = "jwt"
+  issuer: String(startsWith("https://"))
+  audience: Listing<String>(!isEmpty)
+}
+
+/// An authorizer that is a function of this project.
+class LambdaAuthorizer extends Project.Authorizer {
+  fixed type: "lambda" = "lambda"
+  functionName: String
+  /// Where the identity is, such as `$request.header.Authorization`.
+  identity: Listing<String>
+  /// How long a result is cached.
+  ttl: Duration(isBetween(0.s, 1.h)) = 0.s
+}
+
+/// An authorizer of the rest api that hands a function of this project the token in a header,
+/// as `authorizationToken` with the `methodArn`, and takes the iam policy it returns.
+class TokenAuthorizer extends Project.RestAuthorizer {
+  fixed type: "token" = "token"
+  functionName: String
+  /// The header the token is in.
+  header: String(!isEmpty) = "Authorization"
+  /// A regular expression the token must match: api gateway refuses one that does not without
+  /// calling the function.
+  validation: String?
+  /// How long a result is cached, by the token.
+  ttl: Duration(isBetween(0.s, 1.h)) = 0.s
+}
+
+/// An authorizer of the rest api that hands a function of this project the request's headers,
+/// query string parameters, stage variables and context, as payload 1.0 does, and takes the iam
+/// policy it returns.
+class RequestAuthorizer extends Project.RestAuthorizer {
+  fixed type: "request" = "request"
+  functionName: String
+  /// What a request must have, and what a result is cached by: `method.request.header.<name>`,
+  /// `method.request.querystring.<name>`, `context.<name>` or `stageVariables.<name>`.
+  identity: Listing<String(matches(Regex(#"(method\.request\.(header|querystring|multivalueheader|multivaluequerystring)|context|stageVariables)\.[^,\s]+"#)))>
+  /// How long a result is cached, by the identity, which it then needs.
+  ttl: Duration(isBetween(0.s, 1.h)) = 0.s
+}
+
+/// An authorizer of the rest api that takes a token of a cognito user pool.
+class CognitoAuthorizer extends Project.RestAuthorizer {
+  fixed type: "cognito" = "cognito"
+  /// The user pools, by their arns: `kdst.ref("users", "Arn")` for one of this project.
+  userPools: Listing<Project.Value>(!isEmpty)
+  /// The header the token is in.
+  header: String(!isEmpty) = "Authorization"
+}

@@ -1,0 +1,56 @@
+name: E2E
+
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One run at a time: they share the sandbox account and its state bucket.
+concurrency:
+  group: e2e
+  cancel-in-progress: false
+
+jobs:
+  e2e:
+    # Runs once the sandbox account's role is set, as the repository variable KOLDSTART_E2E_ROLE_ARN.
+    if: ${{ vars.KOLDSTART_E2E_ROLE_ARN != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.KOLDSTART_E2E_ROLE_ARN }}
+          aws-region: ${{ vars.KOLDSTART_E2E_REGION || 'eu-west-1' }}
+
+      - name: Remove stages earlier runs left
+        env:
+          KOLDSTART_E2E_SWEEP: "1"
+        run: go test -tags e2e -count=1 -run TestSweep -v ./test/e2e/
+
+      - name: Test
+        run: go test -tags e2e -count=1 -timeout 40m -run TestFullFeatured -v ./test/e2e/

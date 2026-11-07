@@ -1,0 +1,183 @@
+// Converted from serverless.yml by kdst migrate.
+// A TODO comment marks each thing it could not convert, or converted differently.
+
+amends "@koldstart/Project.pkl"
+
+import "@koldstart/kdst.pkl"
+
+app = "ledger"
+region = "eu-west-1"
+
+tags {
+  ["team"] = "payments"
+  ["cost-centre"] = "43"
+}
+
+http {
+  accessLogs = new {
+    format = "{\"id\":\"$context.requestId\",\"status\":\"$context.status\"}"
+  }
+}
+
+functions {
+  ["api"] {
+    runtime = "nodejs22.x"
+    handler = "src/api.handler"
+    tracing = true
+    kmsKey = "arn:aws:kms:eu-west-1:123456789012:key/1111-2222"
+    tags {
+      ["tier"] = "web"
+    }
+    logFormat = "json"
+    applicationLogLevel = "WARN"
+    systemLogLevel = "INFO"
+    events {
+      // TODO: callers sign their requests and need execute-api:Invoke on the api koldstart makes, a new one: update their policies to its id, which httpApiUrl has
+      (kdst.post("/internal")) {
+        iam = true
+      }
+    }
+  }
+  ["charge"] {
+    runtime = "nodejs22.x"
+    handler = "src/charge.handler"
+    provisionedConcurrency = 2
+    kmsKey = "arn:aws:kms:eu-west-1:123456789012:key/1111-2222"
+    deadLetter = "arn:aws:sns:eu-west-1:123456789012:charge-failed"
+    async = new {
+      maximumRetryAttempts = 1
+      maximumEventAge = 3600.s
+      onSuccess = kdst.ref("settle", "Arn")
+      onFailure = kdst.ref("Failed", "Arn")
+    }
+    logFormat = "json"
+    applicationLogLevel = "WARN"
+    systemLogLevel = "INFO"
+  }
+  ["settle"] {
+    runtime = "nodejs22.x"
+    handler = "src/settle.handler"
+    vpc = new {
+      subnetIds {
+        "subnet-1"
+      }
+      securityGroupIds {
+        "sg-1"
+      }
+    }
+    tracing = true
+    kmsKey = "arn:aws:kms:eu-west-1:123456789012:key/3333-4444"
+    fileSystem = new {
+      accessPoint = "arn:aws:elasticfilesystem:eu-west-1:123456789012:access-point/fsap-1"
+      mountPath = "/mnt/ledger"
+    }
+    logFormat = "json"
+    applicationLogLevel = "WARN"
+    systemLogLevel = "INFO"
+    // TODO: lambda takes snapStart for python alone of the runtimes koldstart builds
+    // was: true
+    events {
+      (kdst.fromQueue("Jobs")) {
+        reportBatchItemFailures = false
+        enabled = false
+        maximumConcurrency = 5
+      }
+      (kdst.fromStream("Clicks")) {
+        reportBatchItemFailures = false
+        maximumRetryAttempts = 3
+        maximumRecordAge = 3600.s
+        bisectBatchOnFunctionError = true
+        parallelizationFactor = 4
+        tumblingWindow = 60.s
+        onFailure = kdst.ref("Failed", "Arn")
+        // TODO: koldstart has no consumer yet
+        // was: true
+      }
+    }
+  }
+  ["audit"] {
+    runtime = "nodejs22.x"
+    handler = "src/audit.handler"
+    tracing = true
+    kmsKey = "arn:aws:kms:eu-west-1:123456789012:key/1111-2222"
+    logFormat = "json"
+    applicationLogLevel = "WARN"
+    systemLogLevel = "INFO"
+    events {
+      kdst.fromLogs("/aws/lambda/ledger-dev-charge")
+      (kdst.fromLogs("/ecs/web")) {
+        filter = "ERROR"
+      }
+      new kdst.EventRule {
+        pattern = new Dynamic {
+          source {
+            "ledger"
+          }
+        }
+        inputTransformer = new {
+          paths {
+            ["id"] = "$.detail.id"
+          }
+          template = "{\"id\": <id>}"
+        }
+        maximumRetryAttempts = 4
+        maximumEventAge = 7200.s
+        deadLetter = kdst.ref("Failed", "Arn")
+      }
+      new kdst.EventRule {
+        pattern = new Dynamic {
+          source {
+            "billing"
+          }
+        }
+        inputPath = "$.detail"
+      }
+      new kdst.LoadBalancer {
+        listener = "arn:aws:elasticloadbalancing:eu-west-1:123456789012:listener/app/ledger/1/2"
+        priority = 5
+        paths {
+          "/audit"
+        }
+        headers {
+          ["X-Tenant"] {
+            "acme"
+          }
+        }
+        query {
+          ["format"] = "json"
+        }
+        sourceIps {
+          "10.0.0.0/8"
+        }
+      }
+    }
+  }
+  ["report"] {
+    runtime = "python3.13"
+    handler = "src/report.main"
+    tracing = true
+    kmsKey = "arn:aws:kms:eu-west-1:123456789012:key/1111-2222"
+    logFormat = "json"
+    applicationLogLevel = "WARN"
+    systemLogLevel = "INFO"
+    snapStart = true
+  }
+}
+
+resources {
+  ["Jobs"] {
+    type = "AWS::SQS::Queue"
+    properties {
+      VisibilityTimeout = 60
+    }
+  }
+  ["Failed"] {
+    type = "AWS::SQS::Queue"
+  }
+  ["Clicks"] {
+    type = "AWS::Kinesis::Stream"
+    properties {
+      ShardCount = 1
+    }
+  }
+}

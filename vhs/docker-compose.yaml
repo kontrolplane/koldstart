@@ -1,0 +1,19 @@
+# A second Floci, on 127.0.0.1:4567, that make vhs deploys the demonstration to and records against, so the
+# one make emulator starts keeps its state. Its containers and volumes are named under their own
+# namespace, and ecr, which koldstart's zips do not need, is off so no registry is started. The
+# image is the one docker-compose.yaml pins.
+name: koldstart-vhs
+
+services:
+  floci:
+    container_name: koldstart-vhs-floci
+    image: floci/floci:2.4.0@sha256:5ee85db604c4aa74ac76e07ea5cc83086f37bb472bf3dbb97e34019e48efae9c
+    environment:
+      FLOCI_BASE_URL: http://127.0.0.1:4567
+      FLOCI_DOCKER_RESOURCE_NAMESPACE: koldstart-vhs
+      FLOCI_SERVICES_LAMBDA_CONTAINER_NAME_PREFIX: koldstart-vhs
+      FLOCI_SERVICES_ECR_ENABLED: "false"
+    ports:
+      - "127.0.0.1:4567:4566"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock

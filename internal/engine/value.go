@@ -1,0 +1,267 @@
+package engine
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"maps"
+	"slices"
+	"strings"
+
+	"github.com/kontrolplane/koldstart/internal/config"
+)
+
+// marker is the key of koldstart's own values inside inputs: a ref to another node, a secret,
+// or a value not known until apply.
+const marker = "$koldstart"
+
+const (
+	kindRef     = "ref"
+	kindSecret  = "secret"
+	kindUnknown = "unknown"
+	kindJoin    = "join"
+	kindOutput  = "output"
+)
+
+// Ref stands for an attribute of another node, such as its Arn, resolved while applying.
+func Ref(node, attribute string) map[string]any {
+	return map[string]any{marker: kindRef, "node": node, "attribute": attribute}
+}
+
+// SecretValue stands for a secret, resolved while planning and applying, and never written to
+// the state.
+func SecretValue(s config.Secret) map[string]any {
+	return map[string]any{marker: kindSecret, "source": s.Source, "name": s.Name, "key": s.Key, "atRuntime": s.AtRuntime}
+}
+
+// StageOutput stands for an output of another app's stage, read from its state while planning
+// and applying. Its region, account and role are left out when they are not set, so a value of
+// one in the same account and region hashes as before they were known.
+func StageOutput(o config.OutputRef) map[string]any {
+	m := map[string]any{marker: kindOutput, "app": o.App, "stage": o.Stage, "output": o.Output}
+	for k, v := range map[string]string{"region": o.Region, "account": o.Account, "role": o.Role} {
+		if v != "" {
+			m[k] = v
+		}
+	}
+	return m
+}
+
+func asOutput(v any) (config.OutputRef, bool) {
+	m, isMap := v.(map[string]any)
+	if !isMap || m[marker] != kindOutput {
+		return config.OutputRef{}, false
+	}
+	str := func(k string) string {
+		s, _ := m[k].(string)
+		return s
+	}
+	return config.OutputRef{App: str("app"), Stage: str("stage"), Output: str("output"), Region: str("region"), Account: str("account"), Role: str("role")}, true
+}
+
+// DescribeOutput names an output of a stage, with where it is when that is set.
+func DescribeOutput(o config.OutputRef) string {
+	out := o.App + "/" + o.Stage + "." + o.Output
+	var where []string
+	if o.Account != "" {
+		where = append(where, "account "+o.Account)
+	}
+	if o.Region != "" {
+		where = append(where, o.Region)
+	}
+	if o.Role != "" {
+		where = append(where, "as "+o.Role)
+	}
+	if where != nil {
+		out += " in " + strings.Join(where, ", ")
+	}
+	return out
+}
+
+// Join stands for its parts, strings and refs, joined into one string once the refs are known,
+// such as a table's arn with /index/* after it.
+func Join(parts ...any) map[string]any {
+	return map[string]any{marker: kindJoin, "parts": parts}
+}
+
+func asJoin(v any) ([]any, bool) {
+	m, ok := v.(map[string]any)
+	if !ok || m[marker] != kindJoin {
+		return nil, false
+	}
+	parts, _ := m["parts"].([]any)
+	return parts, true
+}
+
+// unknown is a value only known once a node it refers to is applied.
+func unknown() map[string]any {
+	return map[string]any{marker: kindUnknown}
+}
+
+// IsSecret reports whether v is a secret, which a plan shows without its value.
+func IsSecret(v any) bool {
+	_, ok := asSecret(v)
+	return ok
+}
+
+// IsUnknown reports whether v is a value not known until apply.
+func IsUnknown(v any) bool {
+	m, ok := v.(map[string]any)
+	return ok && m[marker] == kindUnknown
+}
+
+type nodeRef struct {
+	Node, Attribute string
+}
+
+func asRef(v any) (nodeRef, bool) {
+	m, ok := v.(map[string]any)
+	if !ok || m[marker] != kindRef {
+		return nodeRef{}, false
+	}
+	node, _ := m["node"].(string)
+	attr, _ := m["attribute"].(string)
+	return nodeRef{Node: node, Attribute: attr}, true
+}
+
+func asSecret(v any) (config.Secret, bool) {
+	m, ok := v.(map[string]any)
+	if !ok || m[marker] != kindSecret {
+		return config.Secret{}, false
+	}
+	s := config.Secret{}
+	s.Source, _ = m["source"].(string)
+	s.Name, _ = m["name"].(string)
+	s.Key, _ = m["key"].(string)
+	s.AtRuntime, _ = m["atRuntime"].(bool)
+	return s, true
+}
+
+// refs returns the refs inside v, in a stable order.
+func refs(v any) []nodeRef {
+	var out []nodeRef
+	walk(v, func(x any) bool {
+		if r, ok := asRef(x); ok {
+			out = append(out, r)
+			return true
+		}
+		return false
+	})
+	return out
+}
+
+// walk calls fn on v and everything inside it, not descending where fn returns true.
+func walk(v any, fn func(any) bool) {
+	if fn(v) {
+		return
+	}
+	switch x := v.(type) {
+	case map[string]any:
+		for _, k := range slices.Sorted(maps.Keys(x)) {
+			walk(x[k], fn)
+		}
+	case []any:
+		for _, item := range x {
+			walk(item, fn)
+		}
+	}
+}
+
+// transform returns a copy of v with every value fn replaces replaced; fn returns false to
+// leave a value and descend into it.
+func transform(v any, fn func(any) (any, bool, error)) (any, error) {
+	if out, ok, err := fn(v); err != nil || ok {
+		return out, err
+	}
+	switch x := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(x))
+		for k, item := range x {
+			t, err := transform(item, fn)
+			if err != nil {
+				return nil, err
+			}
+			out[k] = t
+		}
+		return out, nil
+	case []any:
+		out := make([]any, len(x))
+		for i, item := range x {
+			t, err := transform(item, fn)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = t
+		}
+		return out, nil
+	default:
+		return v, nil
+	}
+}
+
+// normalise turns any value into the plain json types inputs are made of: maps of string to
+// any, slices of any, strings, float64, bools and nil.
+func normalise(v any) (any, error) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	var out any
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// hashOf is the sha256 of the json of v; json sorts map keys, so equal values hash alike.
+func hashOf(typ string, v any) (string, error) {
+	data, err := json.Marshal(map[string]any{"type": typ, "inputs": v})
+	if err != nil {
+		return "", fmt.Errorf("hashing: %w", err)
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+// hasUnknown reports whether a value not known until apply is inside v.
+func hasUnknown(v any) bool {
+	found := false
+	walk(v, func(x any) bool {
+		if IsUnknown(x) {
+			found = true
+			return true
+		}
+		return false
+	})
+	return found
+}
+
+// Describe writes a value of the inputs for a person: koldstart's own values by what they stand
+// for, as ssm:/orders/key for a secret, so no secret's value is shown, and anything else as json.
+func Describe(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	if s, ok := asSecret(v); ok {
+		out := s.Source + ":" + s.Name
+		if s.Key != "" {
+			out += "#" + s.Key
+		}
+		return out
+	}
+	if o, ok := asOutput(v); ok {
+		return "output " + DescribeOutput(o)
+	}
+	if r, ok := asRef(v); ok {
+		return "ref " + r.Node + "." + r.Attribute
+	}
+	if IsUnknown(v) {
+		return "known after apply"
+	}
+	data, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Sprint(v)
+	}
+	return string(data)
+}

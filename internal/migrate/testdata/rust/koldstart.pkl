@@ -1,0 +1,55 @@
+// Converted from serverless.yml by kdst migrate.
+// A TODO comment marks each thing it could not convert, or converted differently.
+
+amends "@koldstart/Project.pkl"
+
+import "@koldstart/kdst.pkl"
+
+app = "rusty"
+region = "eu-west-1"
+
+functions {
+  ["hello"] {
+    runtime = "provided.al2023"
+    // TODO: set handler to the directory of the crate hello, with its Cargo.toml, such as ./cmd/hello: koldstart builds it there with cargo lambda
+    handler = "./cmd/hello"
+    memory = 128
+    architecture = "arm64"
+    events {
+      kdst.get("/hello")
+    }
+  }
+  ["jobs"] {
+    runtime = "provided.al2023"
+    // TODO: set handler to the directory of the crate workers, with its Cargo.toml, such as ./cmd/jobs, and name its binary jobs rather than jobs-runner, or make it the crate's only one: koldstart builds it there with cargo lambda
+    handler = "./cmd/jobs"
+    // TODO: build what the layers hold into the binary: a go or rust function takes no layers
+    // was: ['arn:aws:lambda:eu-west-1:123456789012:layer:tools:1']
+    memory = 128
+    architecture = "arm64"
+  }
+  ["resize"] {
+    runtime = "provided.al2023"
+    // TODO: set handler to the go package to build, such as ./cmd/resize, or the directory of a rust crate; or replace it with bootstrap, the binary your build writes: koldstart builds from source, not "bootstrap"
+    // TODO: koldstart zips the function itself, and takes no build/resize.zip: set bootstrap to the binary in it, which your build writes, or build it from source with handler
+    handler = "./cmd/resize"
+    memory = 128
+    architecture = "x86_64"
+  }
+  ["legacy"] {
+    runtime = "provided.al2023"
+    // TODO: set handler to the package to build, such as ./cmd/legacy: koldstart builds go from source, not "bin/legacy"
+    handler = "./cmd/legacy"
+    memory = 128
+    architecture = "arm64"
+  }
+  ["current"] {
+    runtime = "provided.al2023"
+    // TODO: set handler to the go package to build, such as ./cmd/current, or the directory of a rust crate; or replace it with bootstrap, the binary your build writes: koldstart builds from source, not "bootstrap"
+    handler = "./cmd/current"
+    memory = 128
+    architecture = "arm64"
+  }
+  // TODO: koldstart does not build ruby3.3: build the function from a dockerfile with image, set bootstrap to a binary built for linux, or port it to node, python, go or rust
+  // was: {scripted: {handler: handler.main, runtime: ruby3.3}}
+}

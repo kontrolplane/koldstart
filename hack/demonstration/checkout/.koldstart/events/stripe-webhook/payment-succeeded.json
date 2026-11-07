@@ -1,0 +1,16 @@
+{
+  "version": "2.0",
+  "rawPath": "/",
+  "headers": {
+    "content-type": "application/json",
+    "stripe-signature": "t=1762531200,v1=42a6adee527229d0173e214f74188ffaab5b900b304905abe4b5d3ebff34c39b"
+  },
+  "body": "{\"id\":\"evt_3QJ7aK2eZvKYlo2C1x9f4b2N\",\"type\":\"payment_intent.succeeded\",\"data\":{\"object\":{\"amount\":7250,\"currency\":\"eur\",\"metadata\":{\"orderId\":\"order-20483\"}}}}",
+  "requestContext": {
+    "http": {
+      "method": "POST",
+      "path": "/",
+      "sourceIp": "3.18.12.63"
+    }
+  }
+}

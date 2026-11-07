@@ -1,0 +1,11 @@
+{
+  "Records": [
+    {
+      "EventSource": "aws:sns",
+      "Sns": {
+        "MessageId": "7b2d4f90-1e6a-4c35-8f7b-9d0e2a6c1b53",
+        "Message": "{\"type\": \"order.shipped\", \"orderId\": \"order-20481\", \"email\": \"joost.jansen@example.com\"}"
+      }
+    }
+  ]
+}
