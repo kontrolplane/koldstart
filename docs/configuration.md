@@ -52,13 +52,16 @@ The schema has a version of its own, `schemaVersion`, which `Project.pkl` render
 | property    | description                                                                                    |
 | ----------- | ---------------------------------------------------------------------------------------------- |
 | `app`       | name of the application: lowercase letters, digits and dashes, at most 24, starting with a letter |
-| `region`    | aws region to deploy into; `--region` takes precedence                                          |
-| `stage`     | the stage from `--stage`, read only; inside functions and resources, read it as `kdst.stage`     |
+| `region`    | aws region to deploy into; `--region` or `$AWS_REGION` takes precedence, and without any of them the aws profile's region is used |
+| `stage`     | the stage from `--stage`, `dev` without it, read only; inside functions and resources, read it as `kdst.stage` |
 | `functions` | the functions, by name                                                                          |
 | `resources` | any other aws resources, by name; functions and resources share their names                     |
 | `http`      | the stage's http api: domain, cors, authorizers, throttling and access logs                      |
-| `outputs`   | values printed by `kdst outputs`                                                                 |
+| `websocket` | the stage's websocket api: `routeSelection`, see [the websocket api](#the-websocket-api)         |
+| `outputs`   | values printed by `kdst outputs` and shown in `kdst ui`                                          |
 | `tags`      | tags added to everything koldstart creates, next to its own                                      |
+
+A function's or resource's name is letters, digits and dashes, at most 40, starting with a letter.
 
 ## functions
 
@@ -83,18 +86,18 @@ functions {
 | `memory`              | `1024`    | megabytes, from `128` to `10240`                                                                   |
 | `timeout`             | `6.s`     | a pkl duration, at most `15.min`                                                                   |
 | `architecture`        | `"arm64"` | `arm64` or `x86_64`                                                                                |
-| `ephemeralStorage`    | `512`     | the size of `/tmp` in megabytes                                                                    |
+| `ephemeralStorage`    | `512`     | the size of `/tmp` in megabytes, from `512` to `10240`                                             |
 | `reservedConcurrency` |           | the concurrency kept for this function alone                                                        |
 | `provisionedConcurrency` |        | instances kept started, on the function's `live` alias, see [versions](#versions)                   |
 | `snapStart`           | `false`   | for python: start from a snapshot taken when a version is published, see [versions](#versions)      |
 | `logRetention`        | `30`      | days the log group keeps logs, one of the periods cloudwatch allows                                 |
-| `environment`         |           | variables: strings, `kdst.ref()` values, secrets or outputs of other stages                         |
+| `environment`         |           | variables, by a name of letters, digits and underscores: strings, `kdst.ref()` and `kdst.join()` values, secrets or outputs of other stages |
 | `events`              |           | what invokes the function, see [events](#events)                                                    |
 | `url`                 |           | the function's own url, see [function urls](#function-urls)                                         |
 | `link`                |           | resources the function uses, see [link](#link)                                                      |
-| `permissions`         |           | iam statements added to the function's role                                                         |
+| `permissions`         |           | iam statements added to the function's role: `actions`, `resources` and `effect`, `"Allow"` unless `"Deny"` |
 | `vpc`                 |           | `subnetIds` and `securityGroupIds` to put the function in                                           |
-| `bundle`              |           | for node: `externals`, packages to leave out of the bundle, and `sourcemap`; for python: `include`, what goes in the zip |
+| `bundle`              |           | for node: `externals`, packages to leave out of the bundle, and `sourcemap`, which ships a source map and sets `NODE_OPTIONS=--enable-source-maps`; for python: `include`, what goes in the zip |
 | `typecheck`           | `false`   | for typescript: run `tsc --noEmit` before bundling, which needs node and typescript installed       |
 | `tracing`             | `false`   | send traces to x-ray                                                                               |
 | `kmsKey`              |           | a kms key of your own, by its arn, that encrypts the variables in place of lambda's                 |
@@ -102,9 +105,11 @@ functions {
 | `deadLetter`          |           | an sqs queue or sns topic, by its arn, for the async events the function failed on every time        |
 | `async`               |           | how lambda handles async events, see [failures](#failures)                                          |
 | `fileSystem`          |           | an efs access point to mount: `accessPoint`, its arn, and `mountPath`, under `/mnt/`; needs `vpc`    |
-| `logFormat`           | `"text"`  | `"json"` writes each line as json with its level, and takes `applicationLogLevel` and `systemLogLevel` |
+| `logFormat`           | `"text"`  | `"json"` writes each line as json with its level, and takes the two levels below                    |
+| `applicationLogLevel` |           | for json logs: the lowest level of the function's own lines kept, `TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR` or `FATAL` |
+| `systemLogLevel`      |           | for json logs: the lowest level of lambda's own lines kept, `DEBUG`, `INFO` or `WARN`               |
 
-Each function gets a role and a log group of its own. The role may write to the log group, and has what `link`, `permissions`, its events and its runtime secrets add, and what its settings need: writing traces, decrypting with its `kmsKey`, sending to its dead letter target and destinations, and mounting its file system.
+Each function gets a role and a log group of its own, `/aws/lambda/<app>-<stage>-<function>`. The role may write to the log group, and has what `link`, `permissions`, its events and its runtime secrets add, and what its settings need: writing traces, decrypting with its `kmsKey`, sending to its dead letter target and destinations, joining its `vpc` and mounting its file system.
 
 `default`, pkl's default of a mapping, holds what every function gets:
 
@@ -144,11 +149,11 @@ function api: src/api.ts and src/api.py are both here: set runtime to nodejs22.x
 
 ### building
 
-Typescript and javascript are bundled with the esbuild that is built into koldstart, starting from the file in `handler`, so the zip holds one file and none of `node_modules`. Packages in `bundle.externals`, such as ones with native code, are left out of the bundle and copied from `node_modules`, with what they depend on; install them for the architecture the function runs on.
+Typescript and javascript are bundled with the esbuild that is built into koldstart, starting from the file in `handler`, so the zip holds one file, and its source map with `bundle.sourcemap`, and none of `node_modules`. Packages in `bundle.externals`, such as ones with native code, are left out of the bundle and copied from `node_modules`, with what they depend on; install them for the architecture the function runs on.
 
-Go is built with `CGO_ENABLED=0`, `-trimpath`, `-buildvcs=false` and no build id, for the architecture of the function, into a binary named `bootstrap`, which is what the `provided.al2023` runtime runs.
+Go is built with `CGO_ENABLED=0`, `-trimpath`, `-buildvcs=false`, the `lambda.norpc` tag and `-ldflags "-s -w -buildid="`, for the architecture of the function, into a binary named `bootstrap`, which is what the `provided.al2023` runtime runs.
 
-Python goes in the zip as it is: the directory of the handler's module, `src` for `src/api.handler`, or the module alone when it is at the root, or what `bundle.include` names instead. Its dependencies come from `requirements.txt`, or from `pyproject.toml` through `uv export`, locked by `uv.lock` when there is one, and are installed with [uv](https://docs.astral.sh/uv/) for the platform lambda runs: manylinux wheels for the function's architecture, so a package with native code works however you build it. Pin the versions, so every build installs the same.
+Python goes in the zip as it is: the top directory of the handler's module, `src` for `src/api.handler` and for `src/jobs/api.handler`, or the module alone when it is at the root, or what `bundle.include` names instead. Its dependencies come from `requirements.txt`, or from `pyproject.toml` through `uv export`, locked by `uv.lock` when there is one, and are installed with [uv](https://docs.astral.sh/uv/) for the platform lambda runs: manylinux wheels for the function's architecture, so a package with native code works however you build it. Pin the versions, so every build installs the same.
 
 Zips are deterministic: the same code gives the same bytes, on a laptop and in ci, so the hash of the zip tells koldstart whether a function's code changed. Go binaries also depend on the version of go that builds them, so pin it with a `toolchain` line in `go.mod`, such as `toolchain go1.27.3`; otherwise a laptop and ci with different versions upload different code.
 
@@ -161,13 +166,13 @@ Zips are deterministic: the same code gives the same bytes, on a laptop and in c
 }
 ```
 
-A function with an `image` runs that instead of a runtime. koldstart builds it with docker for the function's architecture, from `context`, and pushes it to the ecr repository `koldstart/<app>` of the account and region, which it creates on the first deploy; `buildArgs` are passed as `--build-arg`, and `command`, `entryPoint` and `workingDirectory` set what lambda runs in place of the image's own. The image is tagged by a hash of what it is built from: every file of the context but what `.dockerignore` leaves out, the dockerfile, the build arguments and the platform. A deploy that changes none of them builds and pushes nothing, and leaves the function as it is.
+A function with an `image` runs that instead of a runtime, and has no `runtime`, `handler` or `layers`. koldstart builds it with docker for the function's architecture, from `dockerfile`, `Dockerfile` without one, in `context`, the project's directory without one, and pushes it to the ecr repository `koldstart/<app>` of the account and region, which it creates on the first deploy; `buildArgs` are passed as `--build-arg`, and `command`, `entryPoint` and `workingDirectory` set what lambda runs in place of the image's own. The image is tagged by a hash of what it is built from: every file of the context but what `.dockerignore` leaves out, the dockerfile, the build arguments and the platform. A deploy that changes none of them builds and pushes nothing, and leaves the function as it is.
 
 The repository keeps the images of every deploy, as lambda stops a function whose image is gone; images that lost their tag expire after a day. Build it from one of lambda's base images, such as `public.ecr.aws/lambda/python:3.12`, so it has the runtime client, which also lets `invoke --local` run it here with docker.
 
 ### link
 
-`link` lets a function use a resource of the project: its role gets a policy for the access, and the resource's name and arn become environment variables named after it.
+`link` lets a function use a resource of the project, `"read"`, `"write"` or `"readwrite"`: its role gets a policy for the access, and the resource's name and arn become environment variables named after it.
 
 ```pkl
 link {
@@ -241,7 +246,7 @@ A stream's mapping takes how it handles a batch the function fails on, and an ev
 }
 ```
 
-A stream without `maximumRetryAttempts` or `maximumRecordAge` retries a batch until its records expire. A rule's `deadLetter` is an sqs queue whose policy lets `events.amazonaws.com` send to it; koldstart does not write that policy.
+A stream without `maximumRetryAttempts` or `maximumRecordAge` retries a batch until its records expire; `maximumRecordAge` is a minute to a week, and its `onFailure` an sqs queue, an sns topic or an s3 bucket, by its arn. A rule tries again at most `185` times, for a minute to a day. A rule's `deadLetter` is an sqs queue whose policy lets `events.amazonaws.com` send to it; koldstart does not write that policy.
 
 ### function urls
 
@@ -249,7 +254,7 @@ A stream without `maximumRetryAttempts` or `maximumRecordAge` retries a batch un
 url = new { auth = "iam" }
 ```
 
-`auth` has no default: `"iam"` requires signed requests, `"none"` makes the url public. The url is the output `<function>Url`, the function's name in camel case: `stripeWebhookUrl` for `stripe-webhook`.
+`auth` has no default: `"iam"` requires signed requests, `"none"` makes the url public. `cors` takes `origins`, `methods`, `headers`, `expose`, `credentials` and `maxAge`, a duration, as the http api's does. The url is the output `<function>Url`, the function's name in camel case: `stripeWebhookUrl` for `stripe-webhook`.
 
 ## events
 
@@ -302,15 +307,15 @@ events {
 
 | class       | creates                                                                                            |
 | ----------- | -------------------------------------------------------------------------------------------------- |
-| `HttpRoute` | a route on the stage's http api, with its integration and permission; `authorizer` and `scopes` guard it, or `iam = true` takes only requests signed by a caller that may `execute-api:Invoke` it |
-| `Schedule`  | an eventbridge scheduler schedule, `rate(...)`, `cron(...)` or `at(...)`, with `timezone`, `input` and `enabled` |
-| `Queue`     | an event source mapping from an sqs queue, with `batchSize`, `maximumBatchingWindow`, `reportBatchItemFailures`, `filters`, `maximumConcurrency` and `enabled` |
+| `HttpRoute` | a route on the stage's http api, of a `path` that starts with `/` or is `$default`, with its integration and permission; `authorizer` and `scopes` guard it, or `iam = true` takes only requests signed by a caller that may `execute-api:Invoke` it, not both; a method and path belong to one function |
+| `Schedule`  | an eventbridge scheduler schedule, `rate(...)`, `cron(...)` or `at(...)`, with `timezone`, `UTC` without one, `input` and `enabled` |
+| `Queue`     | an event source mapping from an sqs queue, with `batchSize`, `10` without one, `maximumBatchingWindow`, `reportBatchItemFailures`, `filters`, `maximumConcurrency` and `enabled` |
 | `Topic`     | an sns subscription and the permission for sns to invoke the function, with `filterPolicy`          |
-| `Stream`    | an event source mapping from a kinesis stream or a dynamodb stream, with what a queue takes, `parallelizationFactor`, `tumblingWindow`, and its [failures](#failures) |
-| `Bucket`    | the function in the bucket's notifications, and the permission for s3 to invoke it                   |
+| `Stream`    | an event source mapping from a kinesis stream or a dynamodb stream, with `startingPosition`, `LATEST` or `TRIM_HORIZON`, `batchSize`, `100` without one, `maximumBatchingWindow`, `reportBatchItemFailures`, `filters`, `enabled`, `parallelizationFactor`, `tumblingWindow`, and its [failures](#failures) |
+| `Bucket`    | the function in the bucket's notifications of `events`, `s3:ObjectCreated:*` without any, for the keys of `prefix` and `suffix`, and the permission for s3 to invoke it |
 | `EventRule` | an eventbridge rule on `bus`, `default` without one, that sends the events matching `pattern`, an object or json, to the function, with `input`, `inputPath` or `inputTransformer` in their place, `enabled` and its [failures](#failures); and the permission for eventbridge to invoke it |
 | `WebSocketRoute` | a route of the stage's websocket api, `$connect`, `$disconnect`, `$default` or a value of the route selection, with its integration and permission |
-| `LoadBalancer` | a target group of the function, the permission for the load balancer to invoke it, and a rule of `priority` on `listener` that forwards the requests matching its `paths`, `hosts`, `methods`, `headers`, `query` and `sourceIps` to it |
+| `LoadBalancer` | a target group of the function, the permission for the load balancer to invoke it, and a rule of `priority` on `listener` that forwards the requests matching its `paths`, `hosts`, `methods`, `headers`, `query` and `sourceIps`, at least one of them, to it; `multiValueHeaders = true` hands it headers and query parameters as lists |
 | `LogSubscription` | a subscription filter of `logGroup` that sends the lines matching `filter`, every line without one, to the function, and the permission for cloudwatch logs to invoke it; a log group takes two |
 
 A queue must hide a message for at least the function's timeout, its `VisibilityTimeout`, or lambda refuses the mapping; koldstart checks it for queues of the project. `reportBatchItemFailures` is on by default, so a function returns the messages that failed and only those are retried.
@@ -319,7 +324,7 @@ A bucket has one notification configuration, so koldstart puts the stage's funct
 
 ### the http api
 
-All routes of a stage share one http api. Its url is the output `httpApiUrl`.
+All routes of a stage share one http api, made once a function has a route. Its url is the output `httpApiUrl`.
 
 ```pkl
 http {
@@ -335,13 +340,15 @@ http {
 }
 ```
 
-With a domain, `httpApiUrl` is `https://<domain>`, and the output `httpDomainTarget` is where its dns record points. A route picks an authorizer with `authorizer = "users"`, and sets a request limit of its own, in place of the stage-wide one, with `throttling = new { rate = 5; burst = 10 }`.
+With a domain, `httpApiUrl` is `https://<domain>`, and the output `httpDomainTarget` is where its dns record points. `cors` takes what a [function url's](#function-urls) does. A route picks an authorizer with `authorizer = "users"`, and sets a request limit of its own, in place of the stage-wide one, with `throttling = new { rate = 5; burst = 10 }`.
+
+A `JwtAuthorizer` checks a token from `issuer`, an `https://` url, for one of `audience`. A `LambdaAuthorizer` is a function of the project, by its name, that reads what `identity` lists, such as `$request.header.Authorization`, and whose answer is cached for `ttl`, at most `1.h`.
 
 `accessLogs` writes a line for every request to a log group koldstart makes, `/aws/http-api/<app>-<stage>`, kept for `retention` days, `30` without it. The line is json of the request's id, ip, time, method, route, status, protocol and length, or what `format` says with api gateway's `$context` variables.
 
 ### the websocket api
 
-The `WebSocketRoute`s of a stage share one websocket api, with a stage of the stage's name. Its url is the output `webSocketUrl`. A message picks its route by its `action`, or what `websocket.routeSelection` says:
+The `WebSocketRoute`s of a stage share one websocket api, with a stage of the stage's name, and each route belongs to one function. Its url is the output `webSocketUrl`. A message picks its route by its `action`, `$request.body.action`, or what `websocket.routeSelection` says:
 
 ```pkl
 websocket { routeSelection = "$request.body.type" }
@@ -351,7 +358,7 @@ A function with websocket routes may post to the connections of the api, and get
 
 ## resources
 
-Anything that is not a function goes in `resources`. A resource has a CloudFormation type name and the properties CloudFormation documents for it, and koldstart creates, updates and deletes it through the [cloud control api](https://docs.aws.amazon.com/cloudcontrolapi/latest/userguide/what-is-cloudcontrolapi.html), without a stack. The [resource type reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-template-resource-type-ref.html) lists the types and their properties. A type cloud control cannot create is refused before anything is planned.
+Anything that is not a function goes in `resources`. A resource has a CloudFormation type name and the properties CloudFormation documents for it, and koldstart creates, updates and deletes it through the [cloud control api](https://docs.aws.amazon.com/cloudcontrolapi/latest/userguide/what-is-cloudcontrolapi.html), without a stack. The [resource type reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-template-resource-type-ref.html) lists the types and their properties; `type` is an `AWS::` one, such as `AWS::DynamoDB::Table`. A type the registry does not know, or one cloud control cannot create, is refused before anything is planned.
 
 `kdst.pkl` has shorthands for the common ones:
 
@@ -399,7 +406,7 @@ A change to a property is sent as a patch of what changed. A change to a propert
 
 ### keeping data
 
-Resources that hold data are retained: `kdst remove` leaves them in place, and the next deploy of the stage takes them over again. They are tables, buckets, databases, file systems, streams, keys, secrets, user pools, repositories, caches and search domains. `deletionPolicy` decides for one resource:
+Resources that hold data are retained: `kdst remove` leaves them in place, and the next deploy of the stage takes them over again. They are tables, buckets, databases, file systems, streams, keys, secrets, user pools, repositories, caches, search domains and backup vaults. `deletionPolicy` decides for one resource:
 
 ```pkl
 ["cache"] = (kdst.table("key")) { deletionPolicy = "delete" }
@@ -427,7 +434,7 @@ environment {
 }
 ```
 
-The attributes of a resource are its properties as cloud control returns them, such as `Arn` and `TableName`. A function has `Arn` and `FunctionName`.
+The attributes of a resource are its properties as cloud control returns them, such as `Arn` and `TableName`. A function has `Arn` and `FunctionName`, and one with [versions](#versions) also `AliasArn` and `AliasName`, of its `live` alias. A ref to a name that is neither, or a resource's ref to itself, is refused.
 
 A ref is a value of its own, not a string, so it cannot sit inside a pkl string. `kdst.join()` joins strings, refs and the account's values into one, once the refs are known:
 
@@ -448,7 +455,7 @@ outputs {
 }
 ```
 
-Every deploy resolves them, records them in the state and prints them, with `httpApiUrl`, `webSocketUrl`, `httpDomainTarget` with a domain, and a `<function>Url` for each function url. `kdst outputs` prints what the last deploy recorded, one `name = value` a line, and `-o json` prints them as one json object, `{}` when there are none:
+An output is a string, a `kdst.ref()`, a `kdst.join()` or a value of the account; a secret or `kdst.stageOutput()` is not one. Every deploy resolves them, records them in the state and prints them, with `httpApiUrl`, `webSocketUrl`, `httpDomainTarget` with a domain, and a `<function>Url` for each function url. `kdst outputs` prints what the last deploy recorded, one `name = value` a line, and `-o json` prints them as one json object, `{}` when there are none:
 
 ```bash
 kdst outputs -o json | jq -r .table
@@ -456,7 +463,7 @@ kdst outputs -o json | jq -r .table
 
 ## stages
 
-`--stage` picks the stage, and every stage is deployed separately, with its own resources, state and lock. A stage is lowercase letters, digits and dashes, at most 16, starting with a letter. `kdst.stage` is readable anywhere in the file, so one file describes all of them:
+`--stage` or `$KOLDSTART_STAGE` picks the stage, `dev` without either, and every stage is deployed separately, with its own resources, state and lock. A stage is lowercase letters, digits and dashes, at most 16, starting with a letter. `kdst.stage` is readable anywhere in the file, so one file describes all of them:
 
 ```pkl
 memory = if (kdst.stage == "prod") 1024 else 256
@@ -470,7 +477,7 @@ amends "koldstart.pkl"
 region = "us-east-1"
 ```
 
-One app reads another's outputs with `kdst.stageOutput(app, stage, output)`, from the state of that stage in the same account and region. A plan fails when that stage is not deployed, or has no such output.
+One app reads another's outputs with `kdst.stageOutput(app, stage, output)`, from the state of that stage in the same account and region. A plan fails when that stage is not deployed, or has no such output. A `kdst.stageOutput()` of this app and stage is refused: use `kdst.ref()`.
 
 An output of a stage in another region or account amends it with `region`, `account` and `role`:
 

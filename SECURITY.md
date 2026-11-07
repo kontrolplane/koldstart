@@ -39,4 +39,4 @@ cosign verify ghcr.io/kontrolplane/koldstart:<tag> \
 
 ## supported versions
 
-pre-1.0. fixes land on `main` only.
+there is no release yet. until 1.0, fixes land on `main` only.

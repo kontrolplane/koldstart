@@ -9,7 +9,7 @@ internal/cli/               the cobra commands, the global flags and the aws ses
 internal/tui/               kdst ui, with styles/ for relay's palette and keys/ for the key map
 internal/pkl/               finds or downloads pkl, and evaluates configuration to json in its pkl project, resolving it first
 internal/config/            decodes what pkl renders, and checks what the schema cannot
-internal/build/             node bundled with esbuild, go cross-compiled; deterministic zips
+internal/build/             node bundled with esbuild, go cross-compiled, python's dependencies installed by uv, container images built; deterministic zips
 internal/desired/           turns a configuration into nodes: names, policies, link, events, resources
 internal/engine/            plans and applies nodes in dependency order, recording every step in the state
 internal/state/             the state, locks and zips in a bucket of the account; a memory backend for tests
@@ -19,6 +19,7 @@ internal/resolve/           reads secrets from ssm and secrets manager, and outp
 internal/local/             runs functions here against an emulator of the lambda runtime api; offline
 internal/migrate/           converts a serverless.yml into a koldstart.pkl
 internal/scaffold/          kdst init's templates: a koldstart.pkl, a handler in typescript, go or python, the .gitignore entries, and the PklProject beside them
+internal/awserr/            tells aws errors apart by their code, the one way every package does
 internal/awstest/           connects tests to the emulator
 hack/schema/                packages the schema in pkl/ with the pkl koldstart pins, for releases: the metadata at koldstart@<v> and the zip
 hack/pkl/                   downloads the pinned pkl for a platform, for the image
@@ -26,19 +27,20 @@ hack/floci/                 the local aws profile for floci, for running kdst ag
 hack/demonstration/         the checkout service make local and make vhs deploy to floci, the script that seeds it, and backfill, which writes what floci does not keep
 examples/                   example projects, each a go module of its own; examples_test.go checks they evaluate
 test/e2e/                   deploys examples/full-featured to a real account, behind the e2e build tag
-vhs/                        make vhs: the tape that records kdst ui for the README, and the floci and profile it records against
+vhs/                        make vhs: the tape that records kdst ui for the README, its gif and a screenshot of each page, and the floci and profile it records against
+assets/                     the README's header, footer and cassette.gif, and the screenshots make vhs takes in pages/
 internal/version/           the build's version, stamped by the linker, in route's shape
-docs/                       the user documentation; it describes the design in #1 until it is built
+docs/                       the user documentation, which the README links to
 ```
 
-The packages still to come, and the milestones they land in, are in [#1](https://github.com/kontrolplane/koldstart/issues/1).
+[#1](https://github.com/kontrolplane/koldstart/issues/1) has the design and the milestones koldstart was built in, all of them done. There is no release yet.
 
 ## rules
 
 - no cgo. the binary is static, `CGO_ENABLED=0`, for linux and darwin on amd64 and arm64. no windows in v1.
 - the binary answers to `koldstart` and `kdst`. help, examples and errors use `cli.Name`, never a hardcoded name.
 - a global flag reads its default from the environment variable the README lists, and the flag wins over it.
-- commands come with their milestone. no stub commands for what is not built yet.
+- no stub commands: a command lands with what it does.
 - koldstart sends nothing anywhere but the aws apis of the account it deploys to, and the downloads of pkl and the schema package. no telemetry.
 - `plan` changes nothing in aws and writes no state.
 - tests: standard library only, no testify. table tests with `tests := []struct{...}`, a doc comment on each test.
@@ -52,7 +54,7 @@ The packages still to come, and the milestones they land in, are in [#1](https:/
 - `internal/migrate` is tested with golden files: a `serverless.yml` under `testdata/<case>/`, and the `koldstart.pkl` and `todos.txt` it converts to. after changing the conversion, run `go test ./internal/migrate -update`, read the diff, and commit it. every golden file must evaluate with pkl and pass a deploy's checks.
 - logs: `log/slog`. `--debug` writes them to `debug.log`, otherwise nothing is logged.
 - errors wrap with what was being done (`fmt.Errorf("reading the state of %s: %w", stage, err)`). an error a person reads says what to do.
-- `make check` runs what ci runs: golangci-lint, actionlint, `go mod tidy`, govulncheck, the tests and the goreleaser config. the Makefile is plain targets with a comment above each; keep it that way.
+- `make check` runs most of what ci runs: golangci-lint, actionlint, `go mod tidy`, govulncheck, the unit tests and the goreleaser config. ci also runs the emulator tests, a snapshot release (`make snapshot`) and, on a pull request, the image build. the Makefile is plain targets with a comment above each; keep it that way.
 - base images and actions are pinned by digest or commit, with the tag beside it.
 - writing: short and concrete. say what something does and the command or value, not why at length. comments only explain a non-obvious why. british spelling.
 - comments go above what they describe: a function, type, constant, variable or field. none inside function bodies and none at the end of a line. a `//nolint` goes in the doc comment of the function it covers, after a `//` line. the one exception: the version beside a pinned action, `@<sha> # v7.0.1`, which dependabot reads.
@@ -71,8 +73,8 @@ The packages still to come, and the milestones they land in, are in [#1](https:/
 - every load is a `tea.Cmd` with a timeout, and its message carries the generation it was asked for; a stale one is dropped. `Init` cannot change the model, so `newModel` numbers the first load. refresh is a tick that pause lets lapse.
 - a deploy or remove runs in a goroutine that sends its progress on a channel, and quitting stops it and waits for it, so its lock is released.
 - tests drive `Update` and `View` directly against a fake backend, with relay's layout sweep over terminal sizes and its escape test. no teatest.
-- a frame draws only the lines in sight (`lazyLines`), so a page of thousands of lines costs what a screenful does; what a page keeps drawn is keyed by width, read and `styles.Gen`. `go test -run - -bench . ./internal/tui` draws each long page of a big account (`perf_test.go`) at 200x60, each well under 16ms. the fuzz targets (`go test -fuzz FuzzTint ./internal/tui`, and `FuzzClean` in styles) check what is drawn is clean and fits its width; commit what they find under `testdata/fuzz`.
-- json on a page is a `jsonView` (`jsonview.go`), as on the resource and output pages and the inputs of a create in a plan: kept in the page's state, given the keys with `update` before the page's own, drawn with `lines` or `view`, the page's scroll following its cursor with `followJSON`, and returned by `pages.json` so the frame shows its path and search and the search takes what is typed. `jsonLineCell` tints one line of indented json as it does. `BenchmarkJSONView` draws one of 2 mb and one of 10,000 lines, and `FuzzJSONView` draws any bytes after any keys.
+- a frame draws only the lines in sight (`lazyLines`), so a page of thousands of lines costs what a screenful does; what a page keeps drawn is keyed by width, read and `styles.Gen`. `go test -run - -bench . ./internal/tui` draws each long page of a big account (`perf_test.go`) at 200x60, each well under 16ms. the fuzz targets (`FuzzRenderCell`, `FuzzTint`, `FuzzJSONLines`, `FuzzDiff`, `FuzzInvocationLine` and `FuzzJSONView` in `internal/tui`, `FuzzClean` in styles; run one with `go test -fuzz FuzzTint ./internal/tui`) check what is drawn is clean and fits its width; commit what they find under `testdata/fuzz`.
+- json on a page is a `jsonView` (`jsonview.go`), as on the resource and output pages, the inputs of a create in a plan, the page of a log line and the invoke tab's event and result: kept in the page's state, given the keys with `update` before the page's own, drawn with `lines` or `view`, the page's scroll following its cursor with `followJSON`, and returned by `pages.json` so the frame shows its path and search and the search takes what is typed. `jsonLineCell` tints one line of indented json as it does. `BenchmarkJSONView` draws one of 2 mb and one of 10,000 lines, and `FuzzJSONView` draws any bytes after any keys.
 - the header shows the profile, region and account, from sts `GetCallerIdentity`, and the state bucket.
 - alignment follows one grid, as relay's panels do:
   - a page's structure starts one column in: its title, its line of facts, its tab bar, its section headers and a table's header row's rule.

@@ -1,13 +1,13 @@
 # migrating from the serverless framework
 
-`kdst migrate` reads a `serverless.yml` and writes a `koldstart.pkl` next to it. What it cannot convert, or converts to something that works differently, is left in the file as a `// TODO` comment, on the line above where it belongs, and listed at the end of the run by the `serverless.yml` key it came from. The list is grouped by what each needs, most urgent first: what to fix before you deploy, what was left out and is to write by hand, what works differently and is to check, and what koldstart does not need. The new file is checked with pkl before it is written, so it is valid pkl, and passes the checks a deploy makes, even where it is not complete.
+`kdst migrate` reads a `serverless.yml` and writes a `koldstart.pkl` next to it. What it cannot convert, or converts to something that works differently, is listed at the end of the run by the `serverless.yml` key it came from, and, where it has a place in the file, left there as a `// TODO` comment on the line above it, with the yaml it is about after `// was:`. The list is grouped by what each needs, most urgent first: what to fix before you deploy, what was left out and is to write by hand, what works differently and is to check, and what koldstart does not need. When a TODO comment marks any of them, a line after the list says how many. The new file is evaluated with pkl before it is written, so it is valid pkl even where it is not complete, and what the checks of a deploy would refuse in it is listed under `koldstart.pkl` as a fix before you deploy.
 
 ```bash
 kdst migrate
 kdst migrate path/to/serverless.yml --out koldstart.pkl
 ```
 
-Without a path, it reads `./serverless.yml`. It does not write over a `koldstart.pkl` that is there, unless you pass `--force`, and `--out` writes it elsewhere. It ends with the `plan` to run next, with the `--stage` that `provider.stage` names:
+Without a path, it reads `./serverless.yml`. It does not write over a `koldstart.pkl` that is there, unless you pass `--force`, and `--out`, or `-o`, writes it elsewhere. It ends with the `plan` to run next: with the `--stage` that `provider.stage` names, with `--config` when the file is not called `koldstart.pkl`, and after a `cd` into its directory when it is not this one:
 
 ```text
 wrote PklProject, with the schema of koldstart 0.1.0
@@ -39,15 +39,15 @@ koldstart does not read `serverless.yml` itself, and does not run serverless fra
 | `service`                                                   | `app`, in lowercase                                                  |
 | `provider.region`                                           | `region`                                                             |
 | `provider.stage`                                            | a note to pass `--stage`, as koldstart deploys to `dev` by default    |
-| `provider.runtime`, `memorySize`, `timeout`, `architecture`, `logRetentionInDays`, `vpc` | set on every function that does not set its own |
+| `provider.runtime`, `memorySize`, `timeout`, `architecture`, `ephemeralStorageSize`, `logRetentionInDays`, `vpc` | set on every function that does not set its own |
 | `provider.environment`                                      | merged into the environment of every function, the function's winning |
 | `provider.tags`, `provider.stackTags`                       | `tags`, `provider.tags` winning                                      |
 | `provider.tracing.lambda`, `functions.<name>.tracing`       | `tracing = true` on every function that traces                        |
 | `provider.kmsKeyArn`, `functions.<name>.kmsKeyArn`          | `kmsKey`, the function's winning                                     |
 | `provider.logs.httpApi`                                     | `http.accessLogs`, with its `format`                                 |
-| `provider.logs.lambda`                                      | `logFormat`, `applicationLogLevel` and `systemLogLevel` on every function |
+| `provider.logs.lambda`, `functions.<name>.logs`             | `logFormat`, `applicationLogLevel` and `systemLogLevel`, the function's winning |
 | `provider.httpApi.cors`, `provider.httpApi.authorizers`     | `http.cors`, and `kdst.JwtAuthorizer` or `kdst.LambdaAuthorizer`      |
-| `provider.iam.role.statements`, `iamRoleStatements`         | `permissions` on every function, with a note to narrow them           |
+| `provider.iam.role.statements`, `provider.iamRoleStatements` | `permissions` on every function, with a note to narrow them; a function's own `iamRoleStatements` on it alone |
 | `functions.<name>`                                          | a function of the same name, `_` and `.` as `-`                      |
 | `functions.<name>.handler`                                  | `handler`; for go, a placeholder package to build                    |
 | `functions.<name>.url`                                      | `url = new { auth = "none" }`, `"iam"` with `authorizer: aws_iam`, and its `cors` |
@@ -60,19 +60,19 @@ koldstart does not read `serverless.yml` itself, and does not run serverless fra
 | `functions.<name>.fileSystemConfig`                         | `fileSystem = new { accessPoint; mountPath }`                         |
 | python runtimes, and a handler such as `src.handler.main`   | `python3.12` or `python3.13`, older ones as `python3.12`, and `src/handler.main` |
 | `functions.<name>.layers`                                   | `layers`, by their arns                                              |
-| `functions.<name>.image` of `provider.ecr.images`           | `image { context; dockerfile; buildArgs; command }`                  |
+| `functions.<name>.image` of `provider.ecr.images`           | `image { context; dockerfile; buildArgs; command; entryPoint; workingDirectory }` |
 | `events: httpApi`                                           | `kdst.get("/path")` and the other methods' helpers, `*` as `kdst.any("$default")`, amended with its authorizer and scopes, and `iam = true` for `aws_iam` |
 | `events: http`                                              | the same, on the http api, with a note                               |
-| `events: schedule`                                          | `kdst.schedule("rate(...)")`, one for each rate, amended with `enabled` and `input` |
+| `events: schedule`                                          | `kdst.schedule("rate(...)")`, one for each rate, amended with `enabled`, `timezone` and `input` |
 | `events: sqs`                                               | `kdst.fromQueue()`, of a queue of `resources` by its name or of an arn; `kdst.Queue` for any other value; with `maximumConcurrency` and `enabled` |
 | `events: stream`                                            | `kdst.fromStream()` or `kdst.fromTableStream()`, the same way; `kdst.Stream` for any other value; with its retries, record age, bisecting, parallelization, tumbling window, `destinations.onFailure` and `enabled` |
-| `events: sns`                                               | `kdst.fromTopic()`, the same way; a topic given by name becomes a resource, as the serverless framework made it |
-| `events: s3`                                                | `kdst.fromBucket()` of a bucket that is not `existing`, which becomes a resource; `kdst.Bucket` of one that is |
+| `events: sns`                                               | `kdst.fromTopic()`, the same way, with its `filterPolicy`; a topic given by name becomes a resource, as the serverless framework made it |
+| `events: s3`                                                | `kdst.fromBucket()` of a bucket that is not `existing`, which becomes a resource; `kdst.Bucket` of one that is; with its `event` and the `prefix` and `suffix` of its `rules` |
 | `events: eventBridge` with a `pattern`                      | `kdst.EventRule`, with `eventBus`, `input`, `inputPath`, `inputTransformer`, `retryPolicy`, `deadLetterQueueArn` and `enabled` |
 | `events: websocket`, and `websocketsApiRouteSelectionExpression` | `kdst.fromWebSocket()`, and `websocket.routeSelection`         |
 | `events: alb`                                               | `kdst.LoadBalancer`, with its path, host, method, header, query and ip conditions |
 | `events: cloudwatchLog`                                     | `kdst.fromLogs()`, amended with its `filter`                          |
-| `resources.Resources`                                       | `resources`, the same type and properties, and `DeletionPolicy`       |
+| `resources.Resources`                                       | `resources`, the same type and properties, and `DeletionPolicy`, `Snapshot` as `retain` |
 | a table, queue, bucket or topic with what its shorthand sets | `kdst.table()`, `kdst.queue()`, `kdst.bucket()` or `kdst.topic()`, amended with the other properties; written out in full when any of what the shorthand sets differs |
 | `resources.Outputs`                                         | `outputs`                                                            |
 | `Ref`, `!Ref`                                               | `kdst.ref(<name>, "Identifier")`, or `"FunctionName"` for a function  |
@@ -95,28 +95,30 @@ koldstart does not read `serverless.yml` itself, and does not run serverless fra
 | `${file(./x.yml):key}`, `${file(./x.json)}`                 | the value, or the object or list, read from the file next to `serverless.yml` |
 | `params`, `stages.<stage>.params`, and `${param:name}`      | a `local` Mapping by stage, and `param("name")`, the stage's or default's |
 | `${aws:accountId}`                                          | `kdst.accountId`                                                     |
-| `${sls:stage}`, `${opt:stage}`                              | `kdst.stage`                                                         |
-| `${self:service}`, `${self:provider.region}`, `${aws:region}` | `module.app`, `module.region`                                      |
+| `${sls:stage}`, `${opt:stage}`, `${self:provider.stage}`    | `kdst.stage`                                                         |
+| `${self:service}`, `${self:provider.region}`, `${aws:region}`, `${opt:region}` | `module.app`, `module.region`                     |
 | `${self:...}` of anything else, such as `custom`            | the value it names                                                   |
 
 A variable inside a longer string becomes pkl interpolation: `orders-${sls:stage}` is `"orders-\(kdst.stage)"`. An ssm path is the app's and stage's when it starts with the service, by name or as `${self:service}`, then the stage, as `${sls:stage}` or `${opt:stage}`: `${ssm:/orders/${sls:stage}/api-key}` is `kdst.param("api-key")`, and `${ssm:/shared/${sls:stage}/key}` stays `kdst.ssm("/shared/\(kdst.stage)/key")`.
 
 ## what is left to you
 
-- `events: http` and `provider.apiGateway`, the rest api of api gateway. koldstart deploys http apis only. The route is converted to an `HttpRoute`, with a note, because request validation, usage plans and api keys have no equivalent.
-- `provider.iam`: the statements become `permissions` of every function, with a note to narrow them to what each function needs, or to replace them with `link`. A role of your own is not taken over. Statements with a `Condition`, `NotAction`, `NotResource` or `Principal` are left out.
+- `events: http` and `provider.apiGateway`, the rest api of api gateway. koldstart deploys http apis only. The route is converted to one of the http api, `kdst.get("/path")` and the other methods' helpers, with a note, because request validation, usage plans and api keys have no equivalent.
+- `provider.iam`: the statements become `permissions` of every function, with a note to narrow them to what each function needs, or to replace them with `link`. A role of your own, `provider.iam.role` or a function's `role`, is not taken over: every function gets one of its own. Statements with a `Condition`, `NotAction`, `NotResource` or `Principal` are left out.
 - `Fn::Select` of a list only known while deploying, such as `Fn::GetAZs`, and `Fn::Split`, `Fn::ImportValue`, `Fn::Cidr` and `Fn::Transform`, which become pkl expressions or values of your own; `AWS::StackId` and `AWS::NotificationARNs`.
 - a condition on a value only known while deploying, such as a ref.
-- `${file()}` of javascript or typescript, which runs code, and the other variable sources, which become an `import`, a `read()` or a value of your own; a secret or an output inside a longer string.
-- `custom` and `plugins`. What refers to `custom` gets its value. Some plugins are no longer needed: koldstart bundles typescript itself, so `serverless-esbuild` and `serverless-plugin-typescript` can go, `serverless-offline` is `kdst offline`, and every function has its own role already.
+- `${file()}` of anything but yaml or json, such as javascript, which runs code, and the other variable sources, which become an `import`, a `read()` or a value of your own; a secret or an output inside a longer string.
+- `custom`, and `plugins`, which do not run in koldstart. What refers to `custom` gets its value. Some plugins are no longer needed: koldstart bundles with esbuild itself, for `serverless-esbuild`, `serverless-plugin-typescript` and `serverless-webpack`; installs `requirements.txt` or `pyproject.toml` with uv, for `serverless-python-requirements`; gives every function a role of its own, for `serverless-iam-roles-per-function`; and keeps 3 versions of a function with an alias, for `serverless-prune-plugin`. `serverless-offline` is `kdst offline`. For `serverless-domain-manager` set `http.domain` and `http.certificate`, for `serverless-plugin-log-retention` set `logRetention`, and for `serverless-dotenv-plugin` and `useDotenv`, as koldstart reads no `.env`, export the variables and read them with `read("env:NAME")`. Any other plugin, or one of your own by its path, is for you to do another way.
 - runtimes other than node, go and python, which koldstart does not deploy: those functions are left out; and a function of a prebuilt image, given by its uri, which koldstart does not take, as it builds images itself.
 - `layers` that `serverless.yml` builds, which koldstart does not build: publish them, and give functions their arns. A go function's layers, which go functions do not take.
-- `snapStart` of a function that is not python, which lambda takes for java and .NET as well, runtimes koldstart does not build. `provider.versionFunctions`: koldstart publishes versions only of functions with `provisionedConcurrency` or `snapStart`.
+- `snapStart` of a function that is not python, which lambda takes for java and .NET as well, runtimes koldstart does not build. `provider.versionFunctions`: koldstart publishes versions only of functions with `provisionedConcurrency` or `snapStart`. `provisionedConcurrency` is on the function's `live` alias: call the function as `<name>:live` to use it.
 - `provider.logs.restApi` and `provider.logs.websocket`: the rest api's routes are on the http api, which takes `http.accessLogs`, and the websocket api has no access logs yet. `provider.tracing.apiGateway`: an http api has no x-ray tracing.
 - a kinesis stream's `consumer` and `startingPositionTimestamp`.
 - the policy of an `eventBridge` event's `deadLetterQueueArn`, which must let eventbridge send to it.
-- events other than the ones above, such as `cognitoUserPool`, `iot`, `msk` and `kafka`; an `eventBridge` event of a schedule, which is `kdst.schedule()`; a websocket route's authorizer.
-- resources of a `Custom::` type, and `DependsOn`, `Condition` and the other attributes of a resource besides `DeletionPolicy`.
+- events other than the ones above, such as `cognitoUserPool`, `iot`, `msk` and `kafka`; an `eventBridge` event of a schedule, which is `kdst.schedule()`; a websocket route's `authorizer` and `routeResponseSelectionExpression`.
+- resources of a type that is not `AWS::`, such as `Custom::`, which cloud control does not create. Of a resource's attributes, `CreationPolicy` and `UpdatePolicy` are left out and `Metadata` dropped; `DependsOn` gets a note, as koldstart orders resources by their refs. An output's `Export` gets a note too: another app reads it with `kdst.stageOutput()`.
+- a function's `name`, as koldstart names it `<app>-<stage>-<function>`, and a function renamed for its `_` or `.`: update what calls it by name. `disableLogs`: every function gets a log group. `logs.logGroup`: each function logs to `/aws/lambda/<name>`.
+- `provider.deploymentBucket`, as koldstart keeps its zips and state in a bucket of its own, and `stepFunctions`, to declare in `resources` as `AWS::StepFunctions::StateMachine`.
 
 ## moving a stage that is already deployed
 

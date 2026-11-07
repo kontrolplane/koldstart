@@ -10,9 +10,6 @@
 
 ---
 
-> [!NOTE]
-> koldstart has no release yet: 0.1.0 is next. Everything below is built; the plan is in [#1](https://github.com/kontrolplane/koldstart/issues/1).
-
 Here is an http api in typescript and a queue worker in go, sharing a table. Neither function sets a runtime or handler: koldstart infers them from the function's name and its files, `src/api.ts` and `cmd/worker/`, as [conventions](docs/configuration.md#conventions) describes. [examples/full-featured](./examples/full-featured) is a complete version of it, with the handlers:
 
 ```pkl
@@ -76,17 +73,17 @@ What was deployed is recorded in an S3 bucket in your account, created on the fi
 
 Functions are written in typescript, javascript, go or python, or are container images. Typescript is bundled with esbuild built into the binary, so packaging needs no node install. Go is cross-compiled to a `bootstrap` binary for the `provided.al2023` runtime. Python's dependencies are installed with uv for lambda's platform, native code included, from any machine. A container image is built with docker and pushed to ecr, and rebuilt only when what it is built from changes. Zips are built byte for byte the same from the same code, on a laptop and in CI, so their hash tells koldstart whether the code changed.
 
-Functions are triggered by api gateway http and websocket routes, function urls, schedules, eventbridge rules, sqs queues, sns topics, kinesis and dynamodb streams, s3 buckets, cloudwatch log groups, and application load balancers. Anything else AWS offers goes in `resources`, with the same type names and properties as CloudFormation. Tables, buckets and other resources that hold data are kept when a stage is removed, and a resource made outside koldstart is taken over with `kdst import`.
+Functions are triggered by api gateway http and websocket routes, function urls, schedules, eventbridge rules, sqs queues, sns topics, kinesis and dynamodb streams, s3 buckets, cloudwatch log groups, and application load balancers. Anything else AWS offers goes in `resources`, with the same type names and properties as CloudFormation. Tables, buckets and other resources that hold data are kept when a stage is removed, and a plan that would replace one stops unless `--allow-replace` is passed. A resource made outside koldstart is taken over with `kdst import`.
 
 `kdst invoke --local` and `kdst offline` run functions on your machine against an emulator of the lambda runtime api, with the variables the stage deployed and your credentials, so a handler runs locally the way it runs in AWS.
 
-`kdst ui` opens a terminal interface on every app and stage of the account: their functions, resources, outputs and history, a function's logs as they come, and invoking it. In a project's directory it plans and applies deploys too.
+`kdst ui` opens a terminal interface on every app and stage of the account: their functions, resources, outputs and history, a function's logs as they come, and invoking it. Any stage can be unlocked or removed from it, and in a project's directory it plans and applies deploys and runs functions on your machine too.
 
 Coming from the serverless framework, `kdst migrate` converts a `serverless.yml` into a `koldstart.pkl`, and lists what it left to you.
 
 ## installation
 
-There is no release yet. To build koldstart from source, with [go](https://go.dev/) 1.26 or later:
+Build koldstart from source with [go](https://go.dev/) 1.26 or later:
 
 ```bash
 go install github.com/kontrolplane/koldstart/cmd/koldstart@latest
@@ -95,9 +92,9 @@ alias kdst=koldstart
 
 koldstart evaluates configuration with the `pkl` binary. It uses the one `KOLDSTART_PKL` points at, or a `pkl` 0.30 or later on the `PATH`; without either, it downloads the version it pins to `~/.cache/koldstart`, or `$XDG_CACHE_HOME/koldstart`, on first use and checks it against the checksum built into koldstart.
 
-A release of koldstart writes its own version's schema package into the `PklProject` of a new project, and pkl downloads it from that release on GitHub the first time the project is resolved. A build from source, such as `go install` before 0.1.0 is out, has no release to point at: it writes a dependency on the schema built into it instead, extracted to `~/.cache/koldstart/schema/`, so it works offline and needs nothing published.
+A release of koldstart writes its own version's schema package into the `PklProject` of a new project, and pkl downloads it from that release on GitHub the first time the project is resolved. A build of a commit, as `go install` gives until a version is tagged, has no release to point at: it writes a dependency on the schema built into it instead, extracted to `~/.cache/koldstart/schema/`, so it works offline and needs nothing published.
 
-Once released, koldstart installs with `brew install kontrolplane/tap/koldstart`, which installs `kdst` and pkl with it, as binaries for linux and macos on the [GitHub releases](https://github.com/kontrolplane/koldstart/releases), and as a container image, `ghcr.io/kontrolplane/koldstart`, for linux/amd64 and linux/arm64. The image holds koldstart, pkl, go and uv, so it builds typescript, javascript, go and python functions; node and docker are not in it, so `typecheck`, `invoke --local`, `offline` and container image functions run elsewhere.
+From the first release, 0.1.0, koldstart also installs with `brew install kontrolplane/tap/koldstart`, which installs `kdst` and pkl with it, as binaries for linux and macos on the [GitHub releases](https://github.com/kontrolplane/koldstart/releases), and as a container image, `ghcr.io/kontrolplane/koldstart`, for linux/amd64 and linux/arm64. The image holds koldstart, pkl, go and uv, so it builds typescript, javascript, go and python functions; node and docker are not in it, so `typecheck = true`, `invoke --local`, `offline` and container image functions run elsewhere.
 
 ## getting started
 
@@ -169,7 +166,7 @@ functions {
 kdst deploy --stage prod --config koldstart.prod.pkl
 ```
 
-One app can read another's outputs with `kdst.stageOutput("payments", kdst.stage, "apiUrl")`, from the state of that stage. That stage can be in another region, or in another account through a role koldstart assumes: `(kdst.stageOutput("payments", "prod", "apiUrl")) { region = "us-east-1" }`.
+One app can read another's outputs with `kdst.stageOutput("payments", kdst.stage, "apiUrl")`, from the state of that stage. That stage can be in another region, or in another account, read through its bucket policy or a role koldstart assumes: `(kdst.stageOutput("payments", "prod", "apiUrl")) { region = "us-east-1" }`.
 
 ## secrets
 
@@ -187,7 +184,7 @@ kdst invoke -f worker --local --path events/job.json
 
 A python function runs with the version of python its runtime names, which [uv](https://docs.astral.sh/uv/) finds or installs once, its dependencies installed for it. A container image function is built for this machine and runs in docker, pointed at the same emulator. A function's layers are not added here, so what they put under `/opt` is missing; koldstart says so when it runs one.
 
-`offline` serves every http route of the stage on `127.0.0.1:3000`, so the api can be called with curl or a browser while you work on it. A change to a source file rebuilds the functions, and the next request runs the new code:
+`offline` serves every http route of the stage on `127.0.0.1:3000`, or the port `--port` names, so the api can be called with curl or a browser while you work on it. A change to a source file rebuilds the functions, and the next request runs the new code:
 
 ```bash
 kdst offline
@@ -201,7 +198,7 @@ functions {
 }
 ```
 
-Running against `prod` asks first, since the function then works with prod's data.
+Running against `prod` asks first, since the function then works with prod's data; `--yes` skips the question.
 
 ## deploying from ci
 
@@ -267,8 +264,8 @@ A file without a `PklProject` that amends the full `package://` uri of the schem
 
 ## what ends up in your account
 
-- for each function: the lambda function, an iam role, a log group, and the permissions its events need to invoke it
-- for each stage with http routes: one api gateway http api that all its routes share, and a log group for its access logs when it has them
+- for each function: the lambda function, an iam role, a log group, the permissions its events need to invoke it, and what connects each event to it, such as a queue's event source mapping, a topic's subscription or a schedule
+- for each stage with http routes: one api gateway http api that all its routes share, and a log group for its access logs when it has them; with websocket routes, one websocket api
 - everything in `resources`, created through the cloud control api
 - per account and region: one bucket, `koldstart-state-<account>-<region>`, versioned, encrypted and with public access blocked, holding the state, locks and zips of every app and stage. Zips expire after 90 days, and each state keeps its last 100 versions.
 
@@ -276,8 +273,8 @@ Everything koldstart creates is tagged with its app, stage and node, together wi
 
 ## not supported yet
 
-- runtimes other than node, go and python
-- the rest api of api gateway, only http apis are deployed
+- runtimes other than node, go and python, except in a container image
+- routes on the rest api of api gateway: they go to an http api
 - windows, other than through the container image
 
 ## commands
@@ -286,8 +283,8 @@ Everything koldstart creates is tagged with its app, stage and node, together wi
 | -------------------------------- | ------------------------------------------------------------------------------- |
 | `init [directory]`               | start a project: a `koldstart.pkl`, its `PklProject`, a handler and the `.gitignore` entries |
 | `package`                        | build and zip every function, without deploying                                 |
-| `plan`                           | show what a deploy would create, change and delete, `--refresh` to read aws too  |
-| `deploy`                         | build, upload and apply the plan                                                |
+| `plan`                           | show what a deploy would create, change and delete, `--refresh` to show what changed outside koldstart |
+| `deploy`                         | build, upload and apply the plan, `--refresh` to undo what changed outside koldstart |
 | `deploy function -f <fn>`        | deploy only the code of one function                                            |
 | `remove`                         | delete everything the stage deployed, leaving resources that hold data in place |
 | `import <resource> <identifier>` | take over a resource koldstart did not create                                   |
@@ -299,7 +296,7 @@ Everything koldstart creates is tagged with its app, stage and node, together wi
 | `upgrade`                        | point the `PklProject` at this koldstart's schema, `--check` to only say if it is wanted |
 | `ui`                             | open the terminal interface                                                     |
 | `unlock`                         | release a stage's lock left by a deploy that did not finish                     |
-| `version`                        | print the version                                                               |
+| `version`                        | print the version, `-o json` with its commit and build date                     |
 | `completion <shell>`             | print the completion script for bash, fish, powershell or zsh                   |
 | `help [command]`                 | print the help of a command                                                     |
 
@@ -323,27 +320,29 @@ A few more environment variables change what koldstart does:
 | ------------------------------------ | ---------------------------------------------------------------------------- |
 | `KOLDSTART_PKL`                      | the pkl binary to evaluate configuration with                                |
 | `AWS_ENDPOINT_URL`                   | an endpoint for every aws api, such as an emulator; `endpoint_url` in a profile does the same, as in [hack/floci/aws-config](./hack/floci/aws-config) |
-| `NO_COLOR`                           | no colour in the output of `plan`, `deploy`, `remove`, `invoke` and `logs`   |
+| `NO_COLOR`                           | no colour in the output of `plan`, `deploy`, `remove`, `invoke`, `logs` and `ui`, as with `TERM=dumb` |
 | `VISUAL`, `EDITOR`                   | the editor `ui` edits events in, `vi` without either                         |
+| `COLORFGBG`                          | the terminal's background, for `ui --theme auto` until the terminal reports its own |
 
 A command that fails exits with 1, and a command line that is refused, such as an unknown flag, with 2. One that ctrl+c or SIGTERM stops before it is done, such as a deploy, exits with 130; `logs --tail` and `offline`, which run until they are stopped, exit with 0.
 
 ## documentation
 
-- [configuration](./docs/configuration.md): the pkl schema, functions, events, resources, references, stages and secrets
-- [how it works](./docs/how-it-works.md): planning, applying, the output for scripts, state, locking and what happens when a deploy fails
+- [configuration](./docs/configuration.md): the pkl schema and its `PklProject`, functions, events, resources, references, outputs, stages and secrets
+- [how it works](./docs/how-it-works.md): planning, applying, state, locking, the output for scripts, what happens when a deploy fails, and removing a stage
 - [terminal interface](./docs/ui.md): the views and keys of `kdst ui`
-- [migrating from the serverless framework](./docs/migrating.md): what `kdst migrate` converts and what it leaves to you
+- [migrating from the serverless framework](./docs/migrating.md): what `kdst migrate` converts, what it leaves to you, and moving a stage that is already deployed
 
 ## development
 
 - [go](https://go.dev/) 1.26+
-- [pkl](https://pkl-lang.org/), for the schema tests, which skip without it
-- [node](https://nodejs.org/) 22+, only for `invoke --local` and `offline` with javascript functions
+- [pkl](https://pkl-lang.org/), for the tests that evaluate configuration, which skip without it
+- [node](https://nodejs.org/) 22+, for the tests that run node functions here, which skip without it
 - [docker](https://www.docker.com/), for the tests that run against [floci](https://github.com/floci-io/floci), a local aws emulator
 - [vhs](https://github.com/charmbracelet/vhs) with `ffmpeg` and `ttyd`, only to record the readme gif and screenshots
 
 ```bash
+make build
 make test
 make emulator test-emulator
 make local local-ui
@@ -351,7 +350,7 @@ make check
 make vhs
 ```
 
-`make test` runs the unit tests, against fakes and an in-memory state, with no aws account. `make emulator test-emulator` runs the tests that talk to aws against floci, and `make emulator-down` stops it. `make local` deploys the checkout service in [hack/demonstration/checkout](./hack/demonstration/checkout) to that floci, to development, staging and production as a team would over a few releases, with invocations, failures, an hour of metrics and a deploy left locked, and `make local-ui` opens `kdst ui` on it through the `local` profile of [hack/floci/aws-config](./hack/floci/aws-config). `make check` runs what CI runs. `make vhs` records the gif above and a screenshot of each page in `assets/pages/`, against the same service deployed to a floci of its own on 127.0.0.1:4567. `go test -tags e2e ./test/e2e/...` deploys [examples/full-featured](./examples/full-featured) to a real account, with the credentials you have, and removes it again. [CONTRIBUTING.md](./CONTRIBUTING.md) and [AGENTS.md](./AGENTS.md) have the rest.
+`make build` writes `bin/koldstart`, with `bin/kdst` beside it. `make test` runs the unit tests, against fakes and an in-memory state, with no aws account. `make emulator test-emulator` runs the tests that talk to aws against floci, and `make emulator-down` stops it. `make local` deploys the checkout service in [hack/demonstration/checkout](./hack/demonstration/checkout) to that floci, to development, staging and production as a team would over a few releases, with invocations, failures, an hour of metrics and a deploy left locked, and `make local-ui` opens `kdst ui` on it through the `local` profile of [hack/floci/aws-config](./hack/floci/aws-config). `make check` runs what CI runs but the emulator tests, the snapshot release and the image. `make vhs` records the gif above and a screenshot of each page in `assets/pages/`, against the same service deployed to a floci of its own on 127.0.0.1:4567. `go test -tags e2e ./test/e2e/...` deploys [examples/full-featured](./examples/full-featured) to a real account, with the credentials you have, and removes it again. [CONTRIBUTING.md](./CONTRIBUTING.md) and [AGENTS.md](./AGENTS.md) have the rest.
 
 ## license
 
