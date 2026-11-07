@@ -41,26 +41,35 @@ koldstart does not read `serverless.yml` itself, and does not run serverless fra
 | `provider.stage`                                            | a note to pass `--stage`, as koldstart deploys to `dev` by default    |
 | `provider.runtime`, `memorySize`, `timeout`, `architecture`, `logRetentionInDays`, `vpc` | set on every function that does not set its own |
 | `provider.environment`                                      | merged into the environment of every function, the function's winning |
-| `provider.tags`                                             | `tags`                                                               |
+| `provider.tags`, `provider.stackTags`                       | `tags`, `provider.tags` winning                                      |
+| `provider.tracing.lambda`, `functions.<name>.tracing`       | `tracing = true` on every function that traces                        |
+| `provider.kmsKeyArn`, `functions.<name>.kmsKeyArn`          | `kmsKey`, the function's winning                                     |
+| `provider.logs.httpApi`                                     | `http.accessLogs`, with its `format`                                 |
+| `provider.logs.lambda`                                      | `logFormat`, `applicationLogLevel` and `systemLogLevel` on every function |
 | `provider.httpApi.cors`, `provider.httpApi.authorizers`     | `http.cors`, and `kdst.JwtAuthorizer` or `kdst.LambdaAuthorizer`      |
 | `provider.iam.role.statements`, `iamRoleStatements`         | `permissions` on every function, with a note to narrow them           |
 | `functions.<name>`                                          | a function of the same name, `_` and `.` as `-`                      |
 | `functions.<name>.handler`                                  | `handler`; for go, a placeholder package to build                    |
 | `functions.<name>.url`                                      | `url = new { auth = "none" }`, `"iam"` with `authorizer: aws_iam`, and its `cors` |
 | `functions.<name>.reservedConcurrency`, `ephemeralStorageSize` | `reservedConcurrency`, `ephemeralStorage`                        |
+| `functions.<name>.tags`                                     | `tags` of the function                                               |
+| `functions.<name>.onError`                                  | `deadLetter`                                                         |
+| `functions.<name>.destinations`, `maximumRetryAttempts`, `maximumEventAge` | `async`; a destination that names a function is its `kdst.ref()` |
+| `functions.<name>.fileSystemConfig`                         | `fileSystem = new { accessPoint; mountPath }`                         |
 | python runtimes, and a handler such as `src.handler.main`   | `python3.12` or `python3.13`, older ones as `python3.12`, and `src/handler.main` |
 | `functions.<name>.layers`                                   | `layers`, by their arns                                              |
 | `functions.<name>.image` of `provider.ecr.images`           | `image { context; dockerfile; buildArgs; command }`                  |
-| `events: httpApi`                                           | `kdst.get("/path")` and the other methods' helpers, `*` as `kdst.any("$default")`, amended with its authorizer and scopes |
+| `events: httpApi`                                           | `kdst.get("/path")` and the other methods' helpers, `*` as `kdst.any("$default")`, amended with its authorizer and scopes, and `iam = true` for `aws_iam` |
 | `events: http`                                              | the same, on the http api, with a note                               |
 | `events: schedule`                                          | `kdst.schedule("rate(...)")`, one for each rate, amended with `enabled` and `input` |
-| `events: sqs`                                               | `kdst.fromQueue()`, of a queue of `resources` by its name or of an arn; `kdst.Queue` for any other value |
-| `events: stream`                                            | `kdst.fromStream()` or `kdst.fromTableStream()`, the same way; `kdst.Stream` for any other value |
+| `events: sqs`                                               | `kdst.fromQueue()`, of a queue of `resources` by its name or of an arn; `kdst.Queue` for any other value; with `maximumConcurrency` and `enabled` |
+| `events: stream`                                            | `kdst.fromStream()` or `kdst.fromTableStream()`, the same way; `kdst.Stream` for any other value; with its retries, record age, bisecting, parallelization, tumbling window, `destinations.onFailure` and `enabled` |
 | `events: sns`                                               | `kdst.fromTopic()`, the same way; a topic given by name becomes a resource, as the serverless framework made it |
 | `events: s3`                                                | `kdst.fromBucket()` of a bucket that is not `existing`, which becomes a resource; `kdst.Bucket` of one that is |
-| `events: eventBridge` with a `pattern`                      | `kdst.EventRule`, with `eventBus`, `input` and `enabled`             |
+| `events: eventBridge` with a `pattern`                      | `kdst.EventRule`, with `eventBus`, `input`, `inputPath`, `inputTransformer`, `retryPolicy`, `deadLetterQueueArn` and `enabled` |
 | `events: websocket`, and `websocketsApiRouteSelectionExpression` | `kdst.fromWebSocket()`, and `websocket.routeSelection`         |
-| `events: alb`                                               | `kdst.LoadBalancer`, with its path, host and method conditions       |
+| `events: alb`                                               | `kdst.LoadBalancer`, with its path, host, method, header, query and ip conditions |
+| `events: cloudwatchLog`                                     | `kdst.fromLogs()`, amended with its `filter`                          |
 | `resources.Resources`                                       | `resources`, the same type and properties, and `DeletionPolicy`       |
 | a table, queue, bucket or topic with what its shorthand sets | `kdst.table()`, `kdst.queue()`, `kdst.bucket()` or `kdst.topic()`, amended with the other properties; written out in full when any of what the shorthand sets differs |
 | `resources.Outputs`                                         | `outputs`                                                            |
@@ -100,7 +109,11 @@ A variable inside a longer string becomes pkl interpolation: `orders-${sls:stage
 - `custom` and `plugins`. What refers to `custom` gets its value. Some plugins are no longer needed: koldstart bundles typescript itself, so `serverless-esbuild` and `serverless-plugin-typescript` can go, `serverless-offline` is `kdst offline`, and every function has its own role already.
 - runtimes other than node, go and python, which koldstart does not deploy: those functions are left out; and a function of a prebuilt image, given by its uri, which koldstart does not take, as it builds images itself.
 - `layers` that `serverless.yml` builds, which koldstart does not build: publish them, and give functions their arns. A go function's layers, which go functions do not take.
-- events other than the ones above, such as `cognitoUserPool`, `iot` and `cloudwatchLog`; an `eventBridge` event of a schedule, which is `kdst.schedule()`, and its `inputPath`, `inputTransformer` and `retryPolicy`; the header, query and ip conditions of an `alb` event; a websocket route's authorizer.
+- `provisionedConcurrency` and `snapStart`, which need published versions, which koldstart does not publish yet.
+- `provider.logs.restApi` and `provider.logs.websocket`: the rest api's routes are on the http api, which takes `http.accessLogs`, and the websocket api has no access logs yet. `provider.tracing.apiGateway`: an http api has no x-ray tracing.
+- a kinesis stream's `consumer` and `startingPositionTimestamp`.
+- the policy of an `eventBridge` event's `deadLetterQueueArn`, which must let eventbridge send to it.
+- events other than the ones above, such as `cognitoUserPool`, `iot`, `msk` and `kafka`; an `eventBridge` event of a schedule, which is `kdst.schedule()`; a websocket route's authorizer.
 - resources of a `Custom::` type, and `DependsOn`, `Condition` and the other attributes of a resource besides `DeletionPolicy`.
 
 ## moving a stage that is already deployed
