@@ -818,7 +818,19 @@ func readLogLine(raw, id string) shownLine {
 	return readLine(raw, id, fieldWidth)
 }
 
-// readLine is readLogLine with the values of json's fields cut to limit, or whole for 0.
+// logfmtFields are the pairs of a line of logfmt as the fields of json, each value a string, so a
+// line of logfmt reads as one of json does.
+func logfmtFields(pairs [][2]string) []jsonField {
+	out := make([]jsonField, len(pairs))
+	for i, p := range pairs {
+		v, _ := json.Marshal(p[1])
+		out[i] = jsonField{key: p[0], value: v}
+	}
+	return out
+}
+
+// readLine is readLogLine with the values of json's and logfmt's fields cut to limit, or whole
+// for 0. A line of logfmt reads as one of json, its pairs the fields.
 func readLine(raw, id string, limit int) shownLine {
 	lines := messageLines(colours.ReplaceAllString(raw, ""))
 	l := shownLine{limit: limit}
@@ -834,6 +846,10 @@ func readLine(raw, id string, limit int) shownLine {
 			l.fromJSON(strings.TrimSpace(first[:i]), fields, id)
 			return l
 		}
+	}
+	if pairs, ok := logfmtPairs(first); ok && len(rest) == 0 {
+		l.fromJSON("", logfmtFields(pairs), id)
+		return l
 	}
 	if len(rest) == 0 && first == lines[0] {
 		if l.frame = stackLines(lines, false)[0]; l.frame.kind != notFrame {

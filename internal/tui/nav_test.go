@@ -508,3 +508,70 @@ func TestNavFootRoom(t *testing.T) {
 		})
 	}
 }
+
+// TestFitHints checks a footer too narrow for every hint leaves out first the keys that do one
+// thing, then refresh, then the filter or search, and keeps the page's main action, the keys that
+// move, and help and back longest, each in its place.
+func TestFitHints(t *testing.T) {
+	m := newTestModel(t, newFake(t))
+	k := m.keys
+	nextPrev := [2]string{k.Next.Help().Key + "/" + k.Previous.Help().Key, nextPrevious}
+	overview := [][2]string{hint(k.View), hint(k.Deploy), hint(k.Unlock), hint(k.Filter), hint(k.Remove), hint(k.Copy), hint(k.Pause), hint(k.Help), hint(k.Quit, "quit")}
+	resource := [][2]string{hint(k.NextTab, "applied / in aws"), {upDown, "move"}, {"enter/space", "fold"}, hint(k.Filter, "search"), hint(k.Copy), hint(k.CopyPath), hint(k.Refresh), hint(k.Help), hint(k.Quit)}
+	tests := []struct {
+		name  string
+		pairs [][2]string
+		want  [][2]string
+	}{
+		{name: "all that fit", pairs: overview, want: overview},
+		{name: "the filter kept", pairs: overview, want: [][2]string{hint(k.View), hint(k.Deploy), hint(k.Filter), hint(k.Help), hint(k.Quit, "quit")}},
+		{name: "the main action and the filter", pairs: overview, want: [][2]string{hint(k.View), hint(k.Filter), hint(k.Help), hint(k.Quit, "quit")}},
+		{name: "the main action alone", pairs: overview, want: [][2]string{hint(k.View), hint(k.Help), hint(k.Quit, "quit")}},
+		{name: "help and back at the least", pairs: overview, want: [][2]string{hint(k.Help), hint(k.Quit, "quit")}},
+		{name: "refresh after copying", pairs: resource, want: [][2]string{hint(k.NextTab, "applied / in aws"), {upDown, "move"}, hint(k.Filter, "search"), hint(k.Refresh), hint(k.Help), hint(k.Quit)}},
+		{name: "search after refresh", pairs: resource, want: [][2]string{hint(k.NextTab, "applied / in aws"), {upDown, "move"}, hint(k.Filter, "search"), hint(k.Help), hint(k.Quit)}},
+		{name: "a first hint that moves nothing kept", pairs: [][2]string{hint(k.Apply, "deploy"), hint(k.Refresh, "read aws"), chooseHint, hint(k.Fold), hint(k.Help), hint(k.Quit)}, want: [][2]string{hint(k.Apply, "deploy"), chooseHint, hint(k.Help), hint(k.Quit)}},
+		{name: "next and previous kept", pairs: [][2]string{scrollHint, nextPrev, hint(k.Request), hint(k.Copy), hint(k.Help), hint(k.Quit)}, want: [][2]string{scrollHint, nextPrev, hint(k.Help), hint(k.Quit)}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			want := hints(tt.want...)
+			if got := m.fitHints(ansi.StringWidth(want), tt.pairs...); got != want {
+				t.Errorf("got %q, want %q", ansi.Strip(got), ansi.Strip(want))
+			}
+		})
+	}
+}
+
+// TestFooterNarrow checks the footer of each page at 80 by 24 keeps the filter or search where
+// the page has one, beside its main action and the keys that move.
+func TestFooterNarrow(t *testing.T) {
+	pages := layoutPages(t, 80, 24)
+	tests := []struct {
+		name string
+		page string
+		want []string
+	}{
+		{name: "the stages", page: "overview", want: []string{"enter open", "/ filter", "? help", "q quit"}},
+		{name: "a stage", page: "stage", want: []string{"enter open", "tab next tab", "/ filter"}},
+		{name: "the resources", page: "stage resources", want: []string{"enter/space fold", "tab next tab", "/ filter"}},
+		{name: "the logs", page: "logs", want: []string{"enter open line", "/ filter", "tab next tab"}},
+		{name: "the invocations", page: "invocations", want: []string{"enter open", "↑/↓ choose", "tab next tab"}},
+		{name: "a resource", page: "resource", want: []string{"tab applied / in aws", "r refresh"}},
+		{name: "a resource in aws", page: "resource in aws", want: []string{"tab applied / in aws", "↑/↓ move", "/ search"}},
+		{name: "an invocation", page: "invocation", want: []string{"↑/↓ scroll", "n/p next / previous"}},
+		{name: "a plan", page: "plan", want: []string{"ctrl+s deploy", "enter diff"}},
+		{name: "an output", page: "output", want: []string{"r refresh"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lines := strings.Split(screen(pages[tt.page]), "\n")
+			foot := lines[len(lines)-1]
+			for _, w := range tt.want {
+				if !strings.Contains(foot, w) {
+					t.Errorf("the footer %q has no %q", foot, w)
+				}
+			}
+		})
+	}
+}

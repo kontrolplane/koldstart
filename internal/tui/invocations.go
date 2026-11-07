@@ -19,16 +19,17 @@ import (
 const errorLabel = "error"
 
 // invocationColumns are the columns of the invocations: the status first, so a failure is seen
-// at a glance, and what it failed with last, the first to go when the table is narrow.
+// at a glance, and what it failed with last. As the table narrows the memory goes first, then
+// what was billed, the cold start and the request, so a failed row keeps what it failed with.
 var invocationColumns = []column{
 	{title: "", width: 11},
 	{title: "time", width: 12},
 	{title: "request", width: 8, drop: 2},
 	{title: "duration", width: 8, right: true},
 	{title: "billed", width: 8, right: true, drop: 4},
-	{title: "memory", width: memoryWidth, right: true, drop: 1},
+	{title: "memory", width: memoryWidth, right: true, drop: 5},
 	{title: "cold start", width: 10, right: true, drop: 3},
-	{title: errorLabel, width: 10, grow: 1, drop: 5},
+	{title: errorLabel, width: 20, grow: 1, drop: 1},
 }
 
 // memoryWidth is how wide the column of the memory an invocation used is.

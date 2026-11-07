@@ -28,9 +28,12 @@ type removeState struct {
 // runLocalState asks before a function runs here against what prod or production deployed. tab is the tab of
 // the function it was asked from, which no goes back to.
 type runLocalState struct {
-	event    string
-	payload  []byte
-	tab      functionTab
+	event   string
+	payload []byte
+	tab     functionTab
+	// from is the page it was asked from, the function's or the stage's functions tab, which it is
+	// drawn over and no goes back to.
+	from     page
 	selected int
 }
 
@@ -143,9 +146,11 @@ func (m model) runLocalUpdate(msg tea.Msg) (model, tea.Cmd) {
 		m = m.switchPage(functionPage).showPane(true)
 		return m.invoke(r.event, r.payload, true)
 	case confirmNo:
-		m = m.switchPage(functionPage)
 		m.state.function.tab = r.tab
-		return m, nil
+		if r.from == stagePage {
+			return m.leaveFunction()
+		}
+		return m.switchPage(functionPage), nil
 	}
 	return m, nil
 }
