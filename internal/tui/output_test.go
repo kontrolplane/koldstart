@@ -193,3 +193,56 @@ func TestOutputKind(t *testing.T) {
 		})
 	}
 }
+
+// TestOutputNotesAndHints checks what the page says in place of a value starts in the column the
+// values of its facts do, and the footer offers c only while there is a value to copy and scroll
+// only while the value is longer than the screen.
+func TestOutputNotesAndHints(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		gone  bool
+		note  string
+		want  []string
+		not   []string
+	}{
+		{name: "emptyNote", note: "empty", not: []string{"c copy", "scroll"}},
+		{name: "apiUrl", gone: true, note: "the stage no longer has this output", not: []string{"c copy", "scroll"}},
+		{name: "certificate", want: []string{"c copy the value"}, not: []string{"scroll"}},
+		{name: "long", value: strings.Repeat("a line\n", 60), want: []string{"↑/↓ scroll", "c copy the value"}},
+		{name: "database", want: []string{"/ search", "c copy"}, not: []string{"copy the value", "scroll"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := sdStage(t, 3)
+			if tt.value != "" {
+				f.states[ordersDev].Outputs[tt.name] = tt.value
+			}
+			m := sdOpenOutput(t, sdOutputs(t, f), tt.name)
+			if tt.gone {
+				f.mu.Lock()
+				delete(f.states[ordersDev].Outputs, tt.name)
+				f.mu.Unlock()
+				m = pressKeys(t, m, "r")
+			}
+			if tt.note != "" {
+				_, title := sdLine(m, "│ "+tt.name+" ─")
+				want := title + 2 + rowInset + labelWidth
+				if line, at := sdLine(m, "  "+tt.note); at+2 != want {
+					t.Errorf("%q starts at %d, the values at %d:\n%s", tt.note, at+2, want, line)
+				}
+			}
+			got := rsHints(m)
+			for _, want := range tt.want {
+				if !strings.Contains(got, want) {
+					t.Errorf("no %q in %q", want, got)
+				}
+			}
+			for _, not := range tt.not {
+				if strings.Contains(got, not) {
+					t.Errorf("%q in %q", not, got)
+				}
+			}
+		})
+	}
+}
