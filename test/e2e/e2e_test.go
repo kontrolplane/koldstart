@@ -24,6 +24,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/apigateway"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	lambdatypes "github.com/aws/aws-sdk-go-v2/service/lambda/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -55,6 +56,8 @@ const (
 //     waits for the group, with provisioned concurrency, so it has a live alias its events
 //     invoke, async invocations sent to the failures queue once they fail, tracing and json logs
 //   - a route of the api that takes only requests signed with sigv4
+//   - legacy, written by the test, with a private route of the rest api, which takes only
+//     requests with the stage's api key
 //   - a limit on how many workers read the jobs queue at once
 const e2eConfig = `amends "koldstart.pkl"
 
@@ -69,6 +72,11 @@ functions {
   ["worker"] {
     events = new {
       (kdst.fromQueue("jobs")) { maximumConcurrency = 2 }
+    }
+  }
+  ["legacy"] {
+    events {
+      (kdst.rest("GET", "/legacy/{id}")) { private = true }
     }
   }
   ["audit"] {
@@ -119,6 +127,14 @@ export const handler = async (event: { fail?: boolean; awslogs?: { data: string 
 `
 }
 
+// legacySource is the legacy function: it answers with what of the event of payload 1.0 it was
+// handed, the route's resource and the path's id.
+const legacySource = `export const handler = async (event: { resource: string; pathParameters: { id: string } }) => ({
+  statusCode: 200,
+  body: JSON.stringify({ resource: event.resource, id: event.pathParameters.id }),
+});
+`
+
 // project is a copy of the example, with the kdst built from this tree to run in it.
 type project struct {
 	t     *testing.T
@@ -148,6 +164,7 @@ func newProject(t *testing.T, stage string) *project {
 	p.useLocalSchema()
 	write(t, filepath.Join(p.dir, "e2e.pkl"), e2eConfig)
 	write(t, filepath.Join(p.dir, "src", "audit.ts"), auditSource("1"))
+	write(t, filepath.Join(p.dir, "src", "legacy.ts"), legacySource)
 	return p
 }
 
@@ -207,7 +224,8 @@ func (p *project) putAPIKey() string {
 }
 
 // TestFullFeatured deploys the example, calls its api, checks the worker stored what the api
-// queued, that a route of iam refuses an unsigned request, and what audit brings: its settings,
+// queued, that a route of iam refuses an unsigned request, that the private route of the rest
+// api takes only requests with its key, and what audit brings: its settings,
 // its alias, its subscription to the worker's log and its async failures. It deploys a change of
 // code through the fast path, and removes the stage, leaving nothing.
 func TestFullFeatured(t *testing.T) {
@@ -248,6 +266,7 @@ func TestFullFeatured(t *testing.T) {
 	if status, _ := request(t, http.MethodGet, api+"/admin/stats", key, ""); status != http.StatusForbidden {
 		t.Errorf("GET /admin/stats unsigned: %d, want 403 from a route that takes only signed requests", status)
 	}
+	p.checkRest()
 	p.checkAudit()
 
 	report := filepath.Join(p.dir, "src", "report.ts")
@@ -275,6 +294,30 @@ func TestFullFeatured(t *testing.T) {
 		}
 		return len(left) == 0
 	})
+}
+
+// checkRest checks the private route of the rest api refuses a request without the stage's api
+// key, and hands legacy the event of payload 1.0 of one with it, once the stage's deployment
+// serves it.
+func (p *project) checkRest() {
+	t := p.t
+	t.Helper()
+	outputs := p.outputs()
+	url, id := outputs["restApiUrl"], outputs["restApiKeyId"]
+	if url == "" || id == "" {
+		t.Fatalf("no restApiUrl or restApiKeyId output: %v", outputs)
+	}
+	key, err := apigateway.NewFromConfig(p.cfg).GetApiKey(context.Background(), &apigateway.GetApiKeyInput{ApiKey: &id, IncludeValue: aws.Bool(true)})
+	if err != nil {
+		t.Fatalf("reading the api key %s: %v", id, err)
+	}
+	eventually(t, 2*time.Minute, "the rest api to serve the private route", func() bool {
+		status, body := request(t, http.MethodGet, url+"/legacy/7", aws.ToString(key.Value), "")
+		return status == http.StatusOK && strings.Contains(body, `"resource":"/legacy/{id}"`) && strings.Contains(body, `"id":"7"`)
+	})
+	if status, _ := request(t, http.MethodGet, url+"/legacy/7", "", ""); status != http.StatusForbidden {
+		t.Errorf("GET /legacy/7 without the key: %d, want 403", status)
+	}
 }
 
 // checkAudit checks what audit brings that only aws can: its settings in lambda, its live alias

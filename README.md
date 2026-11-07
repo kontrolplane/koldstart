@@ -73,7 +73,7 @@ What was deployed is recorded in an S3 bucket in your account, created on the fi
 
 Functions are written in typescript, javascript, go or python, or are container images. Typescript is bundled with esbuild built into the binary, so packaging needs no node install. Go is cross-compiled to a `bootstrap` binary for the `provided.al2023` runtime. Python's dependencies are installed with uv for lambda's platform, native code included, from any machine. A container image is built with docker and pushed to ecr, and rebuilt only when what it is built from changes. Zips are built byte for byte the same from the same code, on a laptop and in CI, so their hash tells koldstart whether the code changed.
 
-Functions are triggered by api gateway http and websocket routes, function urls, schedules, eventbridge rules, sqs queues, sns topics, kinesis and dynamodb streams, s3 buckets, cloudwatch log groups, and application load balancers. Anything else AWS offers goes in `resources`, with the same type names and properties as CloudFormation. Tables, buckets and other resources that hold data are kept when a stage is removed, and a plan that would replace one stops unless `--allow-replace` is passed. A resource made outside koldstart is taken over with `kdst import`.
+Functions are triggered by api gateway http, rest and websocket routes, function urls, schedules, eventbridge rules, sqs queues, sns topics, kinesis and dynamodb streams, s3 buckets, cloudwatch log groups, and application load balancers. Anything else AWS offers goes in `resources`, with the same type names and properties as CloudFormation. Tables, buckets and other resources that hold data are kept when a stage is removed, and a plan that would replace one stops unless `--allow-replace` is passed. A resource made outside koldstart is taken over with `kdst import`.
 
 `kdst invoke --local` and `kdst offline` run functions on your machine against an emulator of the lambda runtime api, with the variables the stage deployed and your credentials, so a handler runs locally the way it runs in AWS.
 
@@ -184,7 +184,7 @@ kdst invoke -f worker --local --path events/job.json
 
 A python function runs with the version of python its runtime names, which [uv](https://docs.astral.sh/uv/) finds or installs once, its dependencies installed for it. A container image function is built for this machine and runs in docker, pointed at the same emulator. A function's layers are not added here, so what they put under `/opt` is missing; koldstart says so when it runs one.
 
-`offline` serves every http route of the stage on `127.0.0.1:3000`, or the port `--port` names, so the api can be called with curl or a browser while you work on it. A change to a source file rebuilds the functions, and the next request runs the new code:
+`offline` serves every http route of the stage on `127.0.0.1:3000`, or the port `--port` names, and every rest route under the stage, as `/dev/orders`, with the event of payload 1.0, so the api can be called with curl or a browser while you work on it. Authorizers, iam and api keys are not checked. A change to a source file rebuilds the functions, and the next request runs the new code:
 
 ```bash
 kdst offline
@@ -265,7 +265,7 @@ A file without a `PklProject` that amends the full `package://` uri of the schem
 ## what ends up in your account
 
 - for each function: the lambda function, an iam role, a log group, the permissions its events need to invoke it, and what connects each event to it, such as a queue's event source mapping, a topic's subscription or a schedule
-- for each stage with http routes: one api gateway http api that all its routes share, and a log group for its access logs when it has them; with websocket routes, one websocket api
+- for each stage with http routes: one api gateway http api that all its routes share, and a log group for its access logs when it has them; with rest routes, one rest api with a stage of the stage's name, its deployment, and an api key and usage plan when a route is private; with websocket routes, one websocket api
 - everything in `resources`, created through the cloud control api
 - per account and region: one bucket, `koldstart-state-<account>-<region>`, versioned, encrypted and with public access blocked, holding the state, locks and zips of every app and stage. Zips expire after 90 days, and each state keeps its last 100 versions.
 
@@ -274,7 +274,7 @@ Everything koldstart creates is tagged with its app, stage and node, together wi
 ## not supported yet
 
 - runtimes other than node, go and python, except in a container image
-- routes on the rest api of api gateway: they go to an http api
+- on the rest api of api gateway: integrations other than lambda proxy, request models, cors, a custom domain, access logs and caching
 - windows, other than through the container image
 
 ## commands
@@ -290,7 +290,7 @@ Everything koldstart creates is tagged with its app, stage and node, together wi
 | `import <resource> <identifier>` | take over a resource koldstart did not create                                   |
 | `outputs`                        | print the stage's outputs, such as the http api url                             |
 | `invoke -f <fn>`                 | invoke a function with `--data` or `--path`, `--local` to run it here            |
-| `offline`                        | serve the http routes on this machine                                           |
+| `offline`                        | serve the http and rest routes on this machine                                  |
 | `logs -f <fn>`                   | print a function's logs, `--tail` to follow them                                |
 | `migrate [serverless.yml]`       | convert a serverless framework project                                          |
 | `upgrade`                        | point the `PklProject` at this koldstart's schema, `--check` to only say if it is wanted |

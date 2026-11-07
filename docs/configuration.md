@@ -57,6 +57,7 @@ The schema has a version of its own, `schemaVersion`, which `Project.pkl` render
 | `functions` | the functions, by name                                                                          |
 | `resources` | any other aws resources, by name; functions and resources share their names                     |
 | `http`      | the stage's http api: domain, cors, authorizers, throttling and access logs                      |
+| `rest`      | the stage's rest api: authorizers and throttling, see [the rest api](#the-rest-api)              |
 | `websocket` | the stage's websocket api: `routeSelection`, see [the websocket api](#the-websocket-api)         |
 | `outputs`   | values printed by `kdst outputs` and shown in `kdst ui`                                          |
 | `tags`      | tags added to everything koldstart creates, next to its own                                      |
@@ -264,6 +265,7 @@ Events are added to a function's `events`, with the helpers of `kdst.pkl`:
 events {
   kdst.get("/orders/{id}")
   (kdst.post("/orders")) { authorizer = "users" }
+  (kdst.rest("GET", "/legacy/{id}")) { private = true }
   kdst.schedule("rate(5 minutes)")
   (kdst.fromQueue("jobs")) { batchSize = 5 }
   kdst.fromTopic("alerts")
@@ -278,6 +280,7 @@ events {
 | helper                                   | gives                                                                  |
 | ---------------------------------------- | ---------------------------------------------------------------------- |
 | `kdst.get(path)`, `post`, `put`, `patch`, `del`, `head`, `options`, `any` | an `HttpRoute` of that method; `del` as `delete` is a keyword of pkl |
+| `kdst.rest(method, path)`                | a `RestRoute` of the method, or `"ANY"` for every one                   |
 | `kdst.schedule(expression)`              | a `Schedule`                                                           |
 | `kdst.fromQueue(name or arn)`            | a `Queue`; a name is `kdst.ref(name, "Arn")`                            |
 | `kdst.fromTopic(name or arn)`            | a `Topic`; a name is `kdst.ref(name, "TopicArn")`                       |
@@ -293,6 +296,7 @@ A name is a resource of the project; anything that starts with `arn:`, or a valu
 ```pkl
 events {
   new kdst.HttpRoute { method = "GET"; path = "/orders/{id}" }
+  new kdst.RestRoute { method = "GET"; path = "/legacy/{id}" }
   new kdst.Schedule { expression = "rate(5 minutes)" }
   new kdst.Queue { queue = kdst.ref("jobs", "Arn"); batchSize = 10 }
   new kdst.Topic { topic = kdst.ref("alerts", "TopicArn") }
@@ -308,6 +312,7 @@ events {
 | class       | creates                                                                                            |
 | ----------- | -------------------------------------------------------------------------------------------------- |
 | `HttpRoute` | a route on the stage's http api, of a `path` that starts with `/` or is `$default`, with its integration and permission; `authorizer` and `scopes` guard it, or `iam = true` takes only requests signed by a caller that may `execute-api:Invoke` it, not both; a method and path belong to one function |
+| `RestRoute` | a route on the stage's rest api, of a `path` that starts with `/`, with its lambda proxy integration and permission; see [the rest api](#the-rest-api) |
 | `Schedule`  | an eventbridge scheduler schedule, `rate(...)`, `cron(...)` or `at(...)`, with `timezone`, `UTC` without one, `input` and `enabled` |
 | `Queue`     | an event source mapping from an sqs queue, with `batchSize`, `10` without one, `maximumBatchingWindow`, `reportBatchItemFailures`, `filters`, `maximumConcurrency` and `enabled` |
 | `Topic`     | an sns subscription and the permission for sns to invoke the function, with `filterPolicy`          |
@@ -345,6 +350,50 @@ With a domain, `httpApiUrl` is `https://<domain>`, and the output `httpDomainTar
 A `JwtAuthorizer` checks a token from `issuer`, an `https://` url, for one of `audience`. A `LambdaAuthorizer` is a function of the project, by its name, that reads what `identity` lists, such as `$request.header.Authorization`, and whose answer is cached for `ttl`, at most `1.h`.
 
 `accessLogs` writes a line for every request to a log group koldstart makes, `/aws/http-api/<app>-<stage>`, kept for `retention` days, `30` without it. The line is json of the request's id, ip, time, method, route, status, protocol and length, or what `format` says with api gateway's `$context` variables.
+
+### the rest api
+
+All `RestRoute`s of a stage share one rest api, api gateway's first kind of api, made once a function has one. It is regional, and has one stage, of the stage's name. Its url is the output `restApiUrl`, `https://<id>.execute-api.<region>.amazonaws.com/<stage>`.
+
+```pkl
+rest {
+  throttling = new { rate = 100; burst = 200 }
+  authorizers {
+    ["token"] = new kdst.TokenAuthorizer { functionName = "authorize"; validation = "^Bearer .+$"; ttl = 5.min }
+    ["request"] = new kdst.RequestAuthorizer { functionName = "authorize"; identity { "method.request.header.X-Tenant" } }
+    ["users"] = new kdst.CognitoAuthorizer { userPools { kdst.ref("pool", "Arn") } }
+  }
+}
+
+functions {
+  ["api"] {
+    events {
+      kdst.rest("GET", "/orders")
+      (kdst.rest("GET", "/orders/{id}")) { authorizer = "token" }
+      (kdst.rest("GET", "/me")) { authorizer = "users"; scopes { "orders/read" } }
+      (kdst.rest("POST", "/orders")) { private = true; requiredQuery { "dryRun" }; timeout = 10.s }
+      (kdst.rest("ANY", "/admin/{proxy+}")) { iam = true }
+    }
+  }
+}
+```
+
+A rest route hands its function the event of payload 1.0, by api gateway's lambda proxy integration, and the function returns `{ statusCode, headers, multiValueHeaders, body, isBase64Encoded }`; anything else is a 502. Its `path` is `/` or segments of letters, digits and `._~-`, or parameters, `{id}`, and `{proxy+}` last for the rest of the path. After one path the routes take one parameter name: `/orders/{id}` and `/orders/{name}` are refused.
+
+| property          | what it does                                                                                          |
+| ----------------- | ----------------------------------------------------------------------------------------------------- |
+| `authorizer`      | an authorizer of `rest.authorizers`, by name                                                          |
+| `scopes`          | for a cognito authorizer: scopes of the access token, any one of which the route takes; without any it takes the pool's id token |
+| `iam`             | takes only requests signed by a caller that may `execute-api:Invoke` the route, in place of an authorizer |
+| `private`         | takes only requests with the stage's api key in `x-api-key`, next to any authorizer                   |
+| `requiredQuery`, `requiredHeaders` | query string parameters and headers a request must have: api gateway refuses one without them before it calls the function |
+| `timeout`         | how long api gateway waits for the function, `29.s` without it, from `50.ms`; more than 29 seconds needs a raised quota of the account |
+
+A `TokenAuthorizer` hands a function of the project the token in `header`, `Authorization` without one, as `authorizationToken` with the `methodArn`, once it matches `validation` when that is set; a `RequestAuthorizer` hands it the request's headers, query string, stage variables and context. Either returns an iam policy, and its answer is cached for `ttl`, at most `1.h`, by the token or by what `identity` lists, `method.request.header.<name>`, `method.request.querystring.<name>`, `context.<name>` or `stageVariables.<name>`, which a request must then have. A `CognitoAuthorizer` takes a token of one of `userPools`, by their arns, from `header`.
+
+Once a route is `private`, koldstart makes an api key and a usage plan of the stage with it, without a quota. The key's id is the output `restApiKeyId`, and its value is read with `aws apigateway get-api-key --include-value --api-key <id>`.
+
+A rest api serves a deployment, a snapshot of its routes, which nothing changes. A deploy that changes a route or an authorizer makes a new deployment once the rest is applied and what is gone is deleted, points the stage at it and deletes the one before; one that changes none of them leaves the stage as it is. The rest api has no custom domain, cors, access logs or cache yet: answer the preflight requests of cors in a function, with a route of `"OPTIONS"`.
 
 ### the websocket api
 
@@ -455,7 +504,7 @@ outputs {
 }
 ```
 
-An output is a string, a `kdst.ref()`, a `kdst.join()` or a value of the account; a secret or `kdst.stageOutput()` is not one, and `plan` and `deploy` refuse it before they change anything. An output cannot take the name of one koldstart generates for the configuration. Every deploy resolves them, records them in the state and prints them, with `httpApiUrl`, `webSocketUrl`, `httpDomainTarget` with a domain, and a `<function>Url` for each function url. `kdst outputs` prints what the last deploy recorded, one `name = value` a line, and `-o json` prints them as one json object, `{}` when there are none:
+An output is a string, a `kdst.ref()`, a `kdst.join()` or a value of the account; a secret or `kdst.stageOutput()` is not one, and `plan` and `deploy` refuse it before they change anything. An output cannot take the name of one koldstart generates for the configuration. Every deploy resolves them, records them in the state and prints them, with `httpApiUrl`, `restApiUrl`, `webSocketUrl`, `httpDomainTarget` with a domain, `restApiKeyId` with a private rest route, and a `<function>Url` for each function url. `kdst outputs` prints what the last deploy recorded, one `name = value` a line, and `-o json` prints them as one json object, `{}` when there are none:
 
 ```bash
 kdst outputs -o json | jq -r .table
