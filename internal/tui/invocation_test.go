@@ -605,3 +605,59 @@ func TestInvocationLayout(t *testing.T) {
 		}
 	}
 }
+
+// TestInvocationCauseWraps checks the error an invocation failed with wraps in the column its
+// value is drawn in, so no line of it is cut short at a width where it would only just have fit.
+func TestInvocationCauseWraps(t *testing.T) {
+	tests := []struct {
+		name  string
+		cause cause
+	}{
+		{name: "a type and a message", cause: cause{kind: "TypeError", message: "Cannot read properties of undefined (reading 'id')"}},
+		{name: "a message alone", cause: cause{message: "Task timed out after 6.01 seconds"}},
+	}
+	m := newTestModel(t, newFake(t))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := request{id: "r-1", failed: true, cause: tt.cause}
+			want := strings.TrimPrefix(tt.cause.kind+": "+tt.cause.message, ": ")
+			for width := 40; width <= 120; width++ {
+				var parts []string
+				for _, line := range m.invocationHead(r, width) {
+					plain := ansi.Strip(line)
+					if ansi.StringWidth(plain) > width {
+						t.Fatalf("width %d: %q is wider", width, plain)
+					}
+					label := strings.TrimSpace(ansi.Truncate(plain, rowInset+labelWidth, ""))
+					if label == errorLabel || label == "" && len(parts) > 0 {
+						parts = append(parts, strings.TrimSpace(ansi.TruncateLeft(plain, rowInset+labelWidth, "")))
+					}
+				}
+				if got := strings.Join(parts, " "); got != want {
+					t.Fatalf("width %d: the error reads %q, want %q", width, got, want)
+				}
+			}
+		})
+	}
+}
+
+// TestInvocationNothingLogged checks the note of an invocation that logged nothing of its own
+// starts where the values of the rows above it do.
+func TestInvocationNothingLogged(t *testing.T) {
+	tests := []struct {
+		name  string
+		lines []cli.LogEvent
+	}{
+		{name: "lambda's own lines", lines: []cli.LogEvent{{Message: "START RequestId: r-1 Version: $LATEST"}, {Message: "END RequestId: r-1"}}},
+		{name: "blank lines", lines: []cli.LogEvent{{Message: "  "}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newTestModel(t, newFake(t))
+			m.state.invocation = invocationState{req: request{id: "r-1", lines: tt.lines}, cache: &invocationCache{}}
+			if v := ivdPage(m); !strings.Contains(v, "\n"+strings.Repeat(" ", rowInset+labelWidth)+"nothing logged but lambda's own lines") {
+				t.Errorf("the note does not start where the values do:\n%s", v)
+			}
+		})
+	}
+}

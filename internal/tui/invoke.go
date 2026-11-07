@@ -102,6 +102,14 @@ func (r invocationResult) timedOut() bool {
 	return r.inv.Error != "" && (r.failed && r.failure.TimedOut() || r.report.timedOut)
 }
 
+// took is how long the invocation ran: what lambda's report says, or else how long the call took.
+func (r invocationResult) took() time.Duration {
+	if r.report.reported {
+		return time.Duration(r.report.duration * float64(time.Millisecond))
+	}
+	return r.inv.Duration
+}
+
 // requestID is the id lambda gave the invocation, from its answer or its report.
 func (r invocationResult) requestID() string {
 	return cmpOr(r.inv.RequestID, r.report.id)
@@ -410,11 +418,20 @@ func (m model) applyInvoked(msg invokedMsg) (model, tea.Cmd) {
 	case r.err != nil:
 		return m.setStatus("could not invoke "+f.name, styles.ToneDanger)
 	case r.timedOut():
-		return m.setStatus(f.name+" timed out: "+functionError(r), styles.ToneDanger)
+		return m.setStatus(timedOutStatus(f.name, r), styles.ToneDanger)
 	case r.inv.Error != "":
 		return m.setStatus(f.name+" failed: "+functionError(r), styles.ToneDanger)
 	}
-	return m.setStatus(f.name+" returned in "+cli.Duration(r.inv.Duration), styles.ToneSuccess)
+	return m.setStatus(f.name+" returned in "+cli.Duration(r.took()), styles.ToneSuccess)
+}
+
+// timedOutStatus says a function timed out and after how long, short enough for the footer to
+// keep its keys; the pane says what lambda said of it.
+func timedOutStatus(name string, r invocationResult) string {
+	if took := r.took(); took > 0 {
+		return name + " timed out after " + cli.Duration(took)
+	}
+	return name + " timed out"
 }
 
 // invokePane is what the right of the invoke tab shows, or below the events on a narrow terminal:
@@ -593,16 +610,38 @@ func (m model) paneBody(width int) (lazyLines, int) {
 		return lazyOf([]string{styles.Accent(m.spinner.View()) + " " + styles.Muted(what)}), -1
 	case !ok:
 		if err := m.eventErr(); err != nil {
-			lines := wrapped("▲ "+err.Error(), styles.ToneWarning, width-2, 0)
+			lines := warningLines(err.Error(), width)
 			return lazyOf(append(lines, "", styles.Faint("e edits it, and i sends it once it is json"))), -1
 		}
 		return lazyOf(m.invokeHints(name)), -1
 	case r.err != nil:
-		lines := []string{styles.Render(styles.S("✗ could not invoke "+f.name, styles.ToneDanger)), ""}
-		lines = append(lines, wrapped(r.err.Error(), styles.ToneDanger, width-2, 0)...)
+		lines := cellLines(cell{styles.S("✗ could not invoke", styles.ToneDanger), sep(), styles.S(r.where(), styles.ToneMuted), sep(), styles.S(formatAgo(r.at), styles.ToneFaint)}, width)
+		lines = append(lines, "", styles.SectionHeader("error", width))
+		lines = append(lines, insetLines(cellLines(text(r.err.Error(), styles.ToneDanger), width-rowInset))...)
 		return lazyOf(append(lines, "", styles.Faint("i tries again"))), -1
 	}
 	return resultLines(r, f.pane.view, width)
+}
+
+// warningLines are a warning wrapped to width after a ▲, its lines under its first word.
+func warningLines(s string, width int) []string {
+	lines := cellLines(text(s, styles.ToneWarning), max(1, width-2))
+	for i, line := range lines {
+		mark := "  "
+		if i == 0 {
+			mark = styles.Fg(styles.ToneWarning).Render("▲ ")
+		}
+		lines[i] = mark + line
+	}
+	return lines
+}
+
+// where is where the invocation ran: in aws, or on this machine.
+func (r invocationResult) where() string {
+	if r.local {
+		return "on this machine"
+	}
+	return "in aws"
 }
 
 // payloadBody is the selected event: why it cannot be sent, when it cannot, and what it holds,
@@ -610,12 +649,12 @@ func (m model) paneBody(width int) (lazyLines, int) {
 func (m model) payloadBody(width int) (lazyLines, int) {
 	var lines lazyLines
 	if err := m.eventErr(); err != nil {
-		lines.add(wrapped("▲ "+err.Error(), styles.ToneWarning, width-2, 0)...)
+		lines.add(warningLines(err.Error(), width)...)
 		lines.add("")
 	}
 	v := m.state.function.pane.view
 	if v.empty() {
-		lines.add(styles.Faint("nothing"))
+		lines.add(row("", text("empty", styles.ToneFaint), width))
 		return lines, -1
 	}
 	at := lines.len()
@@ -667,14 +706,17 @@ func (m model) paneCopyValue() string {
 }
 
 // invokeKeys are the footer's keys on the invoke tab: those of the json while it has them, with
-// esc back to the events, and otherwise i first, as what the tab is for, then enter into the
-// json, v, e, scrolling and copying.
+// esc back to the events last, where q is on every other page, and otherwise i first, as what
+// the tab is for, then enter into the json, v, e, scrolling and copying. The footer drops the
+// third from last first, so copying a path goes before v and i.
 func (m model) invokeKeys() [][2]string {
 	k := m.keys
 	f := m.state.function
 	if f.pane.focused {
-		h := append(m.jsonHints(f.pane.view), hint(k.Pane), hint(k.Back, "events"), hint(k.Invoke))
-		return append(h, hint(k.Help))
+		keys := m.jsonHints(f.pane.view)
+		last := len(keys) - 1
+		h := append(slices.Clone(keys[:last]), hint(k.Pane), hint(k.Invoke), keys[last])
+		return append(h, hint(k.Help), hint(k.Back, "events"))
 	}
 	r, ok := f.results[m.selectedEvent()]
 	h := [][2]string{hint(k.Invoke)}
@@ -774,11 +816,7 @@ func resultFacts(r invocationResult) []cell {
 	fact := func(label string, value ...styles.Span) {
 		facts = append(facts, append(cell{styles.S(label+" ", styles.ToneFaint)}, value...))
 	}
-	took := r.inv.Duration
-	if r.report.reported {
-		took = time.Duration(r.report.duration * float64(time.Millisecond))
-	}
-	if took > 0 {
+	if took := r.took(); took > 0 {
 		fact("duration", styles.S(cli.Duration(took), styles.ToneBody))
 	}
 	if r.report.billed > 0 {
@@ -845,11 +883,7 @@ func resultHead(r invocationResult, width int) []string {
 	case r.inv.Error != "":
 		status = styles.S("✗ failed", styles.ToneDanger)
 	}
-	where := "in aws"
-	if r.local {
-		where = "on this machine"
-	}
-	lines := cellLines(cell{status, sep(), styles.S(where, styles.ToneMuted), sep(), styles.S(formatAgo(r.at), styles.ToneFaint)}, width)
+	lines := cellLines(cell{status, sep(), styles.S(r.where(), styles.ToneMuted), sep(), styles.S(formatAgo(r.at), styles.ToneFaint)}, width)
 	return append(lines, packFacts(resultFacts(r), width)...)
 }
 
@@ -895,29 +929,32 @@ func traceLines(f cli.Failure, width int) []string {
 }
 
 // resultLines show how an invocation ended, the error it failed with or what it returned in its
-// json view v, and its log, and the line the json starts on, -1 without it. Only the lines in
-// sight are drawn, so a payload of megabytes draws as quickly as a short one.
+// json view v, and its log, and the line the json starts on, -1 without it. Under their headers
+// the error, the json and the log start rowInset in, as rows do, and a note in place of the json
+// where the values of a row do. Only the lines in sight are drawn, so a payload of megabytes
+// draws as quickly as a short one.
 func resultLines(r invocationResult, v jsonView, width int) (lazyLines, int) {
 	var lines lazyLines
 	lines.add(resultHead(r, width)...)
 	at := -1
 	if r.inv.Error != "" {
 		lines.add("", styles.SectionHeader("error", width))
-		lines.add(failureLines(r, width)...)
+		lines.add(insetLines(failureLines(r, width-rowInset))...)
 	}
 	if !r.failed {
 		lines.add("", styles.SectionHeader("returned", width))
 		if v.empty() {
-			lines.add(styles.Faint("nothing"))
+			lines.add(row("", text("nothing", styles.ToneFaint), width))
 		} else {
 			at = lines.len()
 			lines.join(v.lines(width))
 		}
 	}
 	if strings.TrimSpace(r.inv.Logs) != "" {
-		cells := r.logCells(width)
+		room := width - rowInset
+		cells := r.logCells(room)
 		lines.add("", styles.SectionHeader("log", width))
-		lines.addDrawn(len(cells), func(i int) string { return renderCell(cells[i], column{width: width}, nil) })
+		lines.addDrawn(len(cells), func(i int) string { return pad(rowInset, nil) + renderCell(cells[i], column{width: room}, nil) })
 	}
 	return lines, at
 }

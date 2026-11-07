@@ -92,6 +92,7 @@ func TestInvokeResult(t *testing.T) {
 			name:   "reported",
 			result: cli.Invocation{Payload: []byte(`{}`), Duration: 300e6, RequestID: "r-2", Logs: ikReport("r-2", "")},
 			want:   []string{"duration 12ms · billed 13ms · memory 70 of 128 mb · cold start 200ms · log 4 lines", "request r-2", "log ─", "INFO"},
+			status: "api returned in 12ms",
 		},
 		{
 			name:   "node",
@@ -112,9 +113,9 @@ func TestInvokeResult(t *testing.T) {
 		},
 		{
 			name:   "timed out",
-			result: cli.Invocation{Payload: []byte(ikTimeout), Error: "Unhandled", RequestID: "r-1", Logs: ikReport("r-1", "timeout")},
+			result: cli.Invocation{Payload: []byte(ikTimeout), Error: "Unhandled", RequestID: "r-1", Logs: strings.Replace(ikReport("r-1", "timeout"), "\tDuration: 12.34 ms", "\tDuration: 3000.00 ms", 1)},
 			want:   []string{"⏱ timed out · in aws", "Sandbox.Timedout: RequestId: r-1 Error: Task timed out after 3.00 seconds", "request r-1"},
-			status: "api timed out: Sandbox.Timedout: RequestId: r-1 Error: Task timed out after 3.00 seconds",
+			status: "api timed out after 3s",
 		},
 		{
 			name:   "failed without a payload",
@@ -135,7 +136,7 @@ func TestInvokeResult(t *testing.T) {
 		{
 			name:   "not invoked",
 			err:    errAWS,
-			want:   []string{"✗ could not invoke api", "aws said no", "i tries again"},
+			want:   []string{"✗ could not invoke · in aws", "error ─", "aws said no", "i tries again"},
 			status: "could not invoke api",
 		},
 	}
@@ -586,5 +587,132 @@ func TestInvokeFromStage(t *testing.T) {
 	m = pressKeys(t, started(t, other), "2", "i")
 	if m.page != stagePage || len(other.invokes) != 0 {
 		t.Errorf("i on the resources tab: page %v, invoked %v", m.page, other.invokes)
+	}
+}
+
+// TestResultRowsInset checks what a result holds under its headers starts rowInset in, as its
+// json does: the error a function failed with and its log, the note in place of what it returned
+// where the values of a row start, and how it ended a column in, as a page's facts do.
+func TestResultRowsInset(t *testing.T) {
+	tests := []struct {
+		name string
+		inv  cli.Invocation
+		want []string
+	}{
+		{name: "a failure", inv: cli.Invocation{Payload: []byte(ikNodeFailure), Error: "Unhandled"}, want: []string{"✗ failed · in aws", "  TypeError: x is undefined", "    at handler (file:///var/task/index.mjs:3:9)"}},
+		{name: "an error without a payload", inv: cli.Invocation{Error: "Unhandled"}, want: []string{"  Unhandled", strings.Repeat(" ", rowInset+labelWidth) + "nothing"}},
+		{name: "a log", inv: cli.Invocation{Payload: []byte(`{}`), Logs: "END RequestId: 1\n"}, want: []string{"✓ ok · in aws", "returned ─", "  END RequestId: 1"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := newResult(tt.inv, false, nil)
+			lines, _ := resultLines(r, r.view, 80)
+			drawn := lines.window(0, lines.len())
+			for i, l := range drawn {
+				drawn[i] = strings.TrimRight(ansi.Strip(l), " ")
+			}
+			for _, want := range tt.want {
+				if !slices.ContainsFunc(drawn, func(l string) bool { return strings.HasPrefix(l, want) }) {
+					t.Errorf("no line starts %q:\n%s", want, strings.Join(drawn, "\n"))
+				}
+			}
+		})
+	}
+}
+
+// TestInvokeEmptyEvent checks an event file with nothing in it says it is not json, and says it
+// is empty where the values of a row start.
+func TestInvokeEmptyEvent(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "no bytes", body: ""},
+		{name: "blank lines", body: "\n\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := invokeTabWith(t, newFake(t), map[string]string{"empty.json": tt.body})
+			l := m.invokeLayout()
+			body, _ := m.paneBody(l.paneW)
+			drawn := ansi.Strip(strings.Join(body.window(0, body.len()), "\n"))
+			for _, want := range []string{"▲ empty.json is not json", "\n" + strings.Repeat(" ", rowInset+labelWidth) + "empty"} {
+				if !strings.Contains(drawn, want) {
+					t.Errorf("no %q in:\n%s", want, drawn)
+				}
+			}
+		})
+	}
+}
+
+// TestWarningLines checks a warning wraps under its first word after the ▲, within its width.
+func TestWarningLines(t *testing.T) {
+	tests := []struct {
+		name  string
+		width int
+		lines int
+	}{
+		{name: "on one line", width: 80, lines: 1},
+		{name: "wrapped", width: 24, lines: 2},
+	}
+	const warning = "broken.json is not json, on line 2"
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lines := warningLines(warning, tt.width)
+			if len(lines) != tt.lines {
+				t.Fatalf("%d lines, want %d:\n%s", len(lines), tt.lines, ansi.Strip(strings.Join(lines, "\n")))
+			}
+			var words []string
+			for i, l := range lines {
+				plain := ansi.Strip(l)
+				lead := "  "
+				if i == 0 {
+					lead = "▲ "
+				}
+				if !strings.HasPrefix(plain, lead) || ansi.StringWidth(plain) > tt.width {
+					t.Errorf("line %d %q: want it to start %q and be at most %d wide", i, plain, lead, tt.width)
+				}
+				words = append(words, strings.Fields(strings.TrimPrefix(plain, lead))...)
+			}
+			if got := strings.Join(words, " "); got != warning {
+				t.Errorf("the warning reads %q, want %q", got, warning)
+			}
+		})
+	}
+}
+
+// TestInvokeFocusedKeys checks the footer keeps esc back to the events while the pane's json has
+// the keys, at every width, and v and i where there is room for them.
+func TestInvokeFocusedKeys(t *testing.T) {
+	tests := []struct {
+		name   string
+		width  int
+		want   []string
+		absent []string
+	}{
+		{name: "narrow", width: 80, want: []string{"esc events"}, absent: []string{"shift+c copy path"}},
+		{name: "wide", width: 120, want: []string{"v payload / result", "i invoke", "esc events"}},
+		{name: "large", width: 200, want: []string{"v payload / result", "i invoke", "shift+c copy path", "esc events"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := invokeTabWith(t, newFake(t), map[string]string{"a.json": `{"id":1}`})
+			m, _ = update(t, m, tea.WindowSizeMsg{Width: tt.width, Height: 40})
+			m = pressKeys(t, m, "enter")
+			if !m.state.function.pane.focused {
+				t.Fatal("enter did not give the keys to the pane's json")
+			}
+			footer := ansi.Strip(m.footer())
+			for _, want := range tt.want {
+				if !strings.Contains(footer, want) {
+					t.Errorf("no %q in the footer %q", want, footer)
+				}
+			}
+			for _, absent := range tt.absent {
+				if strings.Contains(footer, absent) {
+					t.Errorf("%q in the footer %q, which has no room for it", absent, footer)
+				}
+			}
+		})
 	}
 }
