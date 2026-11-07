@@ -224,7 +224,7 @@ func (c *converter) writeRestAuthorizer(w *writer, a *restAuthorizer) {
 		w.close()
 		return
 	}
-	c.leave(w, Review, a.where, "the authorizer is one of the http api now: it gets the event of payload 2.0, with identitySource and routeArn in place of authorizationToken and methodArn, and returns { isAuthorized, context } in place of an iam policy", nil)
+	c.leave(w, Fix, a.where, "the authorizer is one of the http api now: it gets the event of payload 2.0, with identitySource and routeArn in place of authorizationToken and methodArn, and returns { isAuthorized, context } in place of an iam policy", nil)
 	if a.validation != "" {
 		c.leave(w, Review, a.where+".identityValidationExpression", "the http api has no identityValidationExpression: check the token against "+a.validation+" in the authorizer", nil)
 	}

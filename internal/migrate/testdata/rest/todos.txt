@@ -1,4 +1,8 @@
 fix before you deploy:
+  functions.api.events[0].authorizer: the authorizer is one of the http api now: it gets the event of payload 2.0, with identitySource and routeArn in place of authorizationToken and methodArn, and returns { isAuthorized, context } in place of an iam policy
+  functions.api.events[2].authorizer: the authorizer is one of the http api now: it gets the event of payload 2.0, with identitySource and routeArn in place of authorizationToken and methodArn, and returns { isAuthorized, context } in place of an iam policy
+  functions.api.events[3].authorizer: the authorizer is one of the http api now: it gets the event of payload 2.0, with identitySource and routeArn in place of authorizationToken and methodArn, and returns { isAuthorized, context } in place of an iam policy
+  functions.api.events[4].authorizer: the authorizer is one of the http api now: it gets the event of payload 2.0, with identitySource and routeArn in place of authorizationToken and methodArn, and returns { isAuthorized, context } in place of an iam policy
   functions.api.events[7].authorizer: set audience to the ids of the user pool's app clients: the http api takes a token only when its aud or client_id is one of them, where the rest api took one of any client of the pool
   functions.api.events[8].authorizer: the route is open now, as a jwt authorizer takes the issuer of a user pool as a string, https://cognito-idp.<region>.amazonaws.com/<pool id>, not a ref: give it an authorizer of http.authorizers, or iam = true
   functions.api.events[9].authorizer: the route is open now, as it names an authorizer of the rest api by its id, which the http api cannot use: give it an authorizer of http.authorizers, or iam = true
@@ -11,11 +15,7 @@ left out, to write by hand:
   functions.api.events[15]: an http api of koldstart routes to its function alone: it has no mock integration
 
 works differently, to check:
-  functions.api.events[0].authorizer: the authorizer is one of the http api now: it gets the event of payload 2.0, with identitySource and routeArn in place of authorizationToken and methodArn, and returns { isAuthorized, context } in place of an iam policy
-  functions.api.events[2].authorizer: the authorizer is one of the http api now: it gets the event of payload 2.0, with identitySource and routeArn in place of authorizationToken and methodArn, and returns { isAuthorized, context } in place of an iam policy
-  functions.api.events[3].authorizer: the authorizer is one of the http api now: it gets the event of payload 2.0, with identitySource and routeArn in place of authorizationToken and methodArn, and returns { isAuthorized, context } in place of an iam policy
   functions.api.events[3].authorizer.identitySource: the http api refuses a request without an Authorization header before it calls the authorizer: set identity to what every request has
-  functions.api.events[4].authorizer: the authorizer is one of the http api now: it gets the event of payload 2.0, with identitySource and routeArn in place of authorizationToken and methodArn, and returns { isAuthorized, context } in place of an iam policy
   functions.api.events[4].authorizer.identityValidationExpression: the http api has no identityValidationExpression: check the token against ^Bearer [-0-9a-zA-Z._]+$ in the authorizer
   functions.api.events[7].authorizer: the function finds the token's claims in requestContext.authorizer.jwt.claims now, not requestContext.authorizer.claims
   functions.api.events[0]: a route of the rest api is one of the http api now: check the function takes the event of payload 2.0, not 1.0, and does without request validation, api keys and usage plans
