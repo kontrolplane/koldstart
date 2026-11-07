@@ -4,9 +4,12 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/kontrolplane/koldstart/internal/state"
 )
 
 // openTable opens resource/table of orders/dev from the resources tab.
@@ -35,7 +38,7 @@ func TestResourceLiveStates(t *testing.T) {
 		},
 		{
 			name: "a type cloud control cannot read",
-			want: []string{"cloud control cannot read a AWS::DynamoDB::Table"},
+			want: []string{"cloud control cannot read AWS::DynamoDB::Table resources"},
 		},
 		{
 			name: "an emulator without cloud control",
@@ -315,6 +318,161 @@ func TestResourceKeys(t *testing.T) {
 			}
 			if shown := strings.Contains(screen(m), " "+tt.path+" "); shown != (tt.path != ".") {
 				t.Errorf("the frame shows the path %s: %t, want it shown but at the top:\n%s", tt.path, shown, screen(m))
+			}
+		})
+	}
+}
+
+// rsHints is what the footer offers on the page, every hint, as plain text.
+func rsHints(m model) string {
+	parts := make([]string, 0, 8)
+	for _, h := range m.shortHelp() {
+		parts = append(parts, h[0]+" "+h[1])
+	}
+	return strings.Join(parts, " · ")
+}
+
+// TestResourceNotesAtValues checks what the page says in place of rows, or above them, starts in
+// the column its facts' values do: no attributes, nothing applied, and each way reading it from
+// aws ends.
+func TestResourceNotesAtValues(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(r *state.Resource)
+		tab   bool
+		msg   *liveLoadedMsg
+		note  string
+	}{
+		{name: "no attributes", setup: func(r *state.Resource) { r.Attributes = nil }, note: "none"},
+		{name: "nothing applied", setup: func(r *state.Resource) { r.Inputs = []byte("null") }, note: "nothing"},
+		{name: "not created yet", setup: func(r *state.Resource) { r.PhysicalID = "" }, tab: true, note: "it has no id in aws yet"},
+		{name: "a type cloud control cannot read", tab: true, note: "cloud control cannot read"},
+		{name: "an error", tab: true, msg: &liveLoadedMsg{err: errAWS}, note: "could not read it from aws"},
+		{name: "no properties", tab: true, msg: &liveLoadedMsg{props: map[string]any{}}, note: "aws returned no properties"},
+		{name: "as applied", tab: true, msg: &liveLoadedMsg{props: map[string]any{"BillingMode": "PAY_PER_REQUEST"}}, note: "✓ as koldstart applied it"},
+		{name: "changed", tab: true, msg: &liveLoadedMsg{props: map[string]any{"BillingMode": "PROVISIONED"}}, note: "▲ changed outside koldstart"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFake(t)
+			if tt.setup != nil {
+				tt.setup(f.states[ordersDev].Resources["resource/table"])
+			}
+			m := openTable(t, f)
+			if tt.tab {
+				m = pressKeys(t, m, "tab")
+			}
+			if tt.msg != nil {
+				msg := *tt.msg
+				msg.gen = m.state.resource.liveGen
+				m, _ = update(t, m, msg)
+			}
+			_, values := sdLine(m, "AWS::DynamoDB::Table")
+			if line, at := sdLine(m, tt.note); at != values {
+				t.Errorf("%q starts at %d, the values at %d:\n%s", tt.note, at, values, line)
+			}
+		})
+	}
+}
+
+// TestResourceHeadWraps checks a fact longer than the page wraps under its value, whole, rather
+// than being cut, and a change a deploy left unfinished says when it started only when the state
+// knows.
+func TestResourceHeadWraps(t *testing.T) {
+	long := "https://sqs.eu-west-1.amazonaws.com/123456789012/" + strings.Repeat("orders-dev-jobs-", 12) + "end"
+	deps := []string{"role/api", "function/api", "resource/" + strings.Repeat("uploads-", 14) + "end"}
+	tests := []struct {
+		name  string
+		setup func(r *state.Resource)
+		label string
+		want  string
+	}{
+		{name: "a long id", setup: func(r *state.Resource) { r.PhysicalID = long }, label: "id in aws", want: long},
+		{name: "many dependencies", setup: func(r *state.Resource) { r.Dependencies = deps }, label: "depends on", want: strings.Join(deps, ", ")},
+		{
+			name: "pending since a time",
+			setup: func(r *state.Resource) {
+				r.Pending = &state.Pending{Operation: "update", StartedAt: time.Now().Add(-3 * time.Hour)}
+			},
+			label: "pending",
+			want:  "update started 3h ago: deploy again to finish it",
+		},
+		{
+			name:  "pending since a time unknown",
+			setup: func(r *state.Resource) { r.Pending = &state.Pending{Operation: "update"} },
+			label: "pending",
+			want:  "update left unfinished: deploy again to finish it",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFake(t)
+			tt.setup(f.states[ordersDev].Resources["resource/table"])
+			m := openTable(t, f)
+			var got strings.Builder
+			in := false
+			for _, line := range m.headLines(resourceWidth()) {
+				plain := ansi.Strip(line)
+				cut := min(len(plain), rowInset+labelWidth)
+				switch label := strings.TrimSpace(plain[:cut]); {
+				case label == tt.label:
+					in = true
+				case label != "":
+					in = false
+				}
+				if in {
+					got.WriteString(strings.TrimSpace(plain[cut:]))
+				}
+			}
+			squeeze := func(s string) string { return strings.ReplaceAll(s, " ", "") }
+			if squeeze(got.String()) != squeeze(tt.want) {
+				t.Errorf("%s reads %q, want %q", tt.label, got.String(), tt.want)
+			}
+		})
+	}
+}
+
+// TestResourceHints checks the footer offers what the keys do on the tab: the keys of its json,
+// or else scroll only when the page is longer than the screen, and c as what it copies, the id or
+// the arn, only when there is either.
+func TestResourceHints(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(r *state.Resource)
+		want  []string
+		not   []string
+	}{
+		{name: "json", want: []string{"/ search", "c copy"}, not: []string{"copy id", "scroll"}},
+		{name: "an id", setup: func(r *state.Resource) { r.Inputs = []byte("null") }, want: []string{"c copy id", "r refresh"}, not: []string{"scroll", "/ search"}},
+		{name: "an arn", setup: func(r *state.Resource) { r.Inputs, r.PhysicalID = []byte("null"), "" }, want: []string{"c copy arn"}, not: []string{"copy id"}},
+		{name: "neither", setup: func(r *state.Resource) { r.Inputs, r.PhysicalID, r.Attributes = []byte("null"), "", nil }, not: []string{"c copy"}},
+		{
+			name: "longer than the screen",
+			setup: func(r *state.Resource) {
+				r.Inputs = []byte("null")
+				for i := range 60 {
+					r.Attributes["Attribute"+formatInt(i)] = "value"
+				}
+			},
+			want: []string{"↑/↓ scroll", "c copy id"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFake(t)
+			if tt.setup != nil {
+				tt.setup(f.states[ordersDev].Resources["resource/table"])
+			}
+			got := rsHints(openTable(t, f))
+			for _, want := range tt.want {
+				if !strings.Contains(got, want) {
+					t.Errorf("no %q in %q", want, got)
+				}
+			}
+			for _, not := range tt.not {
+				if strings.Contains(got, not) {
+					t.Errorf("%q in %q", not, got)
+				}
 			}
 		})
 	}

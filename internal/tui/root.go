@@ -1034,13 +1034,7 @@ func (m model) shortHelp() [][2]string {
 		}
 		return append(h, hint(k.Copy), m.pauseHint(), hint(k.Help), hint(k.Quit))
 	case resourcePage:
-		h := [][2]string{hint(k.NextTab, "applied / in aws")}
-		if v := m.state.json(m.page); v != nil {
-			h = append(h, m.jsonHints(*v)...)
-		} else {
-			h = append(h, scrollHint, hint(k.Copy))
-		}
-		return append(h, hint(k.Refresh), hint(k.Help), hint(k.Quit))
+		return m.resourceHints()
 	case versionPage:
 		return m.versionHints()
 	case diffPage:
@@ -1052,14 +1046,7 @@ func (m model) shortHelp() [][2]string {
 	case logLinePage:
 		return m.logLineHints()
 	case outputPage:
-		if v := m.state.json(m.page); v != nil {
-			return append(m.jsonHints(*v), hint(k.Refresh), hint(k.Help), hint(k.Quit))
-		}
-		var h [][2]string
-		if body, _ := m.outputBody(); body.len() > contentHeight {
-			h = append(h, scrollHint)
-		}
-		return append(h, hint(k.Copy, "copy the value"), hint(k.Refresh), hint(k.Help), hint(k.Quit))
+		return m.outputHints()
 	case planPage:
 		return m.planHints()
 	case removePage:

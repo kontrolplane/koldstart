@@ -85,6 +85,23 @@ func (m model) outputUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 	return m, nil
 }
 
+// outputHints are the keys of the output page for the footer: the keys of its json, or else
+// scroll when the value is longer than the screen, and c while there is a value to copy.
+func (m model) outputHints() [][2]string {
+	k := m.keys
+	if v := m.state.output.shown(); v != nil {
+		return append(m.jsonHints(*v), hint(k.Refresh), hint(k.Help), hint(k.Quit))
+	}
+	var h [][2]string
+	if m.outputLines().len() > contentHeight {
+		h = append(h, scrollHint)
+	}
+	if v, _ := m.outputValueOf(); v != "" {
+		h = append(h, hint(k.Copy, "copy the value"))
+	}
+	return append(h, hint(k.Refresh), hint(k.Help), hint(k.Quit))
+}
+
 // outputValueOf is the value of the output on screen, and whether the stage still has it.
 func (m model) outputValueOf() (string, bool) {
 	st := m.state.stage.st
@@ -169,7 +186,7 @@ func (m model) outputBody() (lazyLines, int) {
 	lines := []string{styles.SectionHeader(o.name, width)}
 	v, ok := m.outputValueOf()
 	if !ok {
-		return lazyOf(append(lines, styles.Faint("the stage no longer has this output: a deploy removed it"))), -1
+		return lazyOf(append(lines, valueNotes(text("the stage no longer has this output: a deploy removed it", styles.ToneFaint), width)...)), -1
 	}
 	lines = append(lines,
 		row("holds", text(outputKind(v), styles.ToneBody), width),
@@ -179,7 +196,7 @@ func (m model) outputBody() (lazyLines, int) {
 	)
 	out := lazyOf(lines)
 	if v == "" {
-		out.add(styles.Faint("empty"))
+		out.add(valueNotes(text("empty", styles.ToneFaint), width)...)
 		return out, -1
 	}
 	if j := o.shown(); j != nil && o.jsonOf == v {

@@ -163,6 +163,29 @@ func (m model) resourceUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 	return m, nil
 }
 
+// resourceHints are the keys of the resource page for the footer: the keys of the json on the
+// tab, or else scroll when the page is longer than the screen, and c as what it copies, the id
+// in aws or the arn, when there is either.
+func (m model) resourceHints() [][2]string {
+	k := m.keys
+	r := m.state.resource
+	h := [][2]string{hint(k.NextTab, "applied / in aws")}
+	if v := r.shown(); v != nil {
+		h = append(h, m.jsonHints(*v)...)
+		return append(h, hint(k.Refresh), hint(k.Help), hint(k.Quit))
+	}
+	if m.resourceLines().len() > contentHeight {
+		h = append(h, scrollHint)
+	}
+	switch {
+	case r.res.res.PhysicalID != "":
+		h = append(h, hint(k.Copy, "copy id"))
+	case r.res.res.Attributes["Arn"] != "":
+		h = append(h, hint(k.Copy, "copy arn"))
+	}
+	return append(h, hint(k.Refresh), hint(k.Help), hint(k.Quit))
+}
+
 // followResourceCursor scrolls the page after a key on its json so the cursor is in sight.
 func (m model) followResourceCursor(msg tea.KeyPressMsg, before int) model {
 	r := &m.state.resource
@@ -186,11 +209,14 @@ func appliedProperties(r stageResource) map[string]any {
 }
 
 // headLines are the facts above both tabs: its type, its id, what keeps it, and how many
-// messages a queue holds.
+// messages a queue holds. Long values wrap under themselves rather than being cut.
 func (m model) headLines(width int) []string {
 	r := m.state.resource.res
 	res := r.res
-	value := func(s string) cell { return text(orDash(s), styles.ToneBody) }
+	lines := []string{styles.SectionHeader(r.id, width)}
+	fact := func(label, s string, tone styles.Tone) {
+		lines = append(lines, wrappedRow(labelWidth, label, text(orDash(styles.Clean(s)), tone), width)...)
+	}
 	policy := res.DeletionPolicy
 	switch {
 	case r.retained:
@@ -198,13 +224,10 @@ func (m model) headLines(width int) []string {
 	case res.Imported:
 		policy = "imported"
 	}
-	lines := []string{
-		styles.SectionHeader(r.id, width),
-		row("type", value(res.Type), width),
-		row("id in aws", value(res.PhysicalID), width),
-		row("policy", value(policy), width),
-		row("depends on", value(strings.Join(res.Dependencies, ", ")), width),
-	}
+	fact("type", res.Type, styles.ToneBody)
+	fact("id in aws", res.PhysicalID, styles.ToneBody)
+	fact("policy", policy, styles.ToneBody)
+	fact("depends on", strings.Join(res.Dependencies, ", "), styles.ToneBody)
 	s := m.state.stage
 	d, read := s.queues[r.id]
 	err, failed := s.queueErrs[r.id]
@@ -216,13 +239,33 @@ func (m model) headLines(width int) []string {
 			styles.S(formatInt(d.Delayed), styles.ToneBody), styles.S(" delayed", styles.ToneFaint),
 		}, width))
 		if failed {
-			lines = append(lines, row("", staleNote("", s.queueAt[r.id], err), width))
+			lines = append(lines, valueNotes(staleNote("", s.queueAt[r.id], styles.Clean(err)), width)...)
 		}
 	case failed:
-		lines = append(lines, row("messages", m.couldNotRead("the depth", err, styles.ToneMuted), width))
+		lines = append(lines, wrappedRow(labelWidth, "messages", m.couldNotRead("the depth", styles.Clean(err), styles.ToneMuted), width)...)
 	}
-	if res.Pending != nil {
-		lines = append(lines, row("pending", text(res.Pending.Operation+" started "+formatAgo(res.Pending.StartedAt)+": deploy again to finish it", styles.ToneWarning), width))
+	if p := res.Pending; p != nil {
+		fact("pending", pendingNote(p.Operation, p.StartedAt), styles.ToneWarning)
+	}
+	return lines
+}
+
+// pendingNote says what a deploy left unfinished, and when it started where the state says:
+// update started 3h ago: deploy again to finish it.
+func pendingNote(operation string, started time.Time) string {
+	if started.IsZero() {
+		return operation + " left unfinished: deploy again to finish it"
+	}
+	return operation + " started " + formatAgo(started) + ": deploy again to finish it"
+}
+
+// valueNotes are a note in place of rows, or above them, wrapped in the column where the values
+// of key/value rows start, as relay sets a panel's notes.
+func valueNotes(c cell, width int) []string {
+	at := rowInset + labelWidth
+	lines := cellLines(c, max(1, width-at))
+	for i, l := range lines {
+		lines[i] = pad(at, nil) + l
 	}
 	return lines
 }
@@ -239,11 +282,11 @@ func (m model) appliedLines(width int) (lazyLines, int) {
 		lines = append(lines, wrappedRow(labels, styles.Clean(k), text(orDash(res.Attributes[k]), styles.ToneBody), width)...)
 	}
 	if len(res.Attributes) == 0 {
-		lines = append(lines, styles.Faint("none"))
+		lines = append(lines, valueNotes(text("none", styles.ToneFaint), width)...)
 	}
 	lines = append(lines, "", styles.SectionHeader("applied with", width))
 	if r.applied.empty() {
-		return lazyOf(append(lines, styles.Faint("nothing"))), -1
+		return lazyOf(append(lines, valueNotes(text("nothing", styles.ToneFaint), width)...)), -1
 	}
 	out := lazyOf(lines)
 	at := out.len()
@@ -273,10 +316,13 @@ func wrappedRow(labels int, label string, value cell, width int) []string {
 func (m model) liveLinesOf(width int) (lazyLines, int) {
 	r := m.state.resource
 	lines := []string{""}
-	say := func(s string) {
-		lines = append(lines, wrapped(s, styles.ToneFaint, width, 0)...)
+	note := func(c cell) {
+		lines = append(lines, valueNotes(c, width)...)
 	}
-	reading := styles.Accent(m.spinner.View()) + " " + styles.Muted(readingNote("it from aws"))
+	say := func(s string) {
+		note(text(s, styles.ToneFaint))
+	}
+	reading := cell{styles.S(m.spinner.View()+" ", styles.ToneAccent), styles.S(readingNote("it from aws"), styles.ToneMuted)}
 	switch {
 	case r.res.retained:
 		say("a remove left it in place: koldstart does not read it until the next deploy takes it over")
@@ -285,19 +331,21 @@ func (m model) liveLinesOf(width int) (lazyLines, int) {
 		say("it has no id in aws yet: the next deploy creates it")
 		return lazyOf(lines), -1
 	case !r.liveLoaded && r.live == nil:
-		return lazyOf(append(lines, reading)), -1
+		note(reading)
+		return lazyOf(lines), -1
 	case errors.Is(r.liveErr, cli.ErrNotLive):
-		say("cloud control cannot read a " + shortType(r.res.res.Type) + ": what koldstart applied is on the applied tab")
+		say("cloud control cannot read " + shortType(styles.Clean(r.res.res.Type)) + " resources: what koldstart applied is on the applied tab")
 		return lazyOf(lines), -1
 	case r.liveErr != nil && r.live == nil:
-		lines = append(lines, cellLines(m.couldNotRead("it from aws", r.liveErr.Error(), styles.ToneDanger), width)...)
+		note(m.couldNotRead("it from aws", styles.Clean(r.liveErr.Error()), styles.ToneDanger))
 		lines = append(lines, "")
 		say("reading it takes cloud control, which an emulator may not have, and cloudformation:GetResource with the read permissions of its type. what koldstart applied is on the applied tab")
 		return lazyOf(lines), -1
 	case !r.liveLoaded:
-		lines = append(lines, reading, "")
+		note(reading)
+		lines = append(lines, "")
 	case r.liveErr != nil:
-		lines = append(lines, cellLines(staleNote("", r.liveAt, r.liveErr.Error()), width)...)
+		note(staleNote("", r.liveAt, styles.Clean(r.liveErr.Error())))
 		lines = append(lines, "")
 	}
 	if r.props.empty() {
@@ -306,14 +354,14 @@ func (m model) liveLinesOf(width int) (lazyLines, int) {
 	}
 	switch {
 	case len(r.drift) > 0:
-		lines = append(lines, cellLines(cell{styles.S("▲ ", styles.ToneWarning), styles.S("changed outside koldstart: "+strings.Join(r.drift, ", "), styles.ToneWarning)}, width)...)
+		note(cell{styles.S("▲ ", styles.ToneWarning), styles.S("changed outside koldstart: "+styles.Clean(strings.Join(r.drift, ", ")), styles.ToneWarning)})
 		back := "the next deploy sets it back to what the configuration says"
 		if len(r.drift) > 1 {
 			back = "the next deploy sets them back to what the configuration says"
 		}
 		say(back + ". ▲ marks what changed below, as applied → now")
 	case r.compared:
-		lines = append(lines, styles.Render(styles.S("✓ ", styles.ToneSuccess), styles.S("as koldstart applied it", styles.ToneBody)))
+		note(cell{styles.S("✓ ", styles.ToneSuccess), styles.S("as koldstart applied it", styles.ToneBody)})
 	}
 	lines = append(lines, "", styles.SectionHeader("properties in aws", width))
 	out := lazyOf(lines)
