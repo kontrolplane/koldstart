@@ -29,6 +29,9 @@ type Fake struct {
 	mutated int
 	// LastPrior are the prior inputs of the last update, as the provider was given them.
 	LastPrior map[string]any
+	// Extra are attributes every result has besides the arn and the name, such as one a provider
+	// returns only once an update has made it.
+	Extra map[string]string
 	// Priors are the prior inputs of each node's last update, nil when it was sent none.
 	Priors map[string]map[string]any
 }
@@ -68,7 +71,9 @@ func (f *Fake) ResetCalls() {
 }
 
 func (f *Fake) attrs(id string) map[string]string {
-	return map[string]string{"Arn": "arn:fake:" + id, "Name": id}
+	out := map[string]string{"Arn": "arn:fake:" + id, "Name": id}
+	maps.Copy(out, f.Extra)
+	return out
 }
 
 // mutate records a call, fails it when told to, and crashes after it when told to.

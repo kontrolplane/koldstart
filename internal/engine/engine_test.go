@@ -670,3 +670,35 @@ func TestCancelRecordsWhatWasDone(t *testing.T) {
 		})
 	}
 }
+
+// TestAttributeOfAnUpdate checks a ref to an attribute the state does not hold yet, of a node the
+// plan updates, is known after apply rather than refused, as the alias of a function that gets
+// one is, and is resolved once the update has made it.
+func TestAttributeOfAnUpdate(t *testing.T) {
+	h := newHarness(t)
+	if _, err := h.deploy(uniqueNames(stack(256))); err != nil {
+		t.Fatal(err)
+	}
+	nodes := append(uniqueNames(stack(512)), Node{ID: "permission/api", Type: fakeType, Name: "permission/api",
+		Inputs: map[string]any{"function": Ref("function/api", "AliasArn")}})
+	st, _ := h.read()
+	plan, err := h.engine.Plan(context.Background(), nodes, st)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if c, _ := plan.Change("permission/api"); !IsUnknown(c.After["function"]) {
+		t.Errorf("the alias = %v, want known after apply", c.After)
+	}
+	h.fake.Extra = map[string]string{"AliasArn": "arn:fake:function/api:live"}
+	if _, err := h.deploy(nodes); err != nil {
+		t.Fatalf("deploy: %v", err)
+	}
+	if got := h.fake.Resources()["permission/api"].Inputs["function"]; got != "arn:fake:function/api:live" {
+		t.Errorf("function = %v, want the alias", got)
+	}
+	h.fake.Extra = nil
+	if _, err := h.engine.Plan(context.Background(), append(uniqueNames(stack(512)), Node{ID: "other", Type: fakeType, Name: "other",
+		Inputs: map[string]any{"function": Ref("resource/orders", "Missing")}}), st); err == nil {
+		t.Error("a ref to an attribute of a node the plan does not change is not refused")
+	}
+}
