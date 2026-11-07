@@ -19,14 +19,28 @@ import (
 // version is the koldstart whose schema package the examples' PklProjects name.
 const version = "0.1.0"
 
+// projects are the koldstart.pkl files of the examples: one in each directory, or one in each
+// directory of an example of several apps, as stage-output/payments and stage-output/shop.
+func projects(t *testing.T) []string {
+	t.Helper()
+	var files []string
+	for _, pattern := range []string{"*/koldstart.pkl", "*/*/koldstart.pkl"} {
+		found, err := filepath.Glob(pattern)
+		if err != nil {
+			t.Fatal(err)
+		}
+		files = append(files, found...)
+	}
+	if len(files) == 0 {
+		t.Fatal("no examples")
+	}
+	return files
+}
+
 // TestExamplesProject checks every example has a PklProject that names the schema package of
 // version, and a koldstart.pkl that amends it as @koldstart/.
 func TestExamplesProject(t *testing.T) {
-	files, err := filepath.Glob("*/koldstart.pkl")
-	if err != nil || len(files) == 0 {
-		t.Fatalf("no examples: %v", err)
-	}
-	for _, file := range files {
+	for _, file := range projects(t) {
 		t.Run(filepath.Dir(file), func(t *testing.T) {
 			project, err := os.ReadFile(filepath.Join(filepath.Dir(file), schema.Package))
 			if err != nil {
@@ -59,11 +73,7 @@ func TestExamplesEvaluate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("finding pkl: %v", err)
 	}
-	files, err := filepath.Glob("*/koldstart.pkl")
-	if err != nil || len(files) == 0 {
-		t.Fatalf("no examples: %v", err)
-	}
-	for _, file := range files {
+	for _, file := range projects(t) {
 		for _, stage := range []string{"dev", "prod"} {
 			t.Run(filepath.Dir(file)+"/"+stage, func(t *testing.T) {
 				source, err := os.ReadFile(file)
