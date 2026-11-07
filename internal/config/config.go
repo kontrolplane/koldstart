@@ -50,8 +50,10 @@ type Function struct {
 	Timeout      int    `json:"timeout"`
 	Architecture string `json:"architecture"`
 	// EphemeralStorage is in megabytes.
-	EphemeralStorage    int  `json:"ephemeralStorage"`
-	ReservedConcurrency *int `json:"reservedConcurrency"`
+	EphemeralStorage       int  `json:"ephemeralStorage"`
+	ReservedConcurrency    *int `json:"reservedConcurrency"`
+	ProvisionedConcurrency *int `json:"provisionedConcurrency"`
+	SnapStart              bool `json:"snapStart"`
 	// LogRetention is in days.
 	LogRetention int               `json:"logRetention"`
 	Environment  map[string]Value  `json:"environment"`
@@ -110,6 +112,15 @@ type Image struct {
 	Command          []string          `json:"command"`
 	EntryPoint       []string          `json:"entryPoint"`
 	WorkingDirectory string            `json:"workingDirectory"`
+}
+
+// Alias is the alias a function with versions has, which its events invoke.
+const Alias = "live"
+
+// Versioned reports whether the function gets a version on every change and an alias pointed at
+// it: when it keeps instances started, or starts from snapshots.
+func (f Function) Versioned() bool {
+	return f.ProvisionedConcurrency != nil || f.SnapStart
 }
 
 // IsPython reports whether the function runs on a python runtime.

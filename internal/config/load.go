@@ -217,8 +217,30 @@ func (v *validator) function(name string, fn Function) {
 			v.errorf("%s.fileSystem: a function that mounts efs needs a vpc: set vpc to subnets that reach the file system", where)
 		}
 	}
+	v.versions(where, fn)
 	if fn.LogFormat != LogFormatJSON && (fn.ApplicationLogLevel != "" || fn.SystemLogLevel != "") {
 		v.errorf("%s: the log levels apply to json logs alone: set logFormat = \"json\", or leave out the levels", where)
+	}
+}
+
+// versions checks what lambda refuses of provisioned concurrency and snapStart: more instances
+// kept started than are reserved, and snapStart with what it does not take.
+func (v *validator) versions(where string, fn Function) {
+	if pc, reserved := fn.ProvisionedConcurrency, fn.ReservedConcurrency; pc != nil && reserved != nil && *pc > *reserved {
+		v.errorf("%s: provisionedConcurrency %d is more than the reservedConcurrency of %d: reserve at least as many", where, *pc, *reserved)
+	}
+	if !fn.SnapStart {
+		return
+	}
+	switch {
+	case !fn.IsPython() || fn.IsImage():
+		v.errorf("%s.snapStart: lambda takes snapStart for python functions alone", where)
+	case fn.ProvisionedConcurrency != nil:
+		v.errorf("%s.snapStart: lambda takes snapStart or provisionedConcurrency, not both", where)
+	case fn.FileSystem != nil:
+		v.errorf("%s.snapStart: lambda takes no fileSystem with snapStart", where)
+	case fn.EphemeralStorage > 512:
+		v.errorf("%s.snapStart: lambda takes no more than 512 megabytes of ephemeralStorage with snapStart", where)
 	}
 }
 

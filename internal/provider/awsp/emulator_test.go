@@ -715,3 +715,112 @@ func TestLogSubscriptionEmulator(t *testing.T) {
 		t.Errorf("after delete, Read = %v, %v", found, err)
 	}
 }
+
+// TestVersionsEmulator deploys a function with a url, then gives it provisioned concurrency, and
+// checks its alias points at the version published and has the url, that a code change publishes
+// another and moves the alias, that the versions before the last few are deleted, and that the
+// alias goes once nothing needs it.
+func TestVersionsEmulator(t *testing.T) {
+	cfg := awstest.Emulator(t)
+	ctx := context.Background()
+	ident, err := sts.NewFromConfig(cfg).GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	account := *ident.Account
+	backend, err := state.Open(ctx, s3.NewFromConfig(cfg, func(o *s3.Options) { o.UsePathStyle = true }), account, awstest.Region)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lambdaClient := lambda.NewFromConfig(cfg)
+	e := &engine.Engine{
+		Providers: map[string]engine.Provider{
+			awsp.TypeLogGroup: awsp.LogGroup{Client: cloudwatchlogs.NewFromConfig(cfg)},
+			awsp.TypeRole:     awsp.Role{Client: iam.NewFromConfig(cfg)},
+			awsp.TypeFunction: awsp.Function{Client: lambdaClient, Wait: time.Minute, RetryEvery: 200 * time.Millisecond},
+			awsp.TypeURL:      awsp.URL{Client: lambdaClient},
+		},
+		Concurrency: 4,
+	}
+	app := awstest.Name("versions")
+	one := 1
+	p := &config.Project{App: app, Stage: "dev", Region: awstest.Region, Functions: map[string]config.Function{"api": {
+		Runtime: config.RuntimeNode22, Handler: "src/api.handler", Memory: 128, Timeout: 5, Architecture: config.ArchARM64,
+		EphemeralStorage: 512, LogRetention: 7, URL: &config.FunctionURL{Auth: "none"},
+	}}}
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "src"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	deploy := func(n int) {
+		t.Helper()
+		source := fmt.Sprintf("export const handler = async () => %d\n", n)
+		if err := os.WriteFile(filepath.Join(root, "src", "api.ts"), []byte(source), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		arc, err := build.Builder{Root: root, Stage: "dev"}.Build(ctx, "api", p.Functions["api"])
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, _ := os.ReadFile(arc.Path)
+		if err := backend.PutZip(ctx, app, "dev", arc.SHA256, data); err != nil {
+			t.Fatal(err)
+		}
+		nodes, err := desired.Build(p, desired.Target{Account: account, Region: awstest.Region, Bucket: backend.Bucket, Archives: map[string]build.Archive{"api": arc}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		apply(t, e, backend, app, nodes)
+	}
+	name := desired.FunctionName(p, "api")
+	aliasVersion := func() string {
+		t.Helper()
+		out, err := lambdaClient.GetAlias(ctx, &lambda.GetAliasInput{FunctionName: &name, Name: aws.String(config.Alias)})
+		if err != nil {
+			t.Fatalf("GetAlias: %v", err)
+		}
+		return aws.ToString(out.FunctionVersion)
+	}
+
+	deploy(0)
+	fn := p.Functions["api"]
+	fn.ProvisionedConcurrency = &one
+	p.Functions["api"] = fn
+	deploy(1)
+	first := aliasVersion()
+	if _, err := lambdaClient.GetFunctionUrlConfig(ctx, &lambda.GetFunctionUrlConfigInput{FunctionName: &name, Qualifier: aws.String(config.Alias)}); err != nil {
+		t.Errorf("the alias has no url: %v", err)
+	}
+	st, _, _ := backend.Read(ctx, app, "dev")
+	if attrs := st.Resources[desired.FunctionID("api")].Attributes; attrs[awsp.AttrAliasName] != name+":live" || !strings.HasSuffix(attrs[awsp.AttrAliasArn], ":live") {
+		t.Errorf("attributes = %v", attrs)
+	}
+	if got := invoke(t, lambdaClient, name+":live"); got != "1" {
+		t.Errorf("the alias returned %s, want 1", got)
+	}
+	for n := 2; n <= 6; n++ {
+		deploy(n)
+	}
+	if last := aliasVersion(); last == first {
+		t.Errorf("the alias is still at version %s after five changes", first)
+	}
+	if got := invoke(t, lambdaClient, name+":live"); got != "6" {
+		t.Errorf("the alias returned %s, want 6", got)
+	}
+	versions, err := lambdaClient.ListVersionsByFunction(ctx, &lambda.ListVersionsByFunctionInput{FunctionName: &name})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(versions.Versions); n > 4 {
+		t.Errorf("%d versions, want $LATEST and the last 3", n)
+	}
+
+	fn = p.Functions["api"]
+	fn.ProvisionedConcurrency = nil
+	p.Functions["api"] = fn
+	deploy(6)
+	if _, err := lambdaClient.GetAlias(ctx, &lambda.GetAliasInput{FunctionName: &name, Name: aws.String(config.Alias)}); !isNotFound(err) {
+		t.Errorf("the alias is still there: %v", err)
+	}
+	apply(t, e, backend, app, nil)
+}

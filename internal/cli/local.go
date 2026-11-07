@@ -21,6 +21,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/kontrolplane/koldstart/internal/build"
+	"github.com/kontrolplane/koldstart/internal/config"
 	"github.com/kontrolplane/koldstart/internal/desired"
 	"github.com/kontrolplane/koldstart/internal/local"
 	"github.com/kontrolplane/koldstart/internal/pkl"
@@ -272,9 +273,13 @@ deployed; .koldstart/local.<stage>.pkl overrides variables, and prod asks first.
 // invokeRemote invokes the deployed function, printing the end of its log on stderr and what it
 // returned on stdout. A function that failed prints nothing on stdout: its error is returned.
 func (s *stage) invokeRemote(ctx context.Context, cmd *cobra.Command, function string, payload []byte) error {
-	out, err := s.sess.Lambda.Invoke(ctx, &lambda.InvokeInput{
+	in := &lambda.InvokeInput{
 		FunctionName: aws.String(desired.FunctionName(s.Project, function)), Payload: payload, LogType: lambdatypes.LogTypeTail,
-	})
+	}
+	if s.Project.Functions[function].Versioned() {
+		in.Qualifier = aws.String(config.Alias)
+	}
+	out, err := s.sess.Lambda.Invoke(ctx, in)
 	if err != nil {
 		return fmt.Errorf("invoking %s: %w", function, err)
 	}

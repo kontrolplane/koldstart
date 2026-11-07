@@ -19,6 +19,9 @@ type URLInputs struct {
 	// Auth is NONE or AWS_IAM.
 	Auth string `json:"auth"`
 	CORS *CORS  `json:"cors"`
+	// Qualifier is the alias the url invokes, for a function with versions. It is left out for
+	// one without, so a url deployed before it keeps its hash.
+	Qualifier string `json:"qualifier,omitempty"`
 }
 
 // CORS is the cross-origin configuration of a function url or the http api.
@@ -66,7 +69,7 @@ func (p URL) Create(ctx context.Context, req engine.Request) (engine.Result, err
 		return engine.Result{}, err
 	}
 	out, err := p.Client.CreateFunctionUrlConfig(ctx, &lambda.CreateFunctionUrlConfigInput{
-		FunctionName: &in.Function, AuthType: types.FunctionUrlAuthType(in.Auth), Cors: in.cors(),
+		FunctionName: &in.Function, Qualifier: optional(in.Qualifier), AuthType: types.FunctionUrlAuthType(in.Auth), Cors: in.cors(),
 	})
 	if awserr.Is(err, "ResourceConflictException") {
 		return engine.Result{}, engine.ErrExists
@@ -83,11 +86,12 @@ func (p URL) Create(ctx context.Context, req engine.Request) (engine.Result, err
 // permissions lets anyone call a public url, and takes that away again from one with iam auth.
 func (p URL) permissions(ctx context.Context, in URLInputs) error {
 	if in.Auth != string(types.FunctionUrlAuthTypeNone) {
-		return p.removePermissions(ctx, in.Function)
+		return p.removePermissions(ctx, in)
 	}
+	qualifier := optional(in.Qualifier)
 	statements := []*lambda.AddPermissionInput{
-		{FunctionName: &in.Function, StatementId: aws.String(statementURL), Action: aws.String("lambda:InvokeFunctionUrl"), Principal: aws.String("*"), FunctionUrlAuthType: types.FunctionUrlAuthTypeNone},
-		{FunctionName: &in.Function, StatementId: aws.String(statementInvoke), Action: aws.String("lambda:InvokeFunction"), Principal: aws.String("*"), InvokedViaFunctionUrl: aws.Bool(true)},
+		{FunctionName: &in.Function, Qualifier: qualifier, StatementId: aws.String(statementURL), Action: aws.String("lambda:InvokeFunctionUrl"), Principal: aws.String("*"), FunctionUrlAuthType: types.FunctionUrlAuthTypeNone},
+		{FunctionName: &in.Function, Qualifier: qualifier, StatementId: aws.String(statementInvoke), Action: aws.String("lambda:InvokeFunction"), Principal: aws.String("*"), InvokedViaFunctionUrl: aws.Bool(true)},
 	}
 	for _, s := range statements {
 		_, err := p.Client.AddPermission(ctx, s)
@@ -98,11 +102,11 @@ func (p URL) permissions(ctx context.Context, in URLInputs) error {
 	return nil
 }
 
-func (p URL) removePermissions(ctx context.Context, function string) error {
+func (p URL) removePermissions(ctx context.Context, in URLInputs) error {
 	for _, id := range []string{statementURL, statementInvoke} {
-		_, err := p.Client.RemovePermission(ctx, &lambda.RemovePermissionInput{FunctionName: &function, StatementId: aws.String(id)})
+		_, err := p.Client.RemovePermission(ctx, &lambda.RemovePermissionInput{FunctionName: &in.Function, Qualifier: optional(in.Qualifier), StatementId: aws.String(id)})
 		if err != nil && !awserr.Is(err, "ResourceNotFoundException") {
-			return fmt.Errorf("removing %s from %s: %w", id, function, err)
+			return fmt.Errorf("removing %s from %s: %w", id, in.Function, err)
 		}
 	}
 	return nil
@@ -110,7 +114,11 @@ func (p URL) removePermissions(ctx context.Context, function string) error {
 
 // Read implements engine.Provider. A url has no tags of its own; its function's say whose it is.
 func (p URL) Read(ctx context.Context, req engine.Request) (engine.Result, bool, error) {
-	out, err := p.Client.GetFunctionUrlConfig(ctx, &lambda.GetFunctionUrlConfigInput{FunctionName: &req.PhysicalID})
+	var in URLInputs
+	if err := decodeInputs(req.Inputs, &in); err != nil {
+		return engine.Result{}, false, err
+	}
+	out, err := p.Client.GetFunctionUrlConfig(ctx, &lambda.GetFunctionUrlConfigInput{FunctionName: &req.PhysicalID, Qualifier: optional(in.Qualifier)})
 	if awserr.Is(err, "ResourceNotFoundException") {
 		return engine.Result{}, false, nil
 	}
@@ -127,7 +135,7 @@ func (p URL) Update(ctx context.Context, req engine.Request) (engine.Result, err
 		return engine.Result{}, err
 	}
 	out, err := p.Client.UpdateFunctionUrlConfig(ctx, &lambda.UpdateFunctionUrlConfigInput{
-		FunctionName: &in.Function, AuthType: types.FunctionUrlAuthType(in.Auth), Cors: in.cors(),
+		FunctionName: &in.Function, Qualifier: optional(in.Qualifier), AuthType: types.FunctionUrlAuthType(in.Auth), Cors: in.cors(),
 	})
 	if err != nil {
 		return engine.Result{}, fmt.Errorf("updating the url of %s: %w", in.Function, err)
@@ -138,20 +146,25 @@ func (p URL) Update(ctx context.Context, req engine.Request) (engine.Result, err
 	return urlResult(aws.ToString(out.FunctionUrl), in.Function), nil
 }
 
-// Delete implements engine.Provider.
+// Delete implements engine.Provider: the url of the alias the prior inputs name, if any.
 func (p URL) Delete(ctx context.Context, req engine.Request) error {
-	if err := p.removePermissions(ctx, req.PhysicalID); err != nil {
+	var in URLInputs
+	if err := decodeInputs(req.Prior, &in); err != nil {
 		return err
 	}
-	_, err := p.Client.DeleteFunctionUrlConfig(ctx, &lambda.DeleteFunctionUrlConfigInput{FunctionName: &req.PhysicalID})
+	in.Function = req.PhysicalID
+	if err := p.removePermissions(ctx, in); err != nil {
+		return err
+	}
+	_, err := p.Client.DeleteFunctionUrlConfig(ctx, &lambda.DeleteFunctionUrlConfigInput{FunctionName: &req.PhysicalID, Qualifier: optional(in.Qualifier)})
 	if err != nil && !awserr.Is(err, "ResourceNotFoundException") {
 		return fmt.Errorf("deleting the url of %s: %w", req.PhysicalID, err)
 	}
 	return nil
 }
 
-// Replaces implements engine.Provider: a url belongs to its function.
+// Replaces implements engine.Provider: a url belongs to its function, or to its alias.
 func (URL) Replaces(prior, desired json.RawMessage) bool {
 	a, b := decodeBoth[URLInputs](prior, desired)
-	return a.Function != b.Function
+	return a.Function != b.Function || a.Qualifier != b.Qualifier
 }

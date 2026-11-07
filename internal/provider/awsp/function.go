@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -48,6 +50,39 @@ type FunctionInputs struct {
 	LogFormat           string            `json:"logFormat,omitempty"`
 	ApplicationLogLevel string            `json:"applicationLogLevel,omitempty"`
 	SystemLogLevel      string            `json:"systemLogLevel,omitempty"`
+	SnapStart           bool              `json:"snapStart,omitempty"`
+	Alias               *AliasConfig      `json:"alias,omitempty"`
+}
+
+// AliasConfig is the alias of a function with versions, which koldstart points at a new version
+// on every change, and the instances kept started on it.
+type AliasConfig struct {
+	Name                   string `json:"name"`
+	ProvisionedConcurrency *int32 `json:"provisionedConcurrency,omitempty"`
+}
+
+// The attributes of a function with an alias: the alias's arn, and the function's name with the
+// alias after it, which lambda's calls take in place of the name.
+const (
+	AttrAliasArn  = "AliasArn"
+	AttrAliasName = "AliasName"
+)
+
+// keptVersions is how many versions of a function with an alias are kept: the one the alias
+// points at and those before it, to point it back at by hand.
+const keptVersions = 3
+
+// snapStart is whether lambda snapshots the versions of the function: on when it asks, off when
+// it no longer does, and nil otherwise, as runtimes without snapStart may refuse even turning it
+// off.
+func (in FunctionInputs) snapStart(prior *FunctionInputs) *types.SnapStart {
+	switch {
+	case in.SnapStart:
+		return &types.SnapStart{ApplyOn: types.SnapStartApplyOnPublishedVersions}
+	case prior != nil && prior.SnapStart:
+		return &types.SnapStart{ApplyOn: types.SnapStartApplyOnNone}
+	}
+	return nil
 }
 
 // AsyncConfig is what lambda does with the events it is handed without waiting.
@@ -262,6 +297,7 @@ func (p Function) Create(ctx context.Context, req engine.Request) (engine.Result
 			KMSKeyArn:         optional(in.KMSKey),
 			DeadLetterConfig:  in.createDeadLetter(),
 			FileSystemConfigs: in.createFileSystems(),
+			SnapStart:         in.createSnapStart(),
 			Tags:              in.tags(req.Tags),
 		})
 		if awserr.Is(err, "ResourceConflictException") && strings.Contains(err.Error(), "already exist") {
@@ -284,7 +320,153 @@ func (p Function) Create(ctx context.Context, req engine.Request) (engine.Result
 	if err := p.async(ctx, in, nil); err != nil {
 		return engine.Result{}, err
 	}
-	return functionResult(aws.ToString(out.FunctionArn), in.Name), nil
+	alias, err := p.versions(ctx, in, nil)
+	if err != nil {
+		return engine.Result{}, err
+	}
+	return withAlias(functionResult(aws.ToString(out.FunctionArn), in.Name), alias), nil
+}
+
+// createSnapStart is what a create sends: nothing for a function without snapStart.
+func (in FunctionInputs) createSnapStart() *types.SnapStart {
+	if !in.SnapStart {
+		return nil
+	}
+	return in.snapStart(nil)
+}
+
+// withAlias adds the attributes of a function's alias to its result, when it has one.
+func withAlias(res engine.Result, alias map[string]string) engine.Result {
+	maps.Copy(res.Attributes, alias)
+	return res
+}
+
+// versions publishes a version of what the function is now, points its alias at it, keeps the
+// instances the alias has started, and deletes the versions before the last few. Lambda
+// publishes no new version when nothing changed since the last one. A function that no longer
+// has an alias loses it, and its started instances with it.
+func (p Function) versions(ctx context.Context, in FunctionInputs, prior *FunctionInputs) (map[string]string, error) {
+	if in.Alias == nil {
+		if prior == nil || prior.Alias == nil {
+			return nil, nil
+		}
+		_, err := p.Client.DeleteAlias(ctx, &lambda.DeleteAliasInput{FunctionName: &in.Name, Name: &prior.Alias.Name})
+		if err != nil && !awserr.Is(err, "ResourceNotFoundException") {
+			return nil, fmt.Errorf("deleting the alias %s of %s: %w", prior.Alias.Name, in.Name, err)
+		}
+		return nil, nil
+	}
+	var version string
+	err := p.retry(ctx, func() error {
+		out, err := p.Client.PublishVersion(ctx, &lambda.PublishVersionInput{FunctionName: &in.Name})
+		if err == nil {
+			version = aws.ToString(out.Version)
+		}
+		return err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("publishing a version of %s: %w", in.Name, err)
+	}
+	err = lambda.NewFunctionActiveV2Waiter(p.Client).Wait(ctx, &lambda.GetFunctionInput{FunctionName: &in.Name, Qualifier: &version}, p.wait())
+	if err != nil {
+		return nil, fmt.Errorf("waiting for version %s of %s to become active: %w", version, in.Name, err)
+	}
+	arn, err := p.pointAlias(ctx, in.Name, in.Alias.Name, version)
+	if err != nil {
+		return nil, err
+	}
+	if err := p.provisioned(ctx, in, prior); err != nil {
+		return nil, err
+	}
+	if err := p.prune(ctx, in.Name, version); err != nil {
+		return nil, err
+	}
+	return map[string]string{AttrAliasArn: arn, AttrAliasName: in.Name + ":" + in.Alias.Name}, nil
+}
+
+// pointAlias points the alias at version, making it when the function has none, and returns its
+// arn.
+func (p Function) pointAlias(ctx context.Context, name, alias, version string) (string, error) {
+	updated, err := p.Client.UpdateAlias(ctx, &lambda.UpdateAliasInput{FunctionName: &name, Name: &alias, FunctionVersion: &version})
+	if err == nil {
+		return aws.ToString(updated.AliasArn), nil
+	}
+	if !awserr.Is(err, "ResourceNotFoundException") {
+		return "", fmt.Errorf("pointing the alias %s of %s at version %s: %w", alias, name, version, err)
+	}
+	created, err := p.Client.CreateAlias(ctx, &lambda.CreateAliasInput{FunctionName: &name, Name: &alias, FunctionVersion: &version})
+	if err != nil {
+		return "", fmt.Errorf("creating the alias %s of %s: %w", alias, name, err)
+	}
+	return aws.ToString(created.AliasArn), nil
+}
+
+// provisioned keeps the alias's instances started, or stops keeping them when the function no
+// longer asks for any.
+func (p Function) provisioned(ctx context.Context, in FunctionInputs, prior *FunctionInputs) error {
+	alias := in.Alias.Name
+	if in.Alias.ProvisionedConcurrency == nil {
+		if prior == nil || prior.Alias == nil || prior.Alias.ProvisionedConcurrency == nil {
+			return nil
+		}
+		_, err := p.Client.DeleteProvisionedConcurrencyConfig(ctx, &lambda.DeleteProvisionedConcurrencyConfigInput{FunctionName: &in.Name, Qualifier: &alias})
+		if err != nil && !awserr.Is(err, "ResourceNotFoundException", "ProvisionedConcurrencyConfigNotFoundException") {
+			return fmt.Errorf("removing the provisioned concurrency of %s: %w", in.Name, err)
+		}
+		return nil
+	}
+	err := p.retry(ctx, func() error {
+		_, err := p.Client.PutProvisionedConcurrencyConfig(ctx, &lambda.PutProvisionedConcurrencyConfigInput{
+			FunctionName: &in.Name, Qualifier: &alias, ProvisionedConcurrentExecutions: in.Alias.ProvisionedConcurrency,
+		})
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("provisioning concurrency for %s: %w", in.Name, err)
+	}
+	return nil
+}
+
+// prune deletes the versions of a function before the last keptVersions, never the one its alias
+// points at. A version another alias still points at is left for whoever made that alias.
+func (p Function) prune(ctx context.Context, name, current string) error {
+	var versions []string
+	pages := lambda.NewListVersionsByFunctionPaginator(p.Client, &lambda.ListVersionsByFunctionInput{FunctionName: &name})
+	for pages.HasMorePages() {
+		page, err := pages.NextPage(ctx)
+		if err != nil {
+			return fmt.Errorf("listing the versions of %s: %w", name, err)
+		}
+		for _, v := range page.Versions {
+			versions = append(versions, aws.ToString(v.Version))
+		}
+	}
+	for _, version := range staleVersions(versions, current) {
+		_, err := p.Client.DeleteFunction(ctx, &lambda.DeleteFunctionInput{FunctionName: &name, Qualifier: &version})
+		if err != nil && !awserr.Is(err, "ResourceNotFoundException", "ResourceConflictException") {
+			return fmt.Errorf("deleting version %s of %s: %w", version, name, err)
+		}
+	}
+	return nil
+}
+
+// staleVersions are the numbered versions before the last keptVersions, oldest first, without
+// current and $LATEST.
+func staleVersions(versions []string, current string) []string {
+	var numbers []int
+	for _, v := range versions {
+		if n, err := strconv.Atoi(v); err == nil {
+			numbers = append(numbers, n)
+		}
+	}
+	slices.Sort(numbers)
+	var out []string
+	for _, n := range numbers[:max(0, len(numbers)-keptVersions)] {
+		if v := strconv.Itoa(n); v != current {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // createDeadLetter and createFileSystems are what a create sends: nothing when the function has
@@ -394,7 +576,19 @@ func (p Function) Read(ctx context.Context, req engine.Request) (engine.Result, 
 	if err := ours(req.PhysicalID, out.Tags, req); err != nil {
 		return engine.Result{}, false, err
 	}
-	return functionResult(aws.ToString(out.Configuration.FunctionArn), req.PhysicalID), true, nil
+	res := functionResult(aws.ToString(out.Configuration.FunctionArn), req.PhysicalID)
+	var in FunctionInputs
+	if err := decodeInputs(req.Inputs, &in); err != nil || in.Alias == nil {
+		return res, true, err
+	}
+	alias, err := p.Client.GetAlias(ctx, &lambda.GetAliasInput{FunctionName: &req.PhysicalID, Name: &in.Alias.Name})
+	if awserr.Is(err, "ResourceNotFoundException") {
+		return res, true, nil
+	}
+	if err != nil {
+		return engine.Result{}, false, fmt.Errorf("reading the alias %s of %s: %w", in.Alias.Name, req.PhysicalID, err)
+	}
+	return withAlias(res, map[string]string{AttrAliasArn: aws.ToString(alias.AliasArn), AttrAliasName: req.PhysicalID + ":" + in.Alias.Name}), true, nil
 }
 
 // configChanged reports whether anything UpdateFunctionConfiguration sets differs.
@@ -404,6 +598,7 @@ func configChanged(a, b FunctionInputs) bool {
 	a.ReservedConcurrency, b.ReservedConcurrency = nil, nil
 	a.Async, b.Async = nil, nil
 	a.Tags, b.Tags = nil, nil
+	a.Alias, b.Alias = nil, nil
 	return changed(a, b)
 }
 
@@ -427,7 +622,7 @@ func (p Function) Update(ctx context.Context, req engine.Request) (engine.Result
 		}
 	}
 	if prior == nil || configChanged(in, *prior) {
-		if err := p.updateConfiguration(ctx, in); err != nil {
+		if err := p.updateConfiguration(ctx, in, prior); err != nil {
 			return engine.Result{}, err
 		}
 	}
@@ -435,6 +630,10 @@ func (p Function) Update(ctx context.Context, req engine.Request) (engine.Result
 		return engine.Result{}, err
 	}
 	if err := p.async(ctx, in, prior); err != nil {
+		return engine.Result{}, err
+	}
+	alias, err := p.versions(ctx, in, prior)
+	if err != nil {
 		return engine.Result{}, err
 	}
 	arn, err := p.arnOf(ctx, in.Name, req.Attributes)
@@ -446,7 +645,7 @@ func (p Function) Update(ctx context.Context, req engine.Request) (engine.Result
 			return engine.Result{}, fmt.Errorf("tagging %s: %w", in.Name, err)
 		}
 	}
-	return functionResult(arn, in.Name), nil
+	return withAlias(functionResult(arn, in.Name), alias), nil
 }
 
 // updateCode points the function at its new zip, and waits for lambda to take it.
@@ -468,7 +667,7 @@ func (p Function) updateCode(ctx context.Context, in FunctionInputs) error {
 }
 
 // updateConfiguration sends everything but the code and the concurrency, and waits for it.
-func (p Function) updateConfiguration(ctx context.Context, in FunctionInputs) error {
+func (p Function) updateConfiguration(ctx context.Context, in FunctionInputs, prior *FunctionInputs) error {
 	err := p.retry(ctx, func() error {
 		_, err := p.Client.UpdateFunctionConfiguration(ctx, &lambda.UpdateFunctionConfigurationInput{
 			FunctionName:      &in.Name,
@@ -487,6 +686,7 @@ func (p Function) updateConfiguration(ctx context.Context, in FunctionInputs) er
 			KMSKeyArn:         in.kmsKey(),
 			DeadLetterConfig:  in.deadLetter(),
 			FileSystemConfigs: in.fileSystems(),
+			SnapStart:         in.snapStart(prior),
 		})
 		return err
 	})

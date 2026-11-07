@@ -203,3 +203,51 @@ func TestLevel(t *testing.T) {
 		}
 	}
 }
+
+// TestStaleVersions checks the versions before the last few are deleted, oldest first, never
+// $LATEST or the one the alias points at.
+func TestStaleVersions(t *testing.T) {
+	tests := []struct {
+		name     string
+		versions []string
+		current  string
+		want     string
+	}{
+		{name: "few", versions: []string{"$LATEST", "1", "2"}, current: "2", want: ""},
+		{name: "many", versions: []string{"$LATEST", "10", "2", "3", "4", "11"}, current: "11", want: "2,3"},
+		{name: "rolled back", versions: []string{"1", "2", "3", "4", "5"}, current: "1", want: "2"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := strings.Join(staleVersions(tt.versions, tt.current), ","); got != tt.want {
+				t.Errorf("staleVersions = %s, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestSnapStart checks snapStart is sent on when asked, off when it no longer is, and not at all
+// for a function that never had it, whose runtime may refuse even turning it off.
+func TestSnapStart(t *testing.T) {
+	on, off := FunctionInputs{SnapStart: true}, FunctionInputs{}
+	if s := on.snapStart(nil); s == nil || s.ApplyOn != "PublishedVersions" {
+		t.Errorf("on = %+v", s)
+	}
+	if s := off.snapStart(&on); s == nil || s.ApplyOn != "None" {
+		t.Errorf("turned off = %+v", s)
+	}
+	if off.snapStart(&off) != nil || off.snapStart(nil) != nil || off.createSnapStart() != nil {
+		t.Error("a function that never had snapStart sends it")
+	}
+	if configChanged(FunctionInputs{Alias: &AliasConfig{Name: "live"}}, FunctionInputs{}) {
+		t.Error("an alias counts as a configuration change, which has calls of its own")
+	}
+	if !configChanged(on, off) {
+		t.Error("snapStart does not count as a configuration change")
+	}
+	a, _ := json.Marshal(URLInputs{Function: "f"})
+	b, _ := json.Marshal(URLInputs{Function: "f", Qualifier: "live"})
+	if !(URL{}).Replaces(a, b) || strings.Contains(string(a), "qualifier") {
+		t.Errorf("a url moved to the alias is not replaced, or one without writes a qualifier: %s", a)
+	}
+}
