@@ -129,9 +129,10 @@ func (m model) openDiff(title, detail string, before, after any) (model, tea.Cmd
 }
 
 // diffWidth is the width the diff page draws its lines in, and diffTextWidth the width of the
-// json in them, after the marker of the change navigated to and the gutter of + and -.
+// json in them, after the marker of the change navigated to and the gutter of + and -, which
+// starts rowInset in as the rows of every page do.
 func diffWidth() int     { return detailWidth() }
-func diffTextWidth() int { return diffWidth() - 3 }
+func diffTextWidth() int { return diffWidth() - rowInset - 2 }
 
 // diffHeaderLines are the lines above a diff's json, diffContext the lines kept around each
 // change, and minFold the fewest kept lines folded into one.
@@ -491,13 +492,14 @@ func markStyle(t styles.Tone) lipgloss.Style {
 }
 
 // drawRow draws a row of the diff: the marker of the change navigated to, the gutter of + and -,
-// on every part of a line, and the row's spans. target is set on the fold enter opens.
+// rowInset in, on every part of a line, and the row's spans. target is set on the fold enter
+// opens.
 func drawRow(r diffRow, current, target bool) string {
 	var b strings.Builder
 	if current {
-		b.WriteString(styles.Accent("▌"))
+		b.WriteString(styles.Accent("▌") + pad(rowInset-1, nil))
 	} else {
-		b.WriteString(" ")
+		b.WriteString(pad(rowInset, nil))
 	}
 	switch {
 	case r.fold >= 0:
@@ -589,7 +591,7 @@ func (m model) diffLines() lazyLines {
 		"",
 	)
 	if len(d.lines) == 0 {
-		lines.add(styles.Faint("no inputs on either side"))
+		lines.add(insetLines([]string{styles.Faint("no inputs on either side")})...)
 		return lines
 	}
 	l := d.layout(diffTextWidth())
