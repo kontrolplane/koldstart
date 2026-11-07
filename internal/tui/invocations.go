@@ -283,7 +283,7 @@ func (m model) invocationLines() lazyLines {
 	}
 	shown := shownEvents(r)
 	if len(shown) == 0 {
-		out.add(styles.Faint("nothing logged but lambda's own lines"))
+		out.add(insetLines([]string{styles.Faint("nothing logged but lambda's own lines")})...)
 		return out
 	}
 	g := cache.gutter(r, shown)
@@ -321,7 +321,7 @@ func (m model) invocationHead(r request, width int) []string {
 		field("status", requestStatus(r, timeout)),
 	}
 	if c := causeCell(r.cause, styles.ToneBody); c != nil {
-		parts := wrapCell(c, max(1, width-labelWidth))
+		parts := wrapCell(c, max(1, width-labelWidth-rowInset))
 		if len(parts) > 3 {
 			parts = append(parts[:2], append(parts[2], styles.S("…", styles.ToneFaint)))
 		}

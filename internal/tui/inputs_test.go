@@ -69,3 +69,25 @@ func TestInputsKeys(t *testing.T) {
 		}
 	}
 }
+
+// TestInputsNone checks a change without inputs says so where the rows of its json would start,
+// a column in from its header.
+func TestInputsNone(t *testing.T) {
+	tests := []struct {
+		name string
+		json jsonView
+		want string
+	}{
+		{name: "none", want: "\n" + strings.Repeat(" ", 1+rowInset) + "no inputs"},
+		{name: "empty", json: newJSONView(map[string]any{}), want: "{}"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := pdPlanned(t)
+			m.state.inputs = inputsState{id: "resource/topic", detail: "create sns topic", json: tt.json, from: planPage}
+			if v := ansi.Strip(m.inputsView()); !strings.Contains(v, tt.want) {
+				t.Errorf("no %q in:\n%s", tt.want, v)
+			}
+		})
+	}
+}
