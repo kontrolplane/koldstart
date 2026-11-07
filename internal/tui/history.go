@@ -282,9 +282,16 @@ func changesCell(sum deploySummary, read bool, widths [3]int) cell {
 	}
 }
 
-// deployNote marks the deploy that wrote the current state, and one that stopped before it
-// finished.
+// deployNote marks the deploy that wrote the current state, one that stopped before it
+// finished, and one whose versions could not be read, whose who and changes are dashes; r reads
+// it again. Beside current it says not read, so both fit the column.
 func deployNote(sum deploySummary, latest bool) cell {
+	switch {
+	case sum.err != "" && latest:
+		return cell{styles.S("current", styles.ToneAccent), sep(), styles.S("not read", styles.ToneFaint)}
+	case sum.err != "":
+		return cell{styles.S("could not read it", styles.ToneFaint)}
+	}
 	var note cell
 	if sum.failed {
 		note = cell{styles.S("✗ failed", styles.ToneDanger)}

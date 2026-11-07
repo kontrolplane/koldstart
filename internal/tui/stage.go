@@ -1219,17 +1219,47 @@ func tabNumber(msg tea.KeyPressMsg, tabs int) (int, bool) {
 const tabGap = "   "
 
 // metricsNote says the metrics could not be read, or that those on screen are from an earlier
-// read, faint as the table beside it says what it can.
-func (m model) metricsNote() cell {
+// read, faint as the table beside it says what it can, in width: whole where it fits, and
+// otherwise in the longest of its shorter forms that fits, as no metrics or as of 10:04:05,
+// rather than cut short; nothing where none fits.
+func (m model) metricsNote(width int) string {
 	s := m.state.stage
-	if s.metrics == nil {
-		return text("could not read the metrics: "+s.metricsErr, styles.ToneFaint)
+	notes := []cell{
+		text("could not read the metrics: "+s.metricsErr, styles.ToneFaint),
+		text("could not read the metrics", styles.ToneFaint),
+		text("no metrics", styles.ToneFaint),
 	}
-	return staleNote("metrics", s.metricsAt, s.metricsErr)
+	if s.metrics != nil {
+		at := s.metricsAt.Local().Format(time.TimeOnly)
+		notes = []cell{staleNote("metrics", s.metricsAt, s.metricsErr), text("metrics as of "+at, styles.ToneFaint), text("as of "+at, styles.ToneFaint)}
+	}
+	for _, note := range notes {
+		if cellWidth(note) <= width {
+			return styles.Render(note...)
+		}
+	}
+	return ""
 }
 
-// stageNoteWidth is the narrowest a note beside the tabs is shown at.
-const stageNoteWidth = 16
+// centredLines draws a cell in lines of width, each no wider than its text, so a note set in
+// the middle of a page is centred line by line rather than as a block with its text at the left.
+// A cell wider than width starts each span on a line of its own, without the dot before it, so
+// the key a note ends with, · r tries again, is not split across two lines.
+func centredLines(c cell, width int) []string {
+	parts := []cell{c}
+	if cellWidth(c) > width {
+		parts = make([]cell, 0, len(c))
+		for _, s := range c {
+			s.Text = strings.TrimPrefix(s.Text, " · ")
+			parts = append(parts, wrapCell(cell{s}, width)...)
+		}
+	}
+	lines := make([]string, 0, len(parts))
+	for _, part := range parts {
+		lines = append(lines, renderCell(part, column{width: max(1, min(width, cellWidth(part)))}, nil))
+	}
+	return lines
+}
 
 func (m model) stageView() string {
 	s := m.state.stage
@@ -1239,15 +1269,17 @@ func (m model) stageView() string {
 			return place(contentWidth, contentHeight, styles.Muted(truncate(styles.Clean(readingNote(what)), contentWidth-4)))
 		}
 		return place(contentWidth, contentHeight, lipgloss.JoinVertical(lipgloss.Center,
-			cellLines(m.couldNotRead(what, s.err, styles.ToneDanger), min(contentWidth-4, dialogTextWidth()))...))
+			centredLines(m.couldNotRead(what, s.err, styles.ToneDanger), min(contentWidth-4, dialogTextWidth()))...))
 	}
 	counts := []string{formatInt(len(s.functions)), formatInt(len(s.resources)), formatInt(len(s.outputs)), ""}
 	if s.historyLoaded {
 		counts[historyTab] = formatInt(len(s.shownDeploys))
 	}
 	bar, under, _ := strings.Cut(indent(tabRow(stageTabs, counts, int(s.tab), tableWidth())), "\n")
-	if room := contentWidth - ansi.StringWidth(bar) - 4; s.tab == functionsTab && s.metricsErr != "" && room >= stageNoteWidth {
-		bar = spread(bar, ansi.Truncate(styles.Render(m.metricsNote()...), room, "…"), contentWidth-1)
+	if s.tab == functionsTab && s.metricsErr != "" {
+		if note := m.metricsNote(contentWidth - ansi.StringWidth(bar) - 4); note != "" {
+			bar = spread(bar, note, contentWidth-1)
+		}
 	}
 	return strings.Join([]string{
 		bar,

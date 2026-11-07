@@ -255,6 +255,137 @@ func TestDriftMarks(t *testing.T) {
 	}
 }
 
+// TestMetricsNote checks the note beside the tabs of metrics that could not be read, or are
+// from an earlier read, takes the longest form that fits its room rather than one cut short, and
+// none where none fits.
+func TestMetricsNote(t *testing.T) {
+	at := time.Date(2026, 11, 7, 10, 4, 5, 0, time.Local)
+	tests := []struct {
+		name  string
+		stale bool
+		width int
+		want  string
+	}{
+		{name: "not read, wide", width: 60, want: "could not read the metrics: aws said no"},
+		{name: "not read, narrower", width: 30, want: "could not read the metrics"},
+		{name: "not read, narrow", width: 15, want: "no metrics"},
+		{name: "not read, no room", width: 9, want: ""},
+		{name: "stale, wide", stale: true, width: 80, want: "metrics as of 10:04:05, could not read again: aws said no"},
+		{name: "stale, narrower", stale: true, width: 30, want: "metrics as of 10:04:05"},
+		{name: "stale, narrow", stale: true, width: 15, want: "as of 10:04:05"},
+		{name: "stale, no room", stale: true, width: 13, want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var m model
+			m.state.stage.metricsErr = "aws said no"
+			if tt.stale {
+				m.state.stage.metrics, m.state.stage.metricsAt = map[string]cli.Metrics{}, at
+			}
+			got := ansi.Strip(m.metricsNote(tt.width))
+			if got != tt.want {
+				t.Errorf("metricsNote(%d) = %q, want %q", tt.width, got, tt.want)
+			}
+			if ansi.StringWidth(got) > tt.width {
+				t.Errorf("%q is wider than %d", got, tt.width)
+			}
+		})
+	}
+}
+
+// TestStageNoteCentred checks a note set in the middle of the stage, as why its state could not
+// be read, is drawn no wider than its text, and where it does not fit on one line, the key that
+// ends it starts a line of its own rather than being split.
+func TestStageNoteCentred(t *testing.T) {
+	note := cell{styles.S("could not read the state of orders/dev: aws said no", styles.ToneDanger), styles.S(" · r tries again", styles.ToneFaint)}
+	tests := []struct {
+		name  string
+		width int
+		want  []string
+	}{
+		{name: "fits", width: 90, want: []string{"could not read the state of orders/dev: aws said no · r tries again"}},
+		{name: "does not fit", width: 60, want: []string{"could not read the state of orders/dev: aws said no", "r tries again"}},
+		{name: "narrow", width: 30, want: []string{"could not read the state of", "orders/dev: aws said no", "r tries again"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got []string
+			for _, l := range centredLines(note, tt.width) {
+				got = append(got, ansi.Strip(l))
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("lines %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestStageHints checks the keys the foot offers on the stage are the ones that do something:
+// no enter on the heading of a kind of resource while the filter holds text, as nothing folds
+// then, no c on a heading, which has nothing to copy, and only r, help and back on a stage whose
+// state could not be read.
+func TestStageHints(t *testing.T) {
+	tests := []struct {
+		name string
+		prep func(t *testing.T, m model) model
+		want []string
+		not  []string
+	}{
+		{
+			name: "a function",
+			prep: func(_ *testing.T, m model) model { return m },
+			want: []string{"enter", "i", "c", "/"},
+		},
+		{
+			name: "a heading",
+			prep: func(t *testing.T, m model) model { return pressKeys(t, m, "tab") },
+			want: []string{"enter/space", "/"},
+			not:  []string{"c", "space"},
+		},
+		{
+			name: "a resource",
+			prep: func(t *testing.T, m model) model { return pressKeys(t, m, "tab", "j") },
+			want: []string{"enter", "space", "c"},
+		},
+		{
+			name: "a heading while filtered",
+			prep: func(t *testing.T, m model) model {
+				return pressKeys(t, typeText(t, pressKeys(t, m, "tab", "/"), "api"), "enter")
+			},
+			want: []string{"tab", "/"},
+			not:  []string{"enter", "enter/space", "space", "c"},
+		},
+		{
+			name: "a state not read",
+			prep: func(_ *testing.T, m model) model {
+				m.state.stage.st, m.state.stage.err = nil, "aws said no"
+				return m
+			},
+			want: []string{"r", "?", "q"},
+			not:  []string{"tab", "/", "ctrl+d", "enter"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := tt.prep(t, started(t, sdStage(t, 3)))
+			var got []string
+			for _, h := range m.stageHints() {
+				got = append(got, h[0])
+			}
+			for _, k := range tt.want {
+				if !slices.Contains(got, k) {
+					t.Errorf("no %q in %q", k, got)
+				}
+			}
+			for _, k := range tt.not {
+				if slices.Contains(got, k) {
+					t.Errorf("%q in %q", k, got)
+				}
+			}
+		})
+	}
+}
+
 // TestFunctionRows checks the functions tab draws the last hour as a sparkline in the accent,
 // the minutes with errors in danger, with the errors in danger and bold, and nothing for a
 // function not invoked.
