@@ -1042,7 +1042,7 @@ func (m model) shortHelp() [][2]string {
 		}
 		return append(h, hint(k.Refresh), hint(k.Help), hint(k.Quit))
 	case versionPage:
-		return [][2]string{hint(k.View, "diff"), chooseHint, hint(k.Copy), hint(k.Help), hint(k.Quit)}
+		return m.versionHints()
 	case diffPage:
 		return m.diffHints()
 	case inputsPage:

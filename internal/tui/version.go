@@ -3,9 +3,11 @@ package tui
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"maps"
 	"slices"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
@@ -18,11 +20,12 @@ import (
 )
 
 // versionState is one earlier version of the stage's state, and what it changed from the one
-// before it.
+// before it. started is when the deploy that wrote it first wrote the state.
 type versionState struct {
 	gen     int
 	version state.ObjectVersion
 	writes  int
+	started time.Time
 	loaded  bool
 	current *state.State
 	before  *state.State
@@ -34,7 +37,7 @@ type versionState struct {
 // wrote, and the last one before it, to tell what it changed.
 func (m model) openVersion(i int) (model, tea.Cmd) {
 	d := deploys(m.state.stage.history)
-	m.state.version = versionState{version: d[i][0], writes: len(d[i])}
+	m.state.version = versionState{version: d[i][0], writes: len(d[i]), started: d[i][len(d[i])-1].LastModified}
 	previous := ""
 	if i+1 < len(d) {
 		previous = d[i+1][0].ID
@@ -44,16 +47,23 @@ func (m model) openVersion(i int) (model, tea.Cmd) {
 	return m.loadVersion(d[i][0].ID, previous)
 }
 
+// errNoState is what a version of the state that holds none fails with.
+var errNoState = errors.New("the version holds no state")
+
+// applyVersion shows the deploy read, or goes back to the history with why it could not be read.
+// A read that comes in after q left the page is dropped, so it cannot take the page that is on
+// screen away.
 func (m model) applyVersion(msg versionLoadedMsg) (model, tea.Cmd) {
 	v := &m.state.version
-	if msg.gen != v.gen {
+	if msg.gen != v.gen || m.page != versionPage {
 		return m, nil
 	}
-	if m.page == versionPage {
-		m.loading = false
+	m.loading = false
+	if msg.err == nil && msg.current == nil {
+		msg.err = errNoState
 	}
 	if msg.err != nil {
-		m.error = "could not read the version: " + msg.err.Error()
+		m.error = "could not read the deploy: " + msg.err.Error()
 		return m.switchPage(stagePage), nil
 	}
 	v.current, v.before, v.loaded = msg.current, msg.previous, true
@@ -150,6 +160,20 @@ func stateChanges(before, after *state.State) []stateChange {
 	return lines
 }
 
+// versionHints are the keys of the version page: enter and ↑ ↓ for its changes, or ↑ ↓ to scroll
+// when the deploy changed no resource and its lines do not fit.
+func (m model) versionHints() [][2]string {
+	k := m.keys
+	var h [][2]string
+	switch l := m.versionLines(); {
+	case len(l.rows) > 0:
+		h = append(h, hint(k.View, "diff"), chooseHint)
+	case l.lines.len() > contentHeight:
+		h = append(h, scrollHint)
+	}
+	return append(h, hint(k.Copy, "copy version"), hint(k.Help), hint(k.Quit))
+}
+
 // outputChanges are the lines of the outputs that changed between two versions of a state:
 // added with their value, removed, or changed from one value to another.
 func outputChanges(before, after *state.State) []cell {
@@ -180,7 +204,9 @@ func outputChanges(before, after *state.State) []cell {
 	return out
 }
 
-// versionLines are the lines of the version, each change one that can be chosen.
+// versionLines are the lines of the version, each change one that can be chosen: the deploy's
+// facts, marked as the history marks it when it failed or wrote the current state, and what it
+// changed in the resources and the outputs, each row rowInset in and ending where the facts do.
 func (m model) versionLines() pickList {
 	v := m.state.version
 	width := detailWidth()
@@ -188,11 +214,22 @@ func (m model) versionLines() pickList {
 		return pickList{}
 	}
 	cur := v.current
+	rowWidth := width - rowInset
 	changes := stateChanges(v.before, cur)
 	outputs := outputChanges(v.before, cur)
 	title := "changed from the deploy before"
 	if v.before == nil {
 		title = "the first deploy"
+	}
+	deployed := "deploy of " + formatTime(v.version.LastModified)
+	head := styles.SectionHeader(deployed, width)
+	if note := deployNote(summary(v.before, cur, v.started), v.version.Latest); len(note) > 0 {
+		noteWidth := ansi.StringWidth(plainText(note))
+		head = styles.SectionHeader(deployed, width-noteWidth-1) + " " + renderCell(note, column{width: noteWidth}, nil)
+	}
+	writes := cell{styles.S(formatInt(v.writes), styles.ToneBody)}
+	if v.writes > 1 {
+		writes = append(writes, styles.S(", the last shown here", styles.ToneFaint))
 	}
 	var added, changed, removed int
 	for _, c := range changes {
@@ -206,31 +243,27 @@ func (m model) versionLines() pickList {
 		}
 	}
 	lines := []string{
-		styles.SectionHeader("deploy of "+formatTime(v.version.LastModified), width),
+		head,
 		row("by", text(orDash(cur.DeployedBy), styles.ToneBody), width),
 		row("when", text(formatAgo(v.version.LastModified), styles.ToneBody), width),
 		row("serial", text(formatInt(int(cur.Serial)), styles.ToneBody), width),
 		row("version", text(v.version.ID, styles.ToneFaint), width),
 		row("resources", text(formatInt(len(cur.Resources)), styles.ToneBody), width),
-		row("writes", text(formatInt(v.writes)+", the last shown here", styles.ToneMuted), width),
+		row("writes", writes, width),
 		"",
 		countedHeader(title, changeCounts(added, changed, removed), width),
 	}
 	l := pickList{lines: lazyOf(lines), head: len(lines)}
-	cols := []column{{width: width - 1}}
+	cols := []column{{width: rowWidth}}
 	cells := make([]cell, len(changes))
 	for i, c := range changes {
 		cells[i] = c.line
 	}
-	for _, c := range alignNames(cells, width/2) {
+	for _, c := range alignNames(cells, rowWidth/2) {
 		l.addDrawn(func() string { return renderCell(c, cols[0], nil) }, func() string { return litRow(cols, c) })
 	}
 	if len(changes) == 0 {
-		empty := "no resource or output changed: the deploy found everything as configured"
-		if len(outputs) > 0 {
-			empty = "no resource changed"
-		}
-		l.lines.add(styles.Faint(empty))
+		l.lines.add(cellLines(text(noChangeNote(v.before == nil, len(outputs) > 0), styles.ToneFaint), rowWidth)...)
 	}
 	if len(outputs) > 0 {
 		var added, changed, removed int
@@ -244,11 +277,26 @@ func (m model) versionLines() pickList {
 				changed++
 			}
 		}
-		aligned := alignNames(outputs, width/2)
-		l.lines.add("", countedHeader("outputs", changeCounts(added, changed, removed), width))
-		l.lines.addDrawn(len(aligned), func(i int) string { return renderCell(aligned[i], column{width: width}, nil) })
+		aligned := alignNames(outputs, rowWidth/2)
+		l.lines.add("")
+		l.addHeader(countedHeader("outputs", changeCounts(added, changed, removed), width))
+		l.lines.addDrawn(len(aligned), func(i int) string { return renderCell(aligned[i], column{width: rowWidth}, nil) })
 	}
 	return l
+}
+
+// noChangeNote is what the version page says in place of the resources a deploy changed when it
+// changed none: whether it was the first deploy, and whether it changed an output.
+func noChangeNote(first, outputs bool) string {
+	switch {
+	case first && outputs:
+		return "the deploy created no resource"
+	case first:
+		return "the deploy created no resource or output"
+	case outputs:
+		return "no resource changed"
+	}
+	return "no resource or output changed: the deploy found everything as configured"
 }
 
 // countedHeader is a section's header with how many things in it were added, changed and
@@ -266,19 +314,19 @@ func countedHeader(title string, counts []styles.Span, width int) string {
 
 // alignNames pads the name of each change, its second span after the mark, to the longest of
 // them up to limit, so what follows the names lines up: the ids in aws a deploy created, or what
-// changed in each resource.
+// changed in each resource. Names are measured as they are drawn, cleaned.
 func alignNames(cells []cell, limit int) []cell {
 	longest := 0
 	for _, c := range cells {
 		if len(c) > 2 {
-			longest = max(longest, ansi.StringWidth(c[1].Text))
+			longest = max(longest, ansi.StringWidth(styles.Clean(c[1].Text)))
 		}
 	}
 	longest = min(longest, limit)
 	out := make([]cell, len(cells))
 	for i, c := range cells {
 		out[i] = slices.Clone(c)
-		if w := ansi.StringWidth(c[1].Text); len(c) > 2 && w < longest {
+		if w := ansi.StringWidth(styles.Clean(c[1].Text)); len(c) > 2 && w < longest {
 			out[i][1].Text += strings.Repeat(" ", longest-w)
 		}
 	}

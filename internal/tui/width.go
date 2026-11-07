@@ -132,12 +132,20 @@ func moveCursor(msg tea.KeyPressMsg, k keys.KeyMap, cursor, n, page int) (int, b
 // the index of the line of each, and lit the line of each drawn chosen, on the selection's ground.
 // The lines are drawn only where they are in sight, so a plan of thousands of changes draws a frame
 // as quickly as one of a screenful. The first head lines are the page's head, drawn one column in
-// as the heads of the other pages are, rather than beside the cursor's gutter.
+// as the heads of the other pages are, rather than beside the cursor's gutter, and so are the
+// lines in headers, the headers of sections that follow rows.
 type pickList struct {
-	lines lazyLines
-	rows  []int
-	lit   []func() string
-	head  int
+	lines   lazyLines
+	rows    []int
+	lit     []func() string
+	head    int
+	headers []int
+}
+
+// addHeader appends the header of a section, drawn one column in as the head is.
+func (l *pickList) addHeader(line string) {
+	l.headers = append(l.headers, l.lines.len())
+	l.lines.add(line)
 }
 
 // addDrawn appends a line that can be chosen, drawn by line, and by lit when it is chosen, only
@@ -174,7 +182,7 @@ func selectable(l pickList, cursor, scroll, height int) (string, int) {
 			out = append(out, " "+cursorMark(styles.P.Selection)+l.lit[cursor]())
 		case scroll+i == selected:
 			out = append(out, " "+styles.Accent("▌")+" "+line)
-		case scroll+i < l.head:
+		case scroll+i < l.head || slices.Contains(l.headers, scroll+i):
 			out = append(out, " "+line)
 		default:
 			out = append(out, "   "+line)
