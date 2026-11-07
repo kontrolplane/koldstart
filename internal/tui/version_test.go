@@ -250,8 +250,9 @@ func TestVersionHints(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			after := testState(ordersDev)
 			tt.change(after)
-			var got []string
-			for _, h := range openNewestDeploy(t, testState(ordersDev), after).shortHelp() {
+			help := openNewestDeploy(t, testState(ordersDev), after).shortHelp()
+			got := make([]string, 0, len(help))
+			for _, h := range help {
 				got = append(got, h[0]+" "+h[1])
 			}
 			hints := strings.Join(got, " · ")

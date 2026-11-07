@@ -313,7 +313,7 @@ func TestPlanHead(t *testing.T) {
 // TestPlanHeadingsLineUp checks the totals of the headings are right aligned and each count by
 // action is padded to the widest of its column, so the counts of the groups line up.
 func TestPlanHeadingsLineUp(t *testing.T) {
-	var many []engine.Change
+	many := make([]engine.Change, 0, 10)
 	for i := range 10 {
 		many = append(many, engine.Change{ID: fmt.Sprintf("function/fn-%02d", i), Action: engine.Create})
 	}
