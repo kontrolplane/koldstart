@@ -363,6 +363,8 @@ func perfPages(tb testing.TB, w, h int) map[string]model {
 	m = perfKeys(m, "tab")
 	pages["stage outputs"] = m
 	m = perfKeys(m, "tab")
+	pages["stage architecture"] = m
+	m = perfKeys(m, "tab")
 	pages["stage history"] = m
 	pages["version"] = perfKeys(m, "enter")
 	res := perfKeys(m, "tab", "tab")
@@ -399,7 +401,7 @@ func TestPerfPages(t *testing.T) {
 	}
 	want := map[string]page{
 		"overview": overviewPage, "stage functions": stagePage, "stage resources": stagePage, "stage outputs": stagePage,
-		"stage history": stagePage, "version": versionPage, "resource": resourcePage, "resource in aws": resourcePage,
+		"stage architecture": stagePage, "stage history": stagePage, "version": versionPage, "resource": resourcePage, "resource in aws": resourcePage,
 		"function": functionPage, "logs": functionPage, "invocations": functionPage, "invocation": invocationPage,
 		"invoke": functionPage, "invoke event": functionPage, "invoke payload": functionPage, "plan": planPage, "plan diff": diffPage,
 	}
@@ -516,7 +518,7 @@ func perfBench(b *testing.B) map[string]model {
 
 // perfPageNames are the pages benchmarked, in order.
 var perfPageNames = []string{
-	"overview", "stage functions", "stage resources", "stage outputs", "stage history", "version", "resource",
+	"overview", "stage functions", "stage resources", "stage outputs", "stage architecture", "stage history", "version", "resource",
 	"resource in aws", "function", "logs", "invocations", "invocation", "invoke", "invoke event", "invoke payload", "plan", "plan diff",
 }
 

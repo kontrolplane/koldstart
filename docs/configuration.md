@@ -205,7 +205,7 @@ link {
 | `AWS::SecretsManager::Secret` | `<NAME>_ARN`                  |
 | `AWS::SSM::Parameter`         | `<NAME>_NAME`                 |
 
-`<NAME>` is the resource's name in uppercase, dashes and dots as underscores: `orders` gives `ORDERS_NAME`. A type that is not in this table is refused; give access to it with `permissions`:
+`<NAME>` is the resource's name in uppercase, dashes and dots as underscores: `orders` gives `ORDERS_NAME`. `kdst ui` shows what each function links to, with the access its role has, on a stage's architecture tab and under `uses` on the function. A type that is not in this table is refused; give access to it with `permissions`:
 
 ```pkl
 permissions {

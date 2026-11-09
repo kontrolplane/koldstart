@@ -151,7 +151,7 @@ func TestStageEmpty(t *testing.T) {
 	m := pressKeys(t, started(t, newFake(t)), "/")
 	m = typeText(t, m, "nothing-like-this")
 	m = pressKeys(t, m, "enter")
-	for _, tab := range []string{"no function matches nothing-like-this", "no resource matches nothing-like-this", "no output matches nothing-like-this", "no deploy matches nothing-like-this"} {
+	for _, tab := range []string{"no function matches nothing-like-this", "no resource matches nothing-like-this", "no output matches nothing-like-this", "no function matches nothing-like-this", "no deploy matches nothing-like-this"} {
 		if v := screen(m); !strings.Contains(v, tab) {
 			t.Errorf("no %q:\n%s", tab, v)
 		}
