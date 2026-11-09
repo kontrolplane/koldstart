@@ -31,37 +31,68 @@ const (
 	howVPC        = "vpc"
 	howKMSKey     = "kms key"
 	howLinked     = "linked"
+	howReferenced = "referenced"
 )
 
-// attachmentsOf are what fn uses in a stage, as it was deployed: its links, sorted, then its
-// dead letter target, its destinations, its file system, its vpc and its kms key.
+// attachmentsOf are what fn uses in a stage, as it was deployed: its links, sorted, the other
+// resources of the stage its environment refers to, then its dead letter target, its
+// destinations, its file system, its vpc and its kms key.
 func attachmentsOf(st *state.State, fn string) []attachment {
 	return attachmentsFrom(st, fn, desired.Links(st.Resources, fn), arnIndex(st))
 }
 
-// arnIndex are the resources of a stage by each of their ids in aws and attributes, so an arn
-// finds the resource that has it; where two have one, the first by id.
+// arnIndex are the resources of a stage by each of their ids in aws and attributes that is an
+// arn, and by their service and the name their id ends with, as a queue's url ends with its name,
+// so an arn finds the resource that has it, or one of its service and name where the stage holds
+// no arn of it, as on an emulator; where two have one, the first by id.
 func arnIndex(st *state.State) map[string]string {
 	out := map[string]string{}
+	set := func(k, id string) {
+		if _, seen := out[k]; !seen {
+			out[k] = id
+		}
+	}
 	for _, id := range slices.Sorted(maps.Keys(st.Resources)) {
 		r := st.Resources[id]
 		for _, v := range slices.Concat([]string{r.PhysicalID}, slices.Collect(maps.Values(r.Attributes))) {
-			if _, seen := out[v]; strings.HasPrefix(v, "arn:") && !seen {
-				out[v] = id
+			if strings.HasPrefix(v, "arn:") {
+				set(v, id)
 			}
+		}
+		if parts := strings.Split(r.Type, "::"); len(parts) == 3 && r.PhysicalID != "" {
+			set(nameKey(strings.ToLower(parts[1]), r.PhysicalID[strings.LastIndexAny(r.PhysicalID, ":/")+1:]), id)
 		}
 	}
 	return out
 }
 
-// attachmentsFrom are what fn uses: links, and its settings that name an arn, found in index.
+// nameKey is the key of arnIndex for a resource of service by its name.
+func nameKey(service, name string) string {
+	return "name " + service + " " + name
+}
+
+// attachmentsFrom are what fn uses: links, the resources it depends on, and its settings that
+// name an arn, found in index.
 func attachmentsFrom(st *state.State, fn string, links []desired.Link, index map[string]string) []attachment {
 	var out []attachment
-	for _, l := range links {
-		r := st.Resources[l.ID]
-		out = append(out, attachment{how: cmpOr(l.Access, howLinked), name: headName(l.ID), kind: typeName(r.Type), copy: cmpOr(r.Attributes["Arn"], r.PhysicalID), id: l.ID})
+	resource := func(how, id string) {
+		r := st.Resources[id]
+		out = append(out, attachment{how: how, name: headName(id), kind: typeName(r.Type), copy: cmpOr(r.Attributes["Arn"], r.PhysicalID), id: id})
 	}
-	in := functionInputs(st.Resources[desired.FunctionID(fn)])
+	linked := map[string]bool{}
+	for _, l := range links {
+		linked[l.ID] = true
+		resource(cmpOr(l.Access, howLinked), l.ID)
+	}
+	f := st.Resources[desired.FunctionID(fn)]
+	if f != nil {
+		for _, id := range slices.Sorted(slices.Values(f.Dependencies)) {
+			if strings.HasPrefix(id, "resource/") && !linked[id] && st.Resources[id] != nil {
+				resource(howReferenced, id)
+			}
+		}
+	}
+	in := functionInputs(f)
 	targets := [][2]string{{howDeadLetter, in.DeadLetter}}
 	if in.Async != nil {
 		targets = append(targets, [2]string{howOnSuccess, in.Async.OnSuccess}, [2]string{howOnFailure, in.Async.OnFailure})
@@ -96,7 +127,11 @@ func attachmentsFrom(st *state.State, fn string, links []desired.Link, index map
 // arnAttachment is what an arn a function sends to or uses names: the resource of the stage that
 // has it in index, or one outside it by the name at its end and its service.
 func arnAttachment(st *state.State, index map[string]string, how, arn string) attachment {
-	if id, ok := index[arn]; ok {
+	id, ok := index[arn]
+	if parts := strings.SplitN(arn, ":", 4); !ok && len(parts) == 4 {
+		id, ok = index[nameKey(parts[2], arnName(arn))]
+	}
+	if ok {
 		return attachment{how: how, name: headName(id), kind: typeName(st.Resources[id].Type), copy: arn, id: id}
 	}
 	return attachment{how: how, name: arnName(arn), kind: arnService(arn), copy: arn}
@@ -270,12 +305,16 @@ func sharedWith(usedBy map[string][]string, id, fn string) []string {
 	return slices.DeleteFunc(slices.Clone(usedBy[id]), func(other string) bool { return other == fn })
 }
 
-// alsoNote says which other functions use what a row's function uses, or nothing for none.
+// alsoNote says which other functions use what a row's function uses, the first by name and how
+// many more, as also payments +2, or nothing for none.
 func alsoNote(others []string) string {
-	if len(others) == 0 {
+	switch len(others) {
+	case 0:
 		return ""
+	case 1:
+		return "  also " + others[0]
 	}
-	return "  also " + strings.Join(others, ", ")
+	return "  also " + others[0] + " +" + formatInt(len(others)-1)
 }
 
 // cutTo cuts s to width in its middle, as cutMiddle does, or at its end where width is too

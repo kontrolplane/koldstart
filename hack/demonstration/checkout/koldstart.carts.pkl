@@ -1,5 +1,6 @@
-// The checkout service's second release: carts, and emails to customers on the topic of order
-// notifications. koldstart.pkl adds the payment provider's webhook and the nightly
+// The checkout service's second release: carts, feature flags the storefront reads from parameter
+// store, and emails to customers on the topic of order notifications, those it could not send kept
+// on a queue. koldstart.pkl adds the payment provider's webhook and the nightly
 // reconciliation.
 amends "@koldstart/Project.pkl"
 
@@ -17,9 +18,11 @@ functions {
 }
 
 resources {
+  ["feature-flags"] = checkout.featureFlagsParameter
   ["orders"] = checkout.orders
   ["carts"] = checkout.carts
   ["payment-requests"] = checkout.paymentRequests
+  ["failed-notifications"] = checkout.failedNotifications
   ["order-notifications"] = checkout.orderNotifications
 }
 

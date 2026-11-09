@@ -18,6 +18,7 @@ functions {
       ["PAYMENT_REQUESTS_QUEUE"] = checkout.arn("sqs", "payment-requests")
       ["CURRENCY"] = "EUR"
     }
+    link = new {}
     events = new {
       kdst.get("/products")
       kdst.post("/orders")

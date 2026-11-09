@@ -22,10 +22,12 @@ functions {
 }
 
 resources {
+  ["feature-flags"] = checkout.featureFlagsParameter
   ["orders"] = checkout.orders
   ["carts"] = checkout.carts
   ["payment-requests"] = checkout.paymentRequests
   ["failed-payments"] = checkout.failedPayments
+  ["failed-notifications"] = checkout.failedNotifications
   ["order-notifications"] = checkout.orderNotifications
   ["receipts"] = checkout.receipts
 }

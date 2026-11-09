@@ -1,8 +1,9 @@
 /// The parts of the checkout service, each defined once, for the files of its releases to pick
 /// from: koldstart.first.pkl, koldstart.carts.pkl and koldstart.pkl.
 ///
-/// Floci's cloud control returns no Arn, so nothing links a resource or refers to its Arn: the
-/// functions name their queue and topic by the arns floci gives them, in floci's account.
+/// Floci's cloud control returns no Arn, so nothing links a resource that needs one or refers to
+/// its Arn: the functions name their queues and topic by the arns floci gives them, in floci's
+/// account. A parameter is linked by its name alone, so the storefront links the feature flags.
 module checkout
 
 import "@koldstart/Project.pkl"
@@ -33,6 +34,9 @@ storefront: Project.Function = new {
     ["PAYMENT_REQUESTS_QUEUE"] = arn("sqs", "payment-requests")
     ["CURRENCY"] = "EUR"
   }
+  link {
+    ["feature-flags"] = "read"
+  }
   events {
     kdst.get("/products")
     kdst.get("/carts/{cartId}")
@@ -56,10 +60,12 @@ payments: Project.Function = new {
   }
 }
 
-/// Emails customers when their order is confirmed, shipped or refunded.
+/// Emails customers when their order is confirmed, shipped or refunded. An email it could not send
+/// goes to the failed notifications.
 notifyCustomers: Project.Function = new {
   memory = 256
   timeout = 10.s
+  deadLetter = arn("sqs", "failed-notifications")
   environment {
     ["SENDER_ADDRESS"] = "orders@example.com"
   }
@@ -114,12 +120,26 @@ failedPayments: Project.Resource = (kdst.queue()) {
   properties { QueueName = "checkout-\(kdst.stage)-failed-payments" }
 }
 
+failedNotifications: Project.Resource = (kdst.queue()) {
+  properties { QueueName = "checkout-\(kdst.stage)-failed-notifications" }
+}
+
 orderNotifications: Project.Resource = (kdst.topic()) {
   properties { TopicName = "checkout-\(kdst.stage)-order-notifications" }
 }
 
 receipts: Project.Resource = (kdst.bucket()) {
   properties { BucketName = "checkout-\(kdst.stage)-receipts" }
+}
+
+/// The feature flags, in parameter store, which the storefront reads.
+featureFlagsParameter: Project.Resource = new {
+  type = "AWS::SSM::Parameter"
+  properties {
+    Name = "/checkout/\(kdst.stage)/feature-flags"
+    Type = "String"
+    Value = featureFlags
+  }
 }
 
 runbook = "https://github.com/kontrolplane/koldstart/tree/main/hack/demonstration/checkout"

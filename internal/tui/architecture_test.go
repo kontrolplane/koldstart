@@ -184,3 +184,50 @@ func TestTabRowFits(t *testing.T) {
 		t.Errorf("at 120 the counts were left out: %q", bar)
 	}
 }
+
+// TestReferenced checks a resource the function's environment refers to, by kdst.ref, is used,
+// as referenced, after its links and not again when it is linked too.
+func TestReferenced(t *testing.T) {
+	f := arFake(t)
+	st := f.states[ordersDev]
+	st.Resources["resource/carts"] = &state.Resource{Type: "AWS::DynamoDB::Table", PhysicalID: "carts-dev"}
+	st.Resources["function/api"].Dependencies = []string{"loggroup/api", "resource/table", "resource/carts", "role/api"}
+	uses := attachmentsOf(st, "api")
+	got := make([]string, 0, len(uses))
+	for _, a := range uses {
+		got = append(got, a.how+" "+a.name)
+	}
+	want := []string{"readwrite table", "referenced carts", "dead letter orders-dev-dead"}
+	if strings.Join(got, ", ") != strings.Join(want, ", ") {
+		t.Errorf("api uses %v, want %v", got, want)
+	}
+}
+
+// TestArnAttachment checks an arn a function uses finds the resource of the stage that has it, or
+// where the stage holds no arn of it, as floci keeps none of a queue, the one of its service whose
+// id ends with its name; and one outside the stage by the end of its arn.
+func TestArnAttachment(t *testing.T) {
+	st := state.New("checkout", "development", "eu-west-1", "000000000000")
+	st.Resources["resource/table"] = &state.Resource{Type: "AWS::DynamoDB::Table", PhysicalID: "orders", Attributes: map[string]string{"Arn": "arn:aws:dynamodb:eu-west-1:000000000000:table/orders"}}
+	st.Resources["resource/failed"] = &state.Resource{Type: "AWS::SQS::Queue", PhysicalID: "http://localhost:4566/000000000000/checkout-development-failed"}
+	tests := []struct {
+		name string
+		arn  string
+		id   string
+		kind string
+	}{
+		{name: "by its arn", arn: "arn:aws:dynamodb:eu-west-1:000000000000:table/orders", id: "resource/table", kind: "dynamodb table"},
+		{name: "by its name", arn: "arn:aws:sqs:eu-west-1:000000000000:checkout-development-failed", id: "resource/failed", kind: "sqs queue"},
+		{name: "another service of the name", arn: "arn:aws:sns:eu-west-1:000000000000:checkout-development-failed", kind: "sns"},
+		{name: "outside the stage", arn: "arn:aws:sqs:eu-west-1:000000000000:elsewhere", kind: "sqs"},
+	}
+	index := arnIndex(st)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := arnAttachment(st, index, howDeadLetter, tt.arn)
+			if a.id != tt.id || a.kind != tt.kind || a.copy != tt.arn {
+				t.Errorf("arnAttachment(%s) = %+v, want id %q kind %q", tt.arn, a, tt.id, tt.kind)
+			}
+		})
+	}
+}
