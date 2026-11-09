@@ -1,0 +1,12 @@
+{
+  "Records": [
+    {
+      "eventSource": "aws:s3",
+      "eventName": "ObjectCreated:Put",
+      "s3": {
+        "bucket": { "name": "resources-development-documents" },
+        "object": { "key": "incoming/socks-blue/specification.pdf", "size": 48213 }
+      }
+    }
+  ]
+}

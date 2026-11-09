@@ -1,0 +1,10 @@
+{
+  "version": "2.0",
+  "routeKey": "POST /uploads",
+  "rawPath": "/uploads",
+  "rawQueryString": "",
+  "headers": { "content-type": "text/plain" },
+  "body": "hello from kdst invoke",
+  "isBase64Encoded": false,
+  "requestContext": { "requestId": "local-upload", "http": { "method": "POST", "path": "/uploads" } }
+}

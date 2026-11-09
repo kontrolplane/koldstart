@@ -1,0 +1,51 @@
+amends "@koldstart/Project.pkl"
+
+import "@koldstart/kdst.pkl"
+
+app = "queues"
+region = "eu-west-1"
+
+functions {
+  ["producer"] {
+    memory = 128
+    // SendMessage on jobs alone, and its url as JOBS_URL
+    link {
+      ["jobs"] = "write"
+    }
+  }
+
+  ["worker"] {
+    memory = 256
+    timeout = 30.s
+    link {
+      ["processed"] = "write"
+    }
+    // lambda reads jobs and hands the worker batches of messages
+    events {
+      (kdst.fromQueue("jobs")) {
+        // at most ten messages a batch, and a batch waits at most five seconds to fill
+        batchSize = 10
+        maximumBatchingWindow = 5.s
+        // at most two workers at once, however long the queue
+        maximumConcurrency = 2
+        // the worker returns the messages that failed, and only those are delivered again
+        reportBatchItemFailures = true
+      }
+    }
+  }
+}
+
+resources {
+  ["jobs"] = (kdst.queue()) {
+    properties {
+      // how long a message a worker received stays hidden from the others: six times the
+      // worker's timeout, as lambda advises, worked out from it so the two cannot drift apart
+      VisibilityTimeout = functions["worker"].timeout.toUnit("s").value.toInt() * 6
+    }
+  }
+
+  // the jobs the worker stored, each once
+  ["processed"] = (kdst.table("id")) {
+    deletionPolicy = "delete"
+  }
+}

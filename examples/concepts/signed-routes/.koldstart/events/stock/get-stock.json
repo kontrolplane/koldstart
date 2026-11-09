@@ -1,0 +1,11 @@
+{
+  "version": "2.0",
+  "routeKey": "GET /stock/{sku}",
+  "rawPath": "/stock/blue-mug",
+  "pathParameters": { "sku": "blue-mug" },
+  "requestContext": {
+    "requestId": "request-1",
+    "http": { "method": "GET", "path": "/stock/blue-mug" },
+    "authorizer": { "iam": { "userArn": "arn:aws:sts::123456789012:assumed-role/warehouse/session" } }
+  }
+}

@@ -1,4 +1,5 @@
-// Package examples holds example projects, each a module of its own, and checks they evaluate.
+// Package examples holds the example projects, the concepts and the runtimes, and checks they
+// evaluate.
 package examples
 
 import (
@@ -19,12 +20,12 @@ import (
 // version is the koldstart whose schema package the examples' PklProjects name.
 const version = "0.1.0"
 
-// projects are the koldstart.pkl files of the examples: one in each directory, or one in each
-// directory of an example of several apps, as stage-output/payments and stage-output/shop.
+// projects are the koldstart.pkl files of the examples: reference-application, each concept, or
+// each app of a concept of several, as concepts/stage-outputs/payments, and each runtime.
 func projects(t *testing.T) []string {
 	t.Helper()
 	var files []string
-	for _, pattern := range []string{"*/koldstart.pkl", "*/*/koldstart.pkl"} {
+	for _, pattern := range []string{"reference-application/koldstart.pkl", "concepts/*/koldstart.pkl", "concepts/*/*/koldstart.pkl", "runtimes/*/koldstart.pkl"} {
 		found, err := filepath.Glob(pattern)
 		if err != nil {
 			t.Fatal(err)
@@ -61,7 +62,8 @@ func TestExamplesProject(t *testing.T) {
 }
 
 // TestExamplesEvaluate checks every example evaluates against the schema in this tree, through
-// schema.Local, which needs neither the released package nor its lock file, for dev and prod,
+// schema.Local, which needs neither the released package nor its lock file, on each of its
+// stages and on dev, the stage koldstart picks without --stage, which they size as development,
 // passes the checks of a deploy, and plans.
 func TestExamplesEvaluate(t *testing.T) {
 	if os.Getenv("CI") == "" && os.Getenv(pkl.EnvBinary) == "" {
@@ -74,7 +76,7 @@ func TestExamplesEvaluate(t *testing.T) {
 		t.Fatalf("finding pkl: %v", err)
 	}
 	for _, file := range projects(t) {
-		for _, stage := range []string{"dev", "prod"} {
+		for _, stage := range []string{"development", "staging", "production", "dev"} {
 			t.Run(filepath.Dir(file)+"/"+stage, func(t *testing.T) {
 				source, err := os.ReadFile(file)
 				if err != nil {

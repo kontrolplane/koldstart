@@ -1,0 +1,76 @@
+amends "@koldstart/Project.pkl"
+
+import "@koldstart/kdst.pkl"
+
+app = "encryption-keys"
+region = "eu-west-1"
+
+functions {
+  ["notes"] {
+    memory = 256
+    environment {
+      ["RETENTION_DAYS"] = "30"
+    }
+    // encrypts the function's environment variables with the stage's key, in place of
+    // lambda's; the role may decrypt with it
+    kmsKey = kdst.ref("key", "Arn")
+    link {
+      ["entries"] = "readwrite"
+    }
+    // what dynamodb does with the key on the function's behalf, on this key alone
+    permissions {
+      new {
+        actions { "kms:Decrypt"; "kms:Encrypt"; "kms:GenerateDataKey"; "kms:DescribeKey" }
+        resources { kdst.ref("key", "Arn") }
+      }
+    }
+  }
+}
+
+resources {
+  // a key of the stage's own, rotated every year; its policy lets the account's iam policies
+  // decide who may use it, as the function's statement above does
+  ["key"] {
+    type = "AWS::KMS::Key"
+    properties {
+      Description = "encrypts the notes of \(app)-\(kdst.stage)"
+      EnableKeyRotation = true
+      KeyPolicy {
+        Version = "2012-10-17"
+        Statement {
+          new {
+            Sid = "EnableIamPolicies"
+            Effect = "Allow"
+            Principal { AWS = kdst.join(List("arn:", kdst.partition, ":iam::", kdst.accountId, ":root")) }
+            Action = "kms:*"
+            Resource = "*"
+          }
+        }
+      }
+    }
+  }
+
+  // a name for the key that people and policies can read: alias/encryption-keys-<stage>
+  ["key-alias"] {
+    type = "AWS::KMS::Alias"
+    properties {
+      AliasName = "alias/\(app)-\(kdst.stage)"
+      TargetKeyId = kdst.ref("key", "Arn")
+    }
+  }
+
+  // a table encrypted with the key, in place of one dynamodb owns
+  ["entries"] = (kdst.table("id")) {
+    properties {
+      SSESpecification {
+        SSEEnabled = true
+        SSEType = "KMS"
+        KMSMasterKeyId = kdst.ref("key", "Arn")
+      }
+    }
+  }
+}
+
+outputs {
+  ["keyArn"] = kdst.ref("key", "Arn")
+}

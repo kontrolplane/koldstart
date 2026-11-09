@@ -1,0 +1,10 @@
+{
+  "version": "2.0",
+  "routeKey": "POST /checkout",
+  "rawPath": "/checkout",
+  "rawQueryString": "",
+  "headers": { "content-type": "application/json" },
+  "body": "{\"amount\": 1250}",
+  "isBase64Encoded": false,
+  "requestContext": { "requestId": "local-checkout", "http": { "method": "POST", "path": "/checkout" } }
+}

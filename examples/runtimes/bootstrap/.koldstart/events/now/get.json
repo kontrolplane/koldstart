@@ -1,0 +1,8 @@
+{
+  "version": "2.0",
+  "rawPath": "/",
+  "rawQueryString": "",
+  "headers": {},
+  "isBase64Encoded": false,
+  "requestContext": { "requestId": "local-get", "http": { "method": "GET", "path": "/" } }
+}

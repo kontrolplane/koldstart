@@ -1,0 +1,10 @@
+{
+  "version": "2.0",
+  "routeKey": "POST /quotes",
+  "rawPath": "/quotes",
+  "rawQueryString": "",
+  "headers": { "content-type": "application/json" },
+  "body": "{\"destination\": \"DE\", \"service\": \"standard\", \"parcels\": [{\"weightGrams\": 2400, \"lengthCentimetres\": 40, \"widthCentimetres\": 30, \"heightCentimetres\": 20}]}",
+  "isBase64Encoded": false,
+  "requestContext": { "requestId": "local-quote-to-germany", "http": { "method": "POST", "path": "/quotes" } }
+}

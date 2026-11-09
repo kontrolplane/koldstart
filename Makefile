@@ -12,7 +12,7 @@ govulncheck   := go run golang.org/x/vuln/cmd/govulncheck@v1.9.0
 actionlint    := go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 goreleaser    := go run github.com/goreleaser/goreleaser/v2@v2.20.0
 
-.PHONY: check test lint vuln build image snapshot schema emulator emulator-down test-emulator local local-ui vhs
+.PHONY: check test test-examples lint vuln build image snapshot schema emulator emulator-down test-emulator local local-ui vhs
 
 # Everything ci checks.
 check: lint vuln test
@@ -22,16 +22,30 @@ check: lint vuln test
 test:
 	go test -race -count=1 ./...
 
-# The code, the e2e tests behind their build tag, the workflows, and whether the go.mod files
-# are tidy.
+# The examples' own tests: the unit tests of the reference application and of each runtime, in go,
+# typescript, python, rust and shell, and the typescript's types. The node packages are installed
+# first, and python's dependencies into a virtual environment of the runtime's own.
+test-examples:
+	cd examples/reference-application && go test -race -count=1 ./... && npm ci --no-audit --no-fund && npm test && npm run typecheck
+	cd examples/runtimes/typescript && npm ci --no-audit --no-fund && npm test && npm run typecheck
+	cd examples/runtimes/go && go test -race -count=1 ./...
+	cd examples/runtimes/container-image && go test -race -count=1 ./...
+	cd examples/runtimes/python && python3 -m venv .venv && .venv/bin/python -m pip install --quiet --disable-pip-version-check --require-hashes --requirement requirements.txt && .venv/bin/python -B -m unittest discover --start-directory tests --top-level-directory .
+	cd examples/runtimes/rust/cmd/quote && cargo test --locked && cargo clippy --locked --all-targets -- --deny warnings
+	cd examples/runtimes/bootstrap && python3 -B -m unittest discover --start-directory tests
+
+# The code, the examples' go, the e2e tests behind their build tag, the workflows, and whether
+# the go.mod files are tidy.
 lint:
 	go mod tidy -diff
-	cd examples/full-featured && go mod tidy -diff
-	cd examples/go-api && go mod tidy -diff
-	cd examples/container-image && go mod tidy -diff
-	cd examples/websocket-chat && go mod tidy -diff
+	cd examples/reference-application && go mod tidy -diff
+	cd examples/runtimes/go && go mod tidy -diff
+	cd examples/runtimes/container-image && go mod tidy -diff
 	$(golangci-lint) run
 	$(golangci-lint) run --build-tags e2e ./test/...
+	cd examples/reference-application && $(golangci-lint) run ./...
+	cd examples/runtimes/go && $(golangci-lint) run ./...
+	cd examples/runtimes/container-image && $(golangci-lint) run ./...
 	$(actionlint)
 
 # Known vulnerabilities in what koldstart calls.

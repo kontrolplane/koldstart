@@ -1,0 +1,40 @@
+amends "@koldstart/Project.pkl"
+
+import "@koldstart/kdst.pkl"
+
+app = "tags"
+region = "eu-west-1"
+
+/// The environment each stage is, for a tag policy that takes these three values alone. Any other
+/// stage, as the preview of a pull request, is development.
+local environments = Map("development", "development", "staging", "staging", "production", "production")
+
+/// Tags on everything this project creates, next to koldstart's own: koldstart:app,
+/// koldstart:stage and koldstart:node. Cost reports and tag policies read them.
+tags {
+  ["service"] = "invoices"
+  ["team"] = "billing"
+  ["owner"] = "billing@example.com"
+  ["cost-centre"] = "4120"
+  ["environment"] = environments.getOrNull(kdst.stage) ?? "development"
+  ["data-classification"] = "confidential"
+}
+
+functions {
+  ["render"] {
+    memory = 256
+    // tags of this function alone, on the function itself, next to the project's
+    tags {
+      ["data-classification"] = "restricted"
+      ["on-call"] = "billing-primary"
+    }
+  }
+
+  ["archive"] {
+    memory = 256
+  }
+}
+
+resources {
+  ["invoices"] = kdst.bucket()
+}

@@ -1,0 +1,44 @@
+amends "@koldstart/Project.pkl"
+
+import "@koldstart/kdst.pkl"
+
+app = "websockets"
+region = "eu-west-1"
+
+functions {
+  ["room"] {
+    memory = 256
+    link {
+      ["connections"] = "readwrite"
+    }
+    // every route of the stage shares one websocket api, the output webSocketUrl; a function
+    // with routes gets WEBSOCKET_CALLBACK_URL, to post to the api's connections
+    events {
+      kdst.fromWebSocket("$connect")
+      kdst.fromWebSocket("$disconnect")
+      kdst.fromWebSocket("send")
+      kdst.fromWebSocket("$default")
+    }
+  }
+}
+
+/// A message picks its route by its type: {"type": "send", ...} goes to send, any other to
+/// $default. Without it, by its action.
+websocket {
+  routeSelection = "$request.body.type"
+}
+
+resources {
+  // api gateway closes a connection after two hours, so each one is kept for two hours at most,
+  // and one whose $disconnect never came is deleted by its time to live; a stage that is
+  // removed leaves no one connected, so the table goes with it
+  ["connections"] = (kdst.table("id")) {
+    deletionPolicy = "delete"
+    properties {
+      TimeToLiveSpecification {
+        AttributeName = "expiresAt"
+        Enabled = true
+      }
+    }
+  }
+}

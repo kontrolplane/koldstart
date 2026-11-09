@@ -1,0 +1,34 @@
+amends "@koldstart/Project.pkl"
+
+import "@koldstart/kdst.pkl"
+
+app = "flags"
+region = "eu-west-1"
+
+functions {
+  // no runtime or handler: cmd/api/ holds go files, so it is provided.al2023, built from
+  // ./cmd/api
+  ["api"] {
+    memory = 256
+    timeout = 5.s
+    logFormat = "json"
+    applicationLogLevel = "INFO"
+    systemLogLevel = "WARN"
+    tracing = true
+    link {
+      ["flags"] = "readwrite"
+    }
+    events {
+      kdst.get("/flags/{name}")
+      kdst.put("/flags/{name}")
+    }
+  }
+}
+
+resources {
+  ["flags"] = kdst.table("name")
+}
+
+outputs {
+  ["flagsTable"] = kdst.ref("flags", "TableName")
+}

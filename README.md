@@ -10,7 +10,7 @@
 
 ---
 
-Here is an http api in typescript and a queue worker in go, sharing a table. Neither function sets a runtime or handler: koldstart infers them from the function's name and its files, `src/api.ts` and `cmd/worker/`, as [conventions](docs/configuration.md#conventions) describes. [examples/full-featured](./examples/full-featured) is a complete version of it, with the handlers:
+Here is an http api in typescript and a queue worker in go, sharing a table. Neither function sets a runtime or handler: koldstart infers them from the function's name and its files, `src/api.ts` and `cmd/worker/`, as [conventions](docs/configuration.md#conventions) describes. [examples/reference-application](./examples/reference-application) is a complete version of it, with the handlers:
 
 ```pkl
 amends "@koldstart/Project.pkl"
@@ -65,13 +65,11 @@ kdst deploy --stage prod
 
 `plan` shows what would change and touches nothing. `deploy` builds the functions, uploads them, shows the plan and applies it once you say yes.
 
-Smaller examples, each with a README of how to deploy it and what to call after:
+[examples](./examples) has three kinds, each with a README of what it shows and how to try it:
 
-- [go-api](./examples/go-api): an http api in go, with a table
-- [python-schedule](./examples/python-schedule): python on a cron schedule, clearing expired rows from a table
-- [container-image](./examples/container-image): a function built from a dockerfile, on a function url
-- [websocket-chat](./examples/websocket-chat): a websocket api that keeps its connections in a table and sends each message to all of them
-- [stage-output](./examples/stage-output): two apps, one reading the other's url with `kdst.stageOutput()`
+- [concepts](./examples#concepts): one thing koldstart does each, in a file that fits on a screen: [stages](./examples/concepts/stages), [outputs](./examples/concepts/outputs), [stage-outputs](./examples/concepts/stage-outputs), [link](./examples/concepts/link), [secrets](./examples/concepts/secrets), [http-routes](./examples/concepts/http-routes), [queues](./examples/concepts/queues), [schedules](./examples/concepts/schedules), [alarms](./examples/concepts/alarms) and more
+- [runtimes](./examples#runtimes): how koldstart builds, packages and runs [typescript](./examples/runtimes/typescript), [go](./examples/runtimes/go), [python](./examples/runtimes/python), [rust](./examples/runtimes/rust), a [container image](./examples/runtimes/container-image) and a [bootstrap](./examples/runtimes/bootstrap) built elsewhere, written as a team would in production, with their tests
+- [reference-application](./examples/reference-application): the concepts and runtimes together, in one application set up as a team would run it in production, with alarms that link a runbook
 
 ## highlights
 
@@ -360,7 +358,7 @@ make check
 make vhs
 ```
 
-`make build` writes `bin/koldstart`, with `bin/kdst` beside it. `make test` runs the unit tests, against fakes and an in-memory state, with no aws account. `make emulator test-emulator` runs the tests that talk to aws against floci, and `make emulator-down` stops it. `make local` deploys the checkout service in [hack/demonstration/checkout](./hack/demonstration/checkout) to that floci, to development, staging and production as a team would over a few releases, with invocations, failures, an hour of metrics and a deploy left locked, and `make local-ui` opens `kdst ui` on it through the `local` profile of [hack/floci/aws-config](./hack/floci/aws-config). `make check` runs what CI runs but the emulator tests, the snapshot release and the image. `make vhs` records the gif above and a screenshot of each page in `assets/pages/`, against the same service deployed to a floci of its own on 127.0.0.1:4567. `go test -tags e2e ./test/e2e/...` deploys [examples/full-featured](./examples/full-featured) to a real account, with the credentials you have, and removes it again. [CONTRIBUTING.md](./CONTRIBUTING.md) and [AGENTS.md](./AGENTS.md) have the rest.
+`make build` writes `bin/koldstart`, with `bin/kdst` beside it. `make test` runs the unit tests, against fakes and an in-memory state, with no aws account. `make emulator test-emulator` runs the tests that talk to aws against floci, and `make emulator-down` stops it. `make local` deploys the checkout service in [hack/demonstration/checkout](./hack/demonstration/checkout) to that floci, to development, staging and production as a team would over a few releases, with invocations, failures, an hour of metrics and a deploy left locked, and `make local-ui` opens `kdst ui` on it through the `local` profile of [hack/floci/aws-config](./hack/floci/aws-config). `make test-examples` runs the unit tests of the reference application and of each runtime. `make check` runs what CI runs but the emulator tests, the examples' tests, the snapshot release and the image. `make vhs` records the gif above and a screenshot of each page in `assets/pages/`, against the same service deployed to a floci of its own on 127.0.0.1:4567. `go test -tags e2e ./test/e2e/...` deploys [examples/reference-application](./examples/reference-application) to a real account, with the credentials you have, and removes it again. [CONTRIBUTING.md](./CONTRIBUTING.md) and [AGENTS.md](./AGENTS.md) have the rest.
 
 ## license
 

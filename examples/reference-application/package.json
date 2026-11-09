@@ -1,0 +1,23 @@
+{
+  "name": "shop",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "test": "node --test \"src/**/*.test.ts\"",
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1162.0",
+    "@aws-sdk/client-sqs": "^3.1162.0",
+    "@aws-sdk/client-ssm": "^3.1162.0",
+    "@aws-sdk/lib-dynamodb": "^3.1162.0"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.164",
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2"
+  }
+}

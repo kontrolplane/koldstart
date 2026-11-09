@@ -1,0 +1,67 @@
+amends "@koldstart/Project.pkl"
+
+import "@koldstart/kdst.pkl"
+
+app = "dead-letter-queues"
+region = "eu-west-1"
+
+functions {
+  // reads jobs; a message it fails on three times is moved by sqs to jobs-dead-letters
+  ["worker"] {
+    memory = 128
+    timeout = 10.s
+    events {
+      kdst.fromQueue("jobs")
+    }
+  }
+
+  // invoked without waiting, by its schedule: lambda tries a failed run twice more, and sends
+  // the event, the error and the context of one that failed every time to nightly-failures
+  ["nightly"] {
+    memory = 128
+    async = new {
+      maximumRetryAttempts = 2
+      maximumEventAge = 1.h
+      onFailure = kdst.ref("nightly-failures", "Arn")
+    }
+    events {
+      (kdst.schedule("cron(0 2 * * ? *)")) { timezone = "Europe/Amsterdam" }
+    }
+  }
+
+  // invoked without waiting, by sns: lambda sends the event alone of a message it failed on
+  // every time to notify-dead-letters, the function's own dead-letter queue
+  ["notify"] {
+    memory = 128
+    deadLetter = kdst.ref("notify-dead-letters", "Arn")
+    events {
+      kdst.fromTopic("announcements")
+    }
+  }
+}
+
+resources {
+  ["jobs"] = (kdst.queue()) {
+    properties {
+      VisibilityTimeout = 60
+      // the queue's own redrive policy: lambda never sees it, sqs moves the message itself
+      RedrivePolicy {
+        deadLetterTargetArn = kdst.ref("jobs-dead-letters", "Arn")
+        maxReceiveCount = 3
+      }
+    }
+  }
+
+  ["jobs-dead-letters"] = kdst.queue()
+  ["nightly-failures"] = kdst.queue()
+  ["notify-dead-letters"] = kdst.queue()
+  ["announcements"] = kdst.topic()
+}
+
+outputs {
+  ["jobsQueue"] = kdst.ref("jobs", "QueueUrl")
+  ["jobsDeadLetters"] = kdst.ref("jobs-dead-letters", "Arn")
+  ["nightlyFailures"] = kdst.ref("nightly-failures", "QueueUrl")
+  ["notifyDeadLetters"] = kdst.ref("notify-dead-letters", "QueueUrl")
+  ["announcementsTopic"] = kdst.ref("announcements", "TopicArn")
+}

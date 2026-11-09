@@ -1,0 +1,35 @@
+amends "@koldstart/Project.pkl"
+
+import "@koldstart/kdst.pkl"
+
+app = "attachments"
+region = "eu-west-1"
+
+functions {
+  // no runtime or handler: src/attachments.ts makes it nodejs22.x, with the handler
+  // src/attachments.handler, bundled by esbuild into one file
+  ["attachments"] {
+    memory = 512
+    timeout = 10.s
+    logFormat = "json"
+    applicationLogLevel = "INFO"
+    tracing = true
+    // tsc --noEmit runs over the project before it is bundled, so code that does not type is
+    // never deployed
+    typecheck = true
+    // a source map in the zip and --enable-source-maps, so a stack trace names the lines of the
+    // typescript
+    bundle { sourcemap = true }
+    link {
+      ["files"] = "readwrite"
+    }
+    events {
+      kdst.post("/attachments")
+      kdst.get("/attachments/{id}")
+    }
+  }
+}
+
+resources {
+  ["files"] = kdst.bucket()
+}

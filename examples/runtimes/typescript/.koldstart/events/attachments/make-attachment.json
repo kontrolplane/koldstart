@@ -1,0 +1,10 @@
+{
+  "version": "2.0",
+  "routeKey": "POST /attachments",
+  "rawPath": "/attachments",
+  "rawQueryString": "",
+  "headers": { "content-type": "application/json" },
+  "body": "{\"fileName\": \"invoice.pdf\", \"contentType\": \"application/pdf\"}",
+  "isBase64Encoded": false,
+  "requestContext": { "requestId": "local-make-attachment", "http": { "method": "POST", "path": "/attachments" } }
+}

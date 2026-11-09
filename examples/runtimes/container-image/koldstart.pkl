@@ -1,0 +1,36 @@
+amends "@koldstart/Project.pkl"
+
+import "@koldstart/kdst.pkl"
+
+app = "status"
+region = "eu-west-1"
+
+functions {
+  ["status"] {
+    memory = 128
+    timeout = 3.s
+    logFormat = "json"
+    applicationLogLevel = "INFO"
+    systemLogLevel = "WARN"
+    tracing = true
+    // the Dockerfile and the directory it is built in are the defaults, Dockerfile and ., so
+    // only the build arguments are set
+    image {
+      buildArgs {
+        // set by continuous integration from the tag and the commit it builds; a build on a
+        // laptop is a development build
+        ["VERSION"] = read?("env:VERSION") ?? "0.0.0-development"
+        ["REVISION"] = read?("env:REVISION") ?? "unknown"
+      }
+    }
+    // public, as a status endpoint is: it answers with nothing but what was deployed
+    url = new {
+      auth = "none"
+      cors = new {
+        origins { "https://status.example.com" }
+        methods { "GET" }
+        maxAge = 1.h
+      }
+    }
+  }
+}

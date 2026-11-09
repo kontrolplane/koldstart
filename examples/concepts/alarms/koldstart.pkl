@@ -1,0 +1,175 @@
+amends "@koldstart/Project.pkl"
+
+import "@koldstart/kdst.pkl"
+import "@koldstart/Project.pkl"
+
+app = "alarms"
+region = "eu-west-1"
+
+/// Whether a stage's alarms page, who they page, and whether the nightly run is scheduled there.
+/// Any other stage is set up as development.
+local stages: Mapping<String, Dynamic> = new {
+  ["development"] { paging = false; scheduled = false }
+  ["staging"] { paging = false; scheduled = true }
+  ["production"] { paging = true; scheduled = true; onCall = "on-call@example.com" }
+}
+
+local stage = stages.getOrNull(kdst.stage) ?? stages["development"]
+
+/// Where each alarm's description sends the person it pages: the section on what to do.
+local runbook = "https://github.com/kontrolplane/koldstart/blob/main/examples/concepts/alarms/README.md"
+
+functions {
+  ["api"] {
+    memory = 128
+    timeout = 3.s
+    events {
+      kdst.get("/")
+    }
+  }
+
+  ["nightly"] {
+    memory = 128
+    timeout = 1.min
+    async = new { onFailure = kdst.ref("nightly-failures", "Arn") }
+    events {
+      // twice a day, so one missed run is made up by the next before the heartbeat pages
+      (kdst.schedule("cron(0 3,15 * * ? *)")) {
+        timezone = "Europe/London"
+        enabled = stage.scheduled
+      }
+    }
+  }
+}
+
+resources {
+  ["alerts"] = kdst.topic()
+  ["nightly-failures"] = kdst.queue()
+
+  // the on-call tool's address, subscribed on the one stage that pages
+  when (stage.paging) {
+    ["on-call"] = new {
+      type = "AWS::SNS::Subscription"
+      properties {
+        TopicArn = kdst.ref("alerts", "TopicArn")
+        Protocol = "email"
+        Endpoint = stage.onCall
+      }
+    }
+  }
+
+  // three alarms for every function, so a function added later gets its own
+  for (name, definition in functions) {
+    ["\(name)-errors"] = (alarm("\(name)-errors", "errors", "more than 1% of the invocations of \(name) failed")) {
+      properties {
+        Metrics {
+          lambdaMetric("errors", name, "Errors")
+          lambdaMetric("invocations", name, "Invocations")
+          new {
+            Id = "rate"
+            Label = "error rate (%)"
+            Expression = "IF(invocations > 0, 100 * errors / invocations, 0)"
+            ReturnData = true
+          }
+        }
+        ComparisonOperator = "GreaterThanThreshold"
+        Threshold = 1
+        EvaluationPeriods = 5
+        DatapointsToAlarm = 3
+      }
+    }
+
+    ["\(name)-throttles"] = (alarm("\(name)-throttles", "throttles", "lambda turned invocations of \(name) away")) {
+      properties {
+        Namespace = "AWS/Lambda"
+        MetricName = "Throttles"
+        Dimensions { new { Name = "FunctionName"; Value = kdst.ref(name, "FunctionName") } }
+        Statistic = "Sum"
+        Period = 60
+        ComparisonOperator = "GreaterThanOrEqualToThreshold"
+        Threshold = 1
+        EvaluationPeriods = 5
+        DatapointsToAlarm = 3
+      }
+    }
+
+    ["\(name)-duration"] = (alarm("\(name)-duration", "duration", "the slowest 1% of invocations of \(name) are near its timeout")) {
+      properties {
+        Namespace = "AWS/Lambda"
+        MetricName = "Duration"
+        Dimensions { new { Name = "FunctionName"; Value = kdst.ref(name, "FunctionName") } }
+        ExtendedStatistic = "p99"
+        Period = 60
+        ComparisonOperator = "GreaterThanThreshold"
+        Threshold = definition.timeout.toUnit("ms").value * 0.8
+        EvaluationPeriods = 5
+        DatapointsToAlarm = 3
+      }
+    }
+  }
+
+  ["nightly-failures-depth"] = (alarm("nightly-failures-depth", "dead-letters", "nightly-failures holds runs that failed every time")) {
+    properties {
+      Namespace = "AWS/SQS"
+      MetricName = "ApproximateNumberOfMessagesVisible"
+      Dimensions { new { Name = "QueueName"; Value = kdst.ref("nightly-failures", "QueueName") } }
+      Statistic = "Maximum"
+      Period = 60
+      ComparisonOperator = "GreaterThanOrEqualToThreshold"
+      Threshold = 1
+      EvaluationPeriods = 1
+    }
+  }
+
+  // no invocation in 24 hours: a missing hour counts as breaching, so the alarm fires when
+  // the schedule stops, which no error alarm sees
+  when (stage.scheduled) {
+    ["nightly-heartbeat"] = (alarm("nightly-heartbeat", "heartbeat", "nightly has not run for a whole day")) {
+      properties {
+        Namespace = "AWS/Lambda"
+        MetricName = "Invocations"
+        Dimensions { new { Name = "FunctionName"; Value = kdst.ref("nightly", "FunctionName") } }
+        Statistic = "Sum"
+        Period = 3600
+        ComparisonOperator = "LessThanThreshold"
+        Threshold = 1
+        EvaluationPeriods = 24
+        DatapointsToAlarm = 24
+        TreatMissingData = "breaching"
+      }
+    }
+  }
+}
+
+/// An alarm of this stage that notifies alerts, and pages through it on a stage that pages.
+/// Its description links the section of the runbook on what to do.
+local function alarm(name: String, section: String, summary: String): Project.Resource = new {
+  type = "AWS::CloudWatch::Alarm"
+  properties {
+    AlarmName = "\(app)-\(kdst.stage)-\(name)"
+    AlarmDescription = "\(summary). Runbook: \(runbook)#\(section)"
+    ActionsEnabled = stage.paging
+    AlarmActions { kdst.ref("alerts", "TopicArn") }
+    OKActions { kdst.ref("alerts", "TopicArn") }
+    TreatMissingData = "notBreaching"
+  }
+}
+
+/// A metric of a function, summed by the minute, for an alarm's metric math.
+local function lambdaMetric(identifier: String, functionName: String, metric: String): Dynamic = new {
+  Id = identifier
+  ReturnData = false
+  MetricStat {
+    Metric {
+      Namespace = "AWS/Lambda"
+      MetricName = metric
+      Dimensions { new { Name = "FunctionName"; Value = kdst.ref(functionName, "FunctionName") } }
+    }
+    Period = 60
+    Stat = "Sum"
+  }
+}
+
+outputs {
+  ["alertsTopic"] = kdst.ref("alerts", "TopicArn")
+}

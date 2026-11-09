@@ -1,0 +1,79 @@
+#!/bin/sh
+# now, a custom runtime in sh: it asks lambda's runtime api for an invocation, answers it, and
+# asks for the next, for as long as the instance lives. It needs nothing but what
+# provided.al2023 has: sh, curl, grep, tr, cut and date. Those but curl take the short flags
+# posix defines, as the long ones are gnu's alone, and macos and busybox have none.
+
+set -eu
+
+runtime="http://${AWS_LAMBDA_RUNTIME_API}/2018-06-01/runtime"
+
+# rank is the order of a level of the log, so a line below AWS_LAMBDA_LOG_LEVEL is left out.
+rank() {
+  case "$1" in
+    TRACE) echo 0 ;;
+    DEBUG) echo 1 ;;
+    WARN) echo 3 ;;
+    ERROR) echo 4 ;;
+    FATAL) echo 5 ;;
+    *) echo 2 ;;
+  esac
+}
+
+threshold="$(rank "${AWS_LAMBDA_LOG_LEVEL:-INFO}")"
+
+# log writes one line of json, with its level, what happened and the request it happened in,
+# when its level is at or above applicationLogLevel, which lambda sets as AWS_LAMBDA_LOG_LEVEL.
+log() {
+  if [ "$(rank "$1")" -ge "$threshold" ]; then
+    printf '{"level":"%s","message":"%s","requestId":"%s"}\n' "$1" "$2" "${request_id:-}"
+  fi
+}
+
+# answer prints the response of a function url: its status, headers and body, the body already
+# written as the inside of a json string.
+answer() {
+  printf '{"statusCode":%s,"headers":{"content-type":"%s","cache-control":"no-store","x-request-id":"%s"%s},"body":"%s"}' \
+    "$1" "$2" "$request_id" "$3" "$4"
+}
+
+# method is the http method of a request of a function url, or nothing for any other event.
+method() {
+  printf '%s' "$1" | grep -o '"method" *: *"[A-Z]*"' | grep -o '[A-Z]*"$' | tr -d '"' || true
+}
+
+# handle answers an event: the time now for a GET or HEAD, a 405 for another method, and a
+# failure for an event that is not a request of a function url.
+handle() {
+  requested="$(method "$1")"
+  case "$requested" in
+    GET | HEAD)
+      body="$(printf '{\\"time\\":\\"%s\\",\\"epochSeconds\\":%s}' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(date -u +%s)")"
+      answer 200 "application/json" "" "$body"
+      ;;
+    "")
+      return 1
+      ;;
+    *)
+      body="$(printf '{\\"type\\":\\"about:blank\\",\\"status\\":405,\\"title\\":\\"%s is not allowed\\",\\"detail\\":\\"send GET or HEAD\\"}' "$requested")"
+      answer 405 "application/problem+json" ',"allow":"GET, HEAD"' "$body"
+      ;;
+  esac
+}
+
+while true; do
+  headers="$(mktemp)"
+  event="$(curl --silent --show-error --fail --dump-header "$headers" "$runtime/invocation/next")"
+  request_id="$(grep -i '^lambda-runtime-aws-request-id:' "$headers" | cut -d : -f 2 | tr -d '[:space:]')"
+  rm -f "$headers"
+  if response="$(handle "$event")"; then
+    curl --silent --show-error --fail --output /dev/null --data "$response" "$runtime/invocation/$request_id/response"
+    log INFO "answered a request"
+  else
+    curl --silent --show-error --fail --output /dev/null \
+      --header "Lambda-Runtime-Function-Error-Type: Unhandled" \
+      --data '{"errorType":"NotARequest","errorMessage":"the event is not a request of a function url"}' \
+      "$runtime/invocation/$request_id/error"
+    log ERROR "the event is not a request of a function url"
+  fi
+done

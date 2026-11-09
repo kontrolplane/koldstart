@@ -1,0 +1,8 @@
+{
+  "version": "2.0",
+  "rawPath": "/",
+  "rawQueryString": "",
+  "headers": { "accept": "application/json" },
+  "isBase64Encoded": false,
+  "requestContext": { "requestId": "local-get-status", "http": { "method": "GET", "path": "/" } }
+}

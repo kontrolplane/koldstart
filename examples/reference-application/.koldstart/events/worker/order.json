@@ -1,0 +1,9 @@
+{
+  "Records": [
+    {
+      "messageId": "9d1f6a52-3c1b-4e0f-8a77-0b2c9e4d5f61",
+      "body": "{\"id\": \"3f2b8c1e-7a4d-4e9b-9c61-2d5f0a8b7e14\", \"customerId\": \"customer-1042\", \"currency\": \"EUR\", \"lines\": [{\"sku\": \"socks\", \"quantity\": 2}], \"status\": \"received\", \"createdAt\": \"2026-11-09T10:00:00.000Z\"}",
+      "attributes": { "ApproximateReceiveCount": "1" }
+    }
+  ]
+}

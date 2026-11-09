@@ -1,0 +1,28 @@
+amends "@koldstart/Project.pkl"
+
+import "@koldstart/kdst.pkl"
+
+app = "function-urls"
+region = "eu-west-1"
+
+functions {
+  ["status"] {
+    memory = 128
+    // a url of the function's own, with no api in front of it: public, as a status endpoint is
+    // read by browsers and uptime monitors that sign nothing; the output statusUrl
+    url = new {
+      auth = "none"
+      cors = new {
+        origins { "https://status.example.com" }
+        methods { "GET" }
+      }
+    }
+  }
+
+  ["purge-cache"] {
+    memory = 128
+    // only requests signed with signature version 4 by a caller that may
+    // lambda:InvokeFunctionUrl it; the output purgeCacheUrl
+    url = new { auth = "iam" }
+  }
+}

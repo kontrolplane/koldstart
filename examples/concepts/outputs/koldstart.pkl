@@ -1,0 +1,34 @@
+amends "@koldstart/Project.pkl"
+
+import "@koldstart/kdst.pkl"
+
+app = "outputs"
+region = "eu-west-1"
+
+functions {
+  ["upload"] {
+    memory = 256
+    link {
+      ["uploads"] = "write"
+    }
+    events {
+      kdst.post("/uploads")
+    }
+  }
+}
+
+resources {
+  ["uploads"] = kdst.bucket()
+}
+
+/// What `kdst outputs` prints and `kdst ui` shows once the stage is deployed. An output is a
+/// string, an attribute of a function or resource, or a join of them with the account's values,
+/// worked out from the state. httpApiUrl is added on its own, as the project has an http route.
+outputs {
+  ["uploadsBucket"] = kdst.ref("uploads", "BucketName")
+  ["uploadFunction"] = kdst.ref("upload", "FunctionName")
+  ["uploadsConsole"] = kdst.join(List("https://", region, ".console.aws.amazon.com/s3/buckets/", kdst.ref("uploads", "BucketName")))
+  ["uploadsPolicyResource"] = kdst.join(List("arn:", kdst.partition, ":s3:::", kdst.ref("uploads", "BucketName"), "/*"))
+  ["account"] = kdst.accountId
+  ["runbook"] = "https://wiki.example.com/uploads/runbook"
+}

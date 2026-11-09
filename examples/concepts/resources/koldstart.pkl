@@ -1,0 +1,111 @@
+amends "@koldstart/Project.pkl"
+
+import "@koldstart/kdst.pkl"
+
+app = "resources"
+region = "eu-west-1"
+
+/// The name of a resource of this stage, for one aws shows people. A resource without a name
+/// gets one cloud control makes up.
+local function named(suffix: String): String = "\(app)-\(kdst.stage)-\(suffix)"
+
+functions {
+  ["catalogue"] {
+    memory = 256
+    link {
+      ["documents"] = "read"
+      ["products"] = "write"
+      ["changes"] = "write"
+    }
+    events {
+      (kdst.fromBucket("documents")) { prefix = "incoming/" }
+    }
+  }
+}
+
+resources {
+  // The shorthands give a resource with its type and the properties most want; what is
+  // written after amends them. A bucket blocks public access and encrypts its objects.
+  ["documents"] = (kdst.bucket()) {
+    properties {
+      BucketName = named("documents")
+      VersioningConfiguration { Status = "Enabled" }
+      LifecycleConfiguration {
+        Rules { new { Id = "old-versions"; Status = "Enabled"; NoncurrentVersionExpiration { NoncurrentDays = 30 } } }
+      }
+    }
+  }
+
+  // Any type cloud control knows, written out: a policy that refuses requests to the bucket
+  // without tls. kdst.ref() reads an attribute once the bucket exists, so it is made first.
+  ["documents-tls-only"] {
+    type = "AWS::S3::BucketPolicy"
+    properties {
+      Bucket = kdst.ref("documents", "BucketName")
+      PolicyDocument {
+        Version = "2012-10-17"
+        Statement {
+          new {
+            Effect = "Deny"
+            Principal = "*"
+            Action = "s3:*"
+            Resource { kdst.ref("documents", "Arn"); kdst.join(List(kdst.ref("documents", "Arn"), "/*")) }
+            Condition { Bool { ["aws:SecureTransport"] = "false" } }
+          }
+        }
+      }
+    }
+  }
+
+  // An on-demand table with point-in-time recovery, here with a sort key of numbers.
+  ["products"] = (kdst.table("sku")) {
+    sortKey = "version"
+    sortKeyType = "N"
+    properties { TableName = named("products") }
+  }
+
+  ["changes"] = (kdst.topic()) {
+    properties { TopicName = named("changes") }
+  }
+
+  // A queue that keeps a message for 14 days, subscribed to changes. A queue holds no data
+  // worth keeping, so remove deletes it; a table or bucket is retained unless it says delete.
+  ["imports"] = (kdst.queue()) {
+    properties { QueueName = named("imports") }
+  }
+
+  ["changes-to-imports"] {
+    type = "AWS::SNS::Subscription"
+    properties {
+      TopicArn = kdst.ref("changes", "TopicArn")
+      Protocol = "sqs"
+      Endpoint = kdst.ref("imports", "Arn")
+      RawMessageDelivery = true
+    }
+  }
+
+  ["imports-from-changes"] {
+    type = "AWS::SQS::QueuePolicy"
+    properties {
+      Queues { kdst.ref("imports", "QueueUrl") }
+      PolicyDocument {
+        Version = "2012-10-17"
+        Statement {
+          new {
+            Effect = "Allow"
+            Principal { Service = "sns.amazonaws.com" }
+            Action = "sqs:SendMessage"
+            Resource = kdst.ref("imports", "Arn")
+            Condition { ArnEquals { ["aws:SourceArn"] = kdst.ref("changes", "TopicArn") } }
+          }
+        }
+      }
+    }
+  }
+
+  // A table for what can be made again: remove deletes it with the stage.
+  ["thumbnails"] = (kdst.table("key")) {
+    deletionPolicy = "delete"
+    properties { TableName = named("thumbnails") }
+  }
+}

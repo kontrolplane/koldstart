@@ -1,0 +1,10 @@
+{
+  "version": "2.0",
+  "routeKey": "POST /quotes",
+  "rawPath": "/quotes",
+  "rawQueryString": "",
+  "headers": { "content-type": "application/json" },
+  "body": "{\"destination\": \"BR\", \"parcels\": [{\"weightGrams\": 800, \"lengthCentimetres\": 20, \"widthCentimetres\": 15, \"heightCentimetres\": 10}]}",
+  "isBase64Encoded": false,
+  "requestContext": { "requestId": "local-quote-without-service", "http": { "method": "POST", "path": "/quotes" } }
+}

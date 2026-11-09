@@ -1,0 +1,6 @@
+# koldstart
+.koldstart/build/
+.koldstart/local/
+
+# cargo
+cmd/quote/target/

@@ -1,0 +1,35 @@
+amends "@koldstart/Project.pkl"
+
+import "@koldstart/kdst.pkl"
+
+app = "schedules"
+region = "eu-west-1"
+
+/// Whether the stage is production, the one stage the weekday report runs on.
+local production = kdst.stage == "production"
+
+functions {
+  ["report"] {
+    memory = 128
+    // each schedule is one of eventbridge scheduler's, which hands the function its `input` as
+    // the event, without waiting for it to finish
+    events {
+      // 07:30 on weekdays in Amsterdam, all year: the scheduler follows summer time in the zone
+      // it is given, where UTC, the default, would move the report by an hour twice a year
+      (kdst.schedule("cron(30 7 ? * MON-FRI *)")) {
+        timezone = "Europe/Amsterdam"
+        input = #"{"kind": "weekday"}"#
+        enabled = production
+      }
+      // every fifteen minutes, on every stage
+      (kdst.schedule("rate(15 minutes)")) {
+        input = #"{"kind": "frequent"}"#
+      }
+      // once, at the end of the year, in the zone it is given
+      (kdst.schedule("at(2026-12-31T23:00:00)")) {
+        timezone = "Europe/Amsterdam"
+        input = #"{"kind": "once"}"#
+      }
+    }
+  }
+}
