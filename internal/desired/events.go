@@ -393,25 +393,46 @@ func (b *builder) sourceStatements(fn config.Function) []any {
 // Triggers lists the nodes of a state that invoke a function: its routes of the http and rest
 // apis, schedules, mappings, subscriptions and the notifications of its buckets, sorted.
 func Triggers(resources map[string]*state.Resource, fn string) []string {
-	var out []string
-	for id, r := range resources {
-		kind, rest, _ := strings.Cut(id, "/")
-		switch {
-		case kind == kindSchedule || kind == kindMapping || kind == kindSubscription || kind == kindRule || kind == kindListenerRule || kind == kindLogSubscription:
-			if strings.HasPrefix(rest, fn+"/") {
-				out = append(out, id)
-			}
-		case kind == "route" && slices.Contains(r.Dependencies, integrationID(fn)):
-			out = append(out, id)
-		case kind == kindRESTRoute && slices.Contains(r.Dependencies, FunctionID(fn)):
-			out = append(out, id)
-		case kind == kindWSRoute && slices.Contains(r.Dependencies, wsIntegrationID(fn)):
-			out = append(out, id)
-		case kind == "notification" && slices.ContainsFunc(r.Dependencies, func(d string) bool { return strings.HasPrefix(d, permissionID(fn, "")) }):
-			out = append(out, id)
+	return TriggersByFunction(resources)[fn]
+}
+
+// TriggersByFunction is what Triggers lists of every function of a state, by the function's
+// name, in one pass over the state.
+func TriggersByFunction(resources map[string]*state.Resource) map[string][]string {
+	out := map[string][]string{}
+	add := func(fn, id string) {
+		if !slices.Contains(out[fn], id) {
+			out[fn] = append(out[fn], id)
 		}
 	}
-	slices.Sort(out)
+	depsOf := func(r *state.Resource, prefix, id string) {
+		for _, d := range r.Dependencies {
+			if fn, ok := strings.CutPrefix(d, prefix); ok {
+				fn, _, _ = strings.Cut(fn, "/")
+				add(fn, id)
+			}
+		}
+	}
+	for id, r := range resources {
+		kind, rest, _ := strings.Cut(id, "/")
+		switch kind {
+		case kindSchedule, kindMapping, kindSubscription, kindRule, kindListenerRule, kindLogSubscription:
+			if fn, _, ok := strings.Cut(rest, "/"); ok {
+				add(fn, id)
+			}
+		case "route":
+			depsOf(r, integrationID(""), id)
+		case kindRESTRoute:
+			depsOf(r, FunctionID(""), id)
+		case kindWSRoute:
+			depsOf(r, wsIntegrationID(""), id)
+		case "notification":
+			depsOf(r, "permission/", id)
+		}
+	}
+	for _, ids := range out {
+		slices.Sort(ids)
+	}
 	return out
 }
 

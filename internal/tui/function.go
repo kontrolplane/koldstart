@@ -51,6 +51,7 @@ type functionState struct {
 	inputs      awsp.FunctionInputs
 	env         map[string]any
 	invokers    []invoker
+	uses        []attachment
 	// roleID is the id of the function's role in the stage; role is what koldstart made it with,
 	// nil when the function's role is not koldstart's.
 	roleID string
@@ -150,6 +151,7 @@ func (m model) syncFunction() model {
 		f.url = u.Attributes["FunctionUrl"]
 	}
 	f.invokers = invokersOf(st, f.name)
+	f.uses = attachmentsOf(st, f.name)
 	f.roleID, f.role = desired.RoleID(f.name), nil
 	if r := st.Resources[f.roleID]; r != nil {
 		var in awsp.RoleInputs
@@ -702,9 +704,9 @@ func (o functionOverview) follow(cursor, scroll int) int {
 
 // functionOverview lays out the overview. In one column its sections run from what matters most
 // to what is looked up: the configuration, what lambda says of the function now, the last hour,
-// what invokes it, its environment and its permissions. In two, the configuration, lambda and
-// the permissions are on the left; the last hour, what invokes it and the environment on the
-// right.
+// what invokes it, what it uses, its environment and its permissions. In two, the
+// configuration, lambda and the permissions are on the left; the last hour, what invokes it, what
+// it uses and the environment on the right.
 func (m model) functionOverview() functionOverview {
 	f := m.state.function
 	width := contentWidth - 2 - overviewGutter
@@ -725,6 +727,7 @@ func (m model) functionOverview() functionOverview {
 		m.liveSection(c)
 		m.metricSection(c)
 		m.invokerSection(c)
+		m.usesSection(c)
 		m.envSection(c)
 		m.permissionSection(c)
 		o.cols = []*overviewColumn{c}
@@ -737,6 +740,7 @@ func (m model) functionOverview() functionOverview {
 	m.permissionSection(left)
 	m.metricSection(right)
 	m.invokerSection(right)
+	m.usesSection(right)
 	m.envSection(right)
 	o.cols = []*overviewColumn{left, right}
 	return o
@@ -1411,7 +1415,11 @@ type invoker struct {
 // invokersOf are what invoke fn in a stage, as desired.Triggers finds them, each by what its
 // inputs say it is.
 func invokersOf(st *state.State, fn string) []invoker {
-	ids := desired.Triggers(st.Resources, fn)
+	return invokersFrom(st, fn, desired.Triggers(st.Resources, fn))
+}
+
+// invokersFrom are the triggers ids of fn, each by what its inputs say it is.
+func invokersFrom(st *state.State, fn string, ids []string) []invoker {
 	out := make([]invoker, 0, len(ids))
 	for _, id := range ids {
 		kind, rest, _ := strings.Cut(id, "/")
@@ -1536,6 +1544,29 @@ func (m model) invokerSection(c *overviewColumn) {
 	vw := labelColumns(c.width)[2].width
 	for _, e := range entries {
 		c.labelled(styles.Clean(e.kind), ident(e.what, styles.ToneBody, vw), e.r, 1)
+	}
+}
+
+// usesSection lists what the function uses, each by how, as the access of a link or its dead
+// letter target, with its type faint after it; enter opens one of the stage on the resource page.
+// Its vpc is left out, as the configuration shows its subnets and groups. A function that uses
+// nothing else has no section.
+func (m model) usesSection(c *overviewColumn) {
+	uses := slices.DeleteFunc(slices.Clone(m.state.function.uses), func(a attachment) bool { return a.how == howVPC })
+	if len(uses) == 0 {
+		return
+	}
+	c.section("uses", formatInt(len(uses)))
+	for _, a := range uses {
+		r := detailRow{copy: a.copy}
+		if m.inStage(a.id) {
+			r.resource = a.id
+		}
+		value := cell{styles.S(styles.Clean(a.name), styles.ToneBody)}
+		if a.kind != "" {
+			value = append(value, styles.S("  "+styles.Clean(a.kind), styles.ToneFaint))
+		}
+		c.labelled(a.how, value, r, 1)
 	}
 }
 

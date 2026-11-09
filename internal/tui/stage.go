@@ -29,10 +29,11 @@ const (
 	functionsTab stageTab = iota
 	resourcesTab
 	outputsTab
+	architectureTab
 	historyTab
 )
 
-var stageTabs = []string{"functions", resourcesWord, "outputs", "history"}
+var stageTabs = []string{"functions", resourcesWord, "outputs", "architecture", "history"}
 
 // resourcesWord names the resources tab and the column of the overview that counts them,
 // functionWord the column of the functions tab and a function where the filter hides them all, and
@@ -43,7 +44,8 @@ const (
 	deployedWord  = "deployed"
 )
 
-// stageState is one stage: its functions, resources, outputs and the history of its state.
+// stageState is one stage: its functions, resources, outputs, the history of its state, and
+// what invokes each function and what it uses.
 type stageState struct {
 	ref cli.StageRef
 	gen int
@@ -55,10 +57,10 @@ type stageState struct {
 	st     *state.State
 	lock   *state.LockInfo
 	tab    stageTab
-	tables [4]dataTable
+	tables [5]dataTable
 	filter filterBox
 	// keys name the rows of each table, so the cursor stays on its row when the rows change.
-	keys [4][]string
+	keys [5][]string
 
 	functions []string
 	// resources are the tree of the resources tab, every group open, and tree the rows it draws:
@@ -72,6 +74,8 @@ type stageState struct {
 	// the state is written again.
 	drifted map[string]bool
 	outputs []string
+	// arch are the rows of the architecture tab.
+	arch []archRow
 	// shownDeploys are the deploys the history tab lists, by their index in deploys(history).
 	shownDeploys []int
 
@@ -199,16 +203,17 @@ const sparkWidth = 10
 // stageEmpty is what each tab says when it has no rows, and stageRowNames name one of its rows
 // for when the filter hides them all.
 var (
-	stageEmpty    = [4]string{"no functions yet", "no resources yet", "no outputs yet", "no deploys yet"}
-	stageRowNames = [4]string{functionWord, "resource", "output", "deploy"}
+	stageEmpty    = [5]string{"no functions yet", "no resources yet", "no outputs yet", "no functions yet", "no deploys yet"}
+	stageRowNames = [5]string{functionWord, "resource", "output", functionWord, "deploy"}
 )
 
 func newStageState() stageState {
 	return stageState{
-		tables: [4]dataTable{
+		tables: [5]dataTable{
 			newTable(functionColumns, stageEmpty[functionsTab]),
 			newTable(resourceColumns, stageEmpty[resourcesTab]),
 			newTable(outputColumns, stageEmpty[outputsTab]),
+			newTable([]column{{title: "", width: minColumnWidth, grow: 1}}, stageEmpty[architectureTab]),
 			newTable(historyColumns, stageEmpty[historyTab]),
 		},
 		filter:    newFilterBox("filter by name…"),
@@ -443,6 +448,9 @@ func (m model) updateStageTables() model {
 
 	keys, rows = s.historyRows()
 	s.setRows(historyTab, keys, rows)
+
+	keys, rows = s.architectureRows()
+	s.setRows(architectureTab, keys, rows)
 	return m
 }
 
@@ -950,7 +958,8 @@ func (m model) stageUpdate(msg tea.KeyPressMsg) (model, tea.Cmd) {
 }
 
 // openSelected opens what is under the cursor: a function, also from the resources tab, a
-// resource, an output or a deploy. On the heading of a kind of resource it folds the kind.
+// resource, an output, a deploy, or what a row of the architecture tab names. On the heading of a
+// kind of resource it folds the kind.
 func (m model) openSelected() (model, tea.Cmd) {
 	s := m.state.stage
 	i := s.tables[s.tab].cursor
@@ -980,12 +989,14 @@ func (m model) openSelected() (model, tea.Cmd) {
 		if i < len(s.shownDeploys) {
 			return m.openVersion(s.shownDeploys[i])
 		}
+	case architectureTab:
+		return m.openArch()
 	}
 	return m, nil
 }
 
 // stageCopyValue is what c copies on the stage: the function's arn, the resource's id in aws, the
-// output's value, or the version's id.
+// output's value, the version's id, or what a row of the architecture tab names.
 func (m model) stageCopyValue() string {
 	s := m.state.stage
 	i := s.tables[s.tab].cursor
@@ -1001,6 +1012,8 @@ func (m model) stageCopyValue() string {
 		return s.st.Outputs[s.outputs[i]]
 	case s.tab == historyTab && i < len(s.shownDeploys):
 		return deploys(s.history)[s.shownDeploys[i]][0].ID
+	case s.tab == architectureTab:
+		return s.archCopyValue()
 	}
 	return ""
 }
@@ -1173,8 +1186,16 @@ func tabSpans(name, count string, open bool) []styles.Span {
 //	──────────────────────────────────────────────────────────
 //
 // The rule is the light one of the frame throughout: the heavy one is wide in some terminals,
-// which wraps the line and leaves the rows under it out of step.
+// which wraps the line and leaves the rows under it out of step. Where the tabs with their counts
+// are wider than width, they are drawn without them.
 func tabRow(names []string, counts []string, open, width int) string {
+	whole := len(tabGap) * (len(names) - 1)
+	for i, name := range names {
+		whole += ansi.StringWidth(strconv.Itoa(i+1)+" ") + cellWidth(cell(tabSpans(name, count(counts, i), i == open)))
+	}
+	if whole > width {
+		counts = nil
+	}
 	var spans []styles.Span
 	var under strings.Builder
 	rule := lipgloss.NewStyle().Foreground(styles.P.Rule)
@@ -1279,7 +1300,7 @@ func (m model) stageView() string {
 		return place(contentWidth, contentHeight, lipgloss.JoinVertical(lipgloss.Center,
 			centredLines(m.couldNotRead(what, s.err, styles.ToneDanger), min(contentWidth-4, dialogTextWidth()))...))
 	}
-	counts := []string{formatInt(len(s.functions)), formatInt(len(s.resources)), formatInt(len(s.outputs)), ""}
+	counts := []string{formatInt(len(s.functions)), formatInt(len(s.resources)), formatInt(len(s.outputs)), formatInt(archFunctions(s.arch)), ""}
 	if s.historyLoaded {
 		counts[historyTab] = formatInt(len(s.shownDeploys))
 	}

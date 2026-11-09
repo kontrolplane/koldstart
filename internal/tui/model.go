@@ -194,6 +194,10 @@ func (m model) resize() model {
 	for i := range s.tables {
 		s.tables[i].setSize(tableWidth(), stageTableHeight())
 	}
+	if s.st != nil {
+		ids, rows := s.architectureRows()
+		s.setRows(architectureTab, ids, rows)
+	}
 	f := &m.state.function
 	f.invocations.setSize(tableWidth(), invocationsTableHeight())
 	return m.fitEvents()
