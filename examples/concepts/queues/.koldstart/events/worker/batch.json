@@ -1,0 +1,7 @@
+{
+  "Records": [
+    { "messageId": "message-1", "body": "{\"id\": \"job-1\", \"task\": \"resize\"}" },
+    { "messageId": "message-2", "body": "{\"id\": \"job-2\", \"task\": \"fail\"}" },
+    { "messageId": "message-3", "body": "not json" }
+  ]
+}

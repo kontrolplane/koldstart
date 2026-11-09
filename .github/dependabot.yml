@@ -49,10 +49,9 @@ updates:
 
   - package-ecosystem: gomod
     directories:
-      - /examples/full-featured
-      - /examples/go-api
-      - /examples/container-image
-      - /examples/websocket-chat
+      - /examples/reference-application
+      - /examples/runtimes/go
+      - /examples/runtimes/container-image
     schedule:
       interval: monthly
     commit-message:
@@ -63,14 +62,34 @@ updates:
           - "*"
 
   - package-ecosystem: docker
-    directory: /examples/container-image
+    directory: /examples/runtimes/container-image
     schedule:
       interval: monthly
     commit-message:
       prefix: chore(examples)
 
   - package-ecosystem: npm
-    directory: /examples/full-featured
+    directories:
+      - /examples/reference-application
+      - /examples/runtimes/typescript
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: chore(examples)
+    groups:
+      example:
+        patterns:
+          - "*"
+
+  - package-ecosystem: pip
+    directory: /examples/runtimes/python
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: chore(examples)
+
+  - package-ecosystem: cargo
+    directory: /examples/runtimes/rust/cmd/quote
     schedule:
       interval: monthly
     commit-message:

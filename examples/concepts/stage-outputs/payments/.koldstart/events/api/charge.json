@@ -1,0 +1,10 @@
+{
+  "version": "2.0",
+  "routeKey": "POST /charges",
+  "rawPath": "/charges",
+  "rawQueryString": "",
+  "headers": { "content-type": "application/json" },
+  "body": "{\"amount\": 1250}",
+  "isBase64Encoded": false,
+  "requestContext": { "requestId": "local-charge", "http": { "method": "POST", "path": "/charges" } }
+}

@@ -17,11 +17,12 @@ make test
 - `make local` starts floci and deploys the checkout service in [hack/demonstration/checkout](hack/demonstration/checkout) to it, to development, staging and production, invoked and with an hour of metrics; `make local-ui` then opens `kdst ui` on it.
 - [hack/floci/aws-config](hack/floci/aws-config) is an aws profile for floci, to run kdst and the aws cli against it by hand: `AWS_CONFIG_FILE=hack/floci/aws-config kdst --profile local deploy`, or copy the profile into `~/.aws/config`.
 - `make vhs` records the gif in the README and a screenshot of each page in [assets/pages](assets/pages), against a floci of its own on 127.0.0.1:4567. it needs vhs, ffmpeg, ttyd and gifsicle.
-- `make check` runs what ci runs but the emulator tests, the snapshot release (`make snapshot`) and the image (`make image`).
+- `make test-examples` runs the unit tests of the reference application and of each runtime, in go, typescript, python, rust and sh, and checks the typescript's types. it needs node 22.18+, python 3.12+, cargo with clippy and curl, installs the node packages with `npm ci`, and python's into a virtual environment in the runtime.
+- `make check` runs what ci runs but the emulator tests, the examples' tests, the snapshot release (`make snapshot`) and the image (`make image`).
 
 ## e2e tests
 
-`go test -tags e2e ./test/e2e/...` deploys [examples/full-featured](examples/full-featured) to a stage of its own, `e2e-<run>`, in the account of the credentials you have, works with it, and removes it, deleting the table and queue too. use a sandbox account: it creates real resources, for a few minutes. it needs node and the aws cli besides go.
+`go test -tags e2e ./test/e2e/...` deploys [examples/reference-application](examples/reference-application) to a stage of its own, `e2e-<run>`, in the account of the credentials you have, works with it, and removes it, deleting the table and queue too. use a sandbox account: it creates real resources, for a few minutes. it needs node and the aws cli besides go.
 
 in ci, the `E2E` workflow runs on every push to main and every night, once the repository variable `KOLDSTART_E2E_ROLE_ARN` names a role in the sandbox account that github's oidc provider may assume for this repository, with permission to manage what the example deploys and the state bucket. `KOLDSTART_E2E_REGION` picks the region, `eu-west-1` without it. each run first removes the stages earlier runs left behind for more than six hours.
 

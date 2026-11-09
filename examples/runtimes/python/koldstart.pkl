@@ -1,0 +1,22 @@
+amends "@koldstart/Project.pkl"
+
+import "@koldstart/kdst.pkl"
+
+app = "quotes"
+region = "eu-west-1"
+
+functions {
+  // no runtime or handler: src/quote.py makes it python3.13, with the handler src/quote.handler;
+  // the zip holds src/, the directory of the handler's module, and what requirements.txt names,
+  // installed by uv for lambda's linux and the function's architecture
+  ["quote"] {
+    memory = 256
+    timeout = 5.s
+    logFormat = "json"
+    applicationLogLevel = "INFO"
+    tracing = true
+    events {
+      kdst.post("/quotes")
+    }
+  }
+}

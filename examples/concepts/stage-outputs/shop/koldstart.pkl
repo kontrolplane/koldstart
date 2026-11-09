@@ -1,0 +1,21 @@
+amends "@koldstart/Project.pkl"
+
+import "@koldstart/kdst.pkl"
+
+app = "shop"
+region = "eu-west-1"
+
+functions {
+  ["checkout"] {
+    memory = 256
+    timeout = 10.s
+    environment {
+      // the output httpApiUrl of the payments app, on the stage of the same name as this one,
+      // read from its state while planning
+      ["PAYMENTS_URL"] = kdst.stageOutput("payments", kdst.stage, "httpApiUrl")
+    }
+    events {
+      kdst.post("/checkout")
+    }
+  }
+}

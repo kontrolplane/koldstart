@@ -1,0 +1,20 @@
+amends "@koldstart/Project.pkl"
+
+import "@koldstart/kdst.pkl"
+
+app = "signed-routes"
+region = "eu-west-1"
+
+functions {
+  ["stock"] {
+    memory = 256
+    events {
+      // only requests signed with signature version 4, by a caller whose role may
+      // execute-api:Invoke the route; api gateway answers any other with a 403, before the
+      // function runs
+      (kdst.get("/stock/{sku}")) { iam = true }
+      // a route of the same api that anyone may call
+      kdst.get("/health")
+    }
+  }
+}

@@ -1,0 +1,17 @@
+amends "@koldstart/Project.pkl"
+
+import "@koldstart/kdst.pkl"
+
+app = "payments"
+region = "eu-west-1"
+
+/// One route of the stage's http api, so the stage has the output httpApiUrl, which shop reads.
+/// payments sets no outputs of its own; one it set would be read the same way.
+functions {
+  ["api"] {
+    memory = 256
+    events {
+      kdst.post("/charges")
+    }
+  }
+}

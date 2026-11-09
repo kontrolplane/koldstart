@@ -1,0 +1,7 @@
+{
+  "version": "2.0",
+  "routeKey": "GET /books/{id}",
+  "rawPath": "/books/the-hobbit",
+  "pathParameters": { "id": "the-hobbit" },
+  "requestContext": { "requestId": "request-1", "http": { "method": "GET", "path": "/books/the-hobbit" } }
+}

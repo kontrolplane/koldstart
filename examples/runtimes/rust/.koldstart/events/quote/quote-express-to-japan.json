@@ -1,0 +1,19 @@
+{
+  "version": "2.0",
+  "routeKey": "POST /quotes",
+  "rawPath": "/quotes",
+  "rawQueryString": "",
+  "headers": {
+    "content-type": "application/json"
+  },
+  "isBase64Encoded": false,
+  "requestContext": {
+    "requestId": "local-quote-express-to-japan",
+    "http": {
+      "method": "POST",
+      "path": "/quotes",
+      "sourceIp": "127.0.0.1"
+    }
+  },
+  "body": "{\"destination\": \"JP\", \"weightGrams\": 2500, \"service\": \"express\"}"
+}

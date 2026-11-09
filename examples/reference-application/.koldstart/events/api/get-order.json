@@ -1,0 +1,10 @@
+{
+  "version": "2.0",
+  "routeKey": "GET /orders/{id}",
+  "rawPath": "/orders/3f2b8c1e-7a4d-4e9b-9c61-2d5f0a8b7e14",
+  "rawQueryString": "",
+  "headers": { "x-api-key": "change-me" },
+  "pathParameters": { "id": "3f2b8c1e-7a4d-4e9b-9c61-2d5f0a8b7e14" },
+  "isBase64Encoded": false,
+  "requestContext": { "requestId": "local-get-order", "http": { "method": "GET", "path": "/orders/3f2b8c1e-7a4d-4e9b-9c61-2d5f0a8b7e14" } }
+}

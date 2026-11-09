@@ -1,0 +1,18 @@
+{
+  "version": "2.0",
+  "routeKey": "GET /flags/{name}",
+  "rawPath": "/flags/new-checkout",
+  "rawQueryString": "",
+  "headers": {},
+  "pathParameters": {
+    "name": "new-checkout"
+  },
+  "isBase64Encoded": false,
+  "requestContext": {
+    "requestId": "local-get-flag",
+    "http": {
+      "method": "GET",
+      "path": "/flags/new-checkout"
+    }
+  }
+}

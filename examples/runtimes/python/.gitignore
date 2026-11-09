@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+
+# koldstart
+.koldstart/build/
+.koldstart/local/

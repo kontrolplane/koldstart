@@ -1,0 +1,34 @@
+amends "@koldstart/Project.pkl"
+
+import "@koldstart/kdst.pkl"
+
+app = "link"
+region = "eu-west-1"
+
+functions {
+  ["inventory"] {
+    memory = 256
+    // Each entry lets the function use a resource of this project, by its name: its role gets
+    // the actions of the access, on that resource alone, and its name, arn or url arrive as
+    // environment variables named after it.
+    link {
+      // GetItem, Query, Scan and the rest of reading, on the table and its indexes:
+      // STOCK_NAME and STOCK_ARN
+      ["stock"] = "read"
+      // SendMessage: RESTOCK_URL and RESTOCK_ARN
+      ["restock"] = "write"
+      // GetObject, PutObject, DeleteObject and ListBucket, on the bucket and its objects:
+      // REPORTS_NAME and REPORTS_ARN
+      ["reports"] = "readwrite"
+      // Publish: LOW_STOCK_ARN
+      ["low-stock"] = "write"
+    }
+  }
+}
+
+resources {
+  ["stock"] = kdst.table("sku")
+  ["restock"] = kdst.queue()
+  ["reports"] = kdst.bucket()
+  ["low-stock"] = kdst.topic()
+}

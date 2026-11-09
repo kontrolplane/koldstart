@@ -1,0 +1,304 @@
+amends "@koldstart/Project.pkl"
+
+import "@koldstart/kdst.pkl"
+import "@koldstart/Project.pkl"
+
+app = "shop"
+region = "eu-west-1"
+
+/// What differs between the stages. Any other stage, such as the preview of a pull request, an
+/// end-to-end test run, or the stage koldstart picks without --stage, is sized as development.
+local stages: Mapping<String, Dynamic> = new {
+  ["development"] {
+    environment = "development"
+    logLevel = "DEBUG"
+    logRetention = 14
+    apiMemory = 256
+    workers = 2
+    rate = 50
+    burst = 100
+    origin = "http://localhost:5173"
+    paging = false
+  }
+  ["staging"] {
+    environment = "staging"
+    logLevel = "INFO"
+    logRetention = 30
+    apiMemory = 512
+    workers = 5
+    rate = 100
+    burst = 200
+    origin = "https://staging.shop.example.com"
+    paging = false
+  }
+  ["production"] {
+    environment = "production"
+    logLevel = "INFO"
+    logRetention = 365
+    apiMemory = 1024
+    workers = 20
+    rate = 500
+    burst = 1000
+    origin = "https://shop.example.com"
+    paging = true
+  }
+}
+
+local stage = stages.getOrNull(kdst.stage) ?? stages["development"]
+
+local production = kdst.stage == "production"
+
+/// The name of something of this stage that aws shows people, as alarms and queues.
+local function named(suffix: String): String = "\(app)-\(kdst.stage)-\(suffix)"
+
+/// Where each alarm's description sends the person it pages.
+local runbook = "https://github.com/kontrolplane/koldstart/blob/main/examples/reference-application/README.md"
+
+tags {
+  ["service"] = "shop-orders"
+  ["team"] = "checkout"
+  ["owner"] = "checkout@example.com"
+  ["cost-centre"] = "4120"
+  ["environment"] = stage.environment
+  ["data-classification"] = "confidential"
+}
+
+functions {
+  default {
+    memory = 512
+    logRetention = stage.logRetention
+    logFormat = "json"
+    applicationLogLevel = stage.logLevel
+    systemLogLevel = "WARN"
+    tracing = true
+  }
+
+  ["api"] {
+    memory = stage.apiMemory
+    timeout = 10.s
+    bundle { sourcemap = true }
+    environment {
+      // the arn of /shop/<stage>/api-key, which the api reads itself, so the key is in no
+      // configuration
+      ["API_KEY_PARAMETER"] = kdst.param("api-key").readAtRuntime()
+    }
+    link {
+      ["orders"] = "read"
+      ["jobs"] = "write"
+    }
+    events {
+      kdst.post("/orders")
+      kdst.get("/orders/{id}")
+      kdst.get("/customers/{customerId}/orders")
+    }
+  }
+
+  ["worker"] {
+    memory = 256
+    timeout = 30.s
+    link {
+      ["orders"] = "write"
+    }
+    events {
+      (kdst.fromQueue("jobs")) {
+        maximumBatchingWindow = 1.s
+        maximumConcurrency = stage.workers
+      }
+    }
+  }
+
+  ["report"] {
+    memory = 256
+    timeout = 1.min
+    bundle { sourcemap = true }
+    link {
+      ["orders"] = "read"
+    }
+    async = new {
+      maximumRetryAttempts = 2
+      maximumEventAge = 1.h
+      onFailure = kdst.ref("report-failures", "Arn")
+    }
+    events {
+      (kdst.schedule("cron(0 * * * ? *)")) {
+        timezone = "Europe/Amsterdam"
+        enabled = production
+      }
+    }
+  }
+}
+
+http {
+  throttling = new {
+    rate = stage.rate
+    burst = stage.burst
+  }
+  accessLogs = new { retention = stage.logRetention }
+  cors = new {
+    origins { stage.origin }
+    methods { "GET"; "POST" }
+    headers { "content-type"; "idempotency-key"; "x-api-key" }
+    maxAge = 1.h
+  }
+}
+
+resources {
+  ["orders"] = (kdst.table("id")) {
+    properties {
+      TableName = named("orders")
+      AttributeDefinitions {
+        new { AttributeName = "customerId"; AttributeType = "S" }
+        new { AttributeName = "createdAt"; AttributeType = "S" }
+      }
+      GlobalSecondaryIndexes {
+        new {
+          IndexName = "byCustomer"
+          KeySchema {
+            new { AttributeName = "customerId"; KeyType = "HASH" }
+            new { AttributeName = "createdAt"; KeyType = "RANGE" }
+          }
+          Projection { ProjectionType = "ALL" }
+        }
+      }
+      SSESpecification { SSEEnabled = true }
+      DeletionProtectionEnabled = production
+    }
+  }
+
+  ["jobs"] = (kdst.queue()) {
+    properties {
+      QueueName = named("jobs")
+      // six times the worker's timeout, as lambda advises for a queue it reads
+      VisibilityTimeout = functions["worker"].timeout.toUnit("s").value.toInt() * 6
+      RedrivePolicy {
+        deadLetterTargetArn = kdst.ref("jobs-dead-letters", "Arn")
+        maxReceiveCount = 5
+      }
+    }
+  }
+
+  ["jobs-dead-letters"] = (kdst.queue()) {
+    properties { QueueName = named("jobs-dead-letters") }
+  }
+
+  ["report-failures"] = (kdst.queue()) {
+    properties { QueueName = named("report-failures") }
+  }
+
+  ["alerts"] = (kdst.topic()) {
+    properties { TopicName = named("alerts") }
+  }
+
+  for (name, definition in functions) {
+    ["\(name)-errors"] = (alarm("\(name)-errors", "errors", "more than 1% of the invocations of \(name) failed")) {
+      properties {
+        Metrics {
+          lambdaMetric("errors", name, "Errors", "Sum")
+          lambdaMetric("invocations", name, "Invocations", "Sum")
+          new {
+            Id = "rate"
+            Label = "error rate (%)"
+            Expression = "IF(invocations > 0, 100 * errors / invocations, 0)"
+            ReturnData = true
+          }
+        }
+        ComparisonOperator = "GreaterThanThreshold"
+        Threshold = 1
+        EvaluationPeriods = 5
+        DatapointsToAlarm = 3
+      }
+    }
+
+    ["\(name)-throttles"] = (alarm("\(name)-throttles", "throttles", "lambda turned invocations of \(name) away")) {
+      properties {
+        Namespace = "AWS/Lambda"
+        MetricName = "Throttles"
+        Dimensions { new { Name = "FunctionName"; Value = kdst.ref(name, "FunctionName") } }
+        Statistic = "Sum"
+        Period = 60
+        ComparisonOperator = "GreaterThanOrEqualToThreshold"
+        Threshold = 1
+        EvaluationPeriods = 5
+        DatapointsToAlarm = 3
+      }
+    }
+
+    ["\(name)-duration"] = (alarm("\(name)-duration", "duration", "the slowest 1% of invocations of \(name) are near its timeout")) {
+      properties {
+        Namespace = "AWS/Lambda"
+        MetricName = "Duration"
+        Dimensions { new { Name = "FunctionName"; Value = kdst.ref(name, "FunctionName") } }
+        ExtendedStatistic = "p99"
+        Period = 60
+        ComparisonOperator = "GreaterThanThreshold"
+        Threshold = definition.timeout.toUnit("ms").value * 0.8
+        EvaluationPeriods = 5
+        DatapointsToAlarm = 3
+      }
+    }
+  }
+
+  ["jobs-backlog"] = (alarm("jobs-backlog", "backlog", "the oldest order in jobs has waited more than five minutes")) {
+    properties {
+      Namespace = "AWS/SQS"
+      MetricName = "ApproximateAgeOfOldestMessage"
+      Dimensions { new { Name = "QueueName"; Value = kdst.ref("jobs", "QueueName") } }
+      Statistic = "Maximum"
+      Period = 60
+      ComparisonOperator = "GreaterThanThreshold"
+      Threshold = 300
+      EvaluationPeriods = 5
+      DatapointsToAlarm = 5
+    }
+  }
+
+  for (queue in List("jobs-dead-letters", "report-failures")) {
+    ["\(queue)-depth"] = (alarm("\(queue)-depth", "dead-letters", "\(queue) holds messages that were given up on")) {
+      properties {
+        Namespace = "AWS/SQS"
+        MetricName = "ApproximateNumberOfMessagesVisible"
+        Dimensions { new { Name = "QueueName"; Value = kdst.ref(queue, "QueueName") } }
+        Statistic = "Maximum"
+        Period = 60
+        ComparisonOperator = "GreaterThanOrEqualToThreshold"
+        Threshold = 1
+        EvaluationPeriods = 1
+      }
+    }
+  }
+}
+
+/// An alarm of this stage that notifies alerts, and pages through it on a stage with paging.
+/// Its description links the section of the runbook on what to do.
+local function alarm(name: String, section: String, summary: String): Project.Resource = new {
+  type = "AWS::CloudWatch::Alarm"
+  properties {
+    AlarmName = named(name)
+    AlarmDescription = "\(summary). Runbook: \(runbook)#\(section)"
+    ActionsEnabled = stage.paging
+    AlarmActions { kdst.ref("alerts", "TopicArn") }
+    OKActions { kdst.ref("alerts", "TopicArn") }
+    TreatMissingData = "notBreaching"
+  }
+}
+
+/// A metric of a function, by the minute, for an alarm's metric math.
+local function lambdaMetric(identifier: String, functionName: String, metric: String, statistic: String): Dynamic = new {
+  Id = identifier
+  ReturnData = false
+  MetricStat {
+    Metric {
+      Namespace = "AWS/Lambda"
+      MetricName = metric
+      Dimensions { new { Name = "FunctionName"; Value = kdst.ref(functionName, "FunctionName") } }
+    }
+    Period = 60
+    Stat = statistic
+  }
+}
+
+outputs {
+  ["ordersTable"] = kdst.ref("orders", "TableName")
+  ["alertsTopic"] = kdst.ref("alerts", "TopicArn")
+  ["deadLetterQueue"] = kdst.ref("jobs-dead-letters", "QueueUrl")
+}

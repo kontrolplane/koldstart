@@ -1,0 +1,5 @@
+{
+  "version": "2.0",
+  "rawPath": "/",
+  "requestContext": { "requestId": "request-1", "http": { "method": "GET", "path": "/" } }
+}

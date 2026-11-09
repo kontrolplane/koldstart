@@ -1,0 +1,4 @@
+{
+  "requestContext": { "routeKey": "send", "connectionId": "connection-1", "requestId": "request-1" },
+  "body": "{\"type\": \"send\", \"text\": \"hello\"}"
+}

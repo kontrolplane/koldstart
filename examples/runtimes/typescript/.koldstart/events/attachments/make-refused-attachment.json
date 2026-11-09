@@ -1,0 +1,10 @@
+{
+  "version": "2.0",
+  "routeKey": "POST /attachments",
+  "rawPath": "/attachments",
+  "rawQueryString": "",
+  "headers": { "content-type": "application/json" },
+  "body": "{\"fileName\": \"setup.exe\", \"contentType\": \"application/octet-stream\"}",
+  "isBase64Encoded": false,
+  "requestContext": { "requestId": "local-make-refused-attachment", "http": { "method": "POST", "path": "/attachments" } }
+}

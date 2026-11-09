@@ -1,0 +1,11 @@
+{
+  "version": "2.0",
+  "routeKey": "GET /customers/{customerId}/orders",
+  "rawPath": "/customers/customer-1042/orders",
+  "rawQueryString": "limit=10",
+  "headers": { "x-api-key": "change-me" },
+  "pathParameters": { "customerId": "customer-1042" },
+  "queryStringParameters": { "limit": "10" },
+  "isBase64Encoded": false,
+  "requestContext": { "requestId": "local-list-customer-orders", "http": { "method": "GET", "path": "/customers/customer-1042/orders" } }
+}

@@ -1,0 +1,10 @@
+{
+  "version": "2.0",
+  "routeKey": "POST /orders",
+  "rawPath": "/orders",
+  "rawQueryString": "",
+  "headers": { "x-api-key": "change-me", "content-type": "application/json", "idempotency-key": "checkout-7f3a91c2" },
+  "body": "{\"customerId\": \"customer-1042\", \"currency\": \"EUR\", \"lines\": [{\"sku\": \"socks\", \"quantity\": 2}, {\"sku\": \"beanie\", \"quantity\": 1}]}",
+  "isBase64Encoded": false,
+  "requestContext": { "requestId": "local-place-order", "http": { "method": "POST", "path": "/orders" } }
+}

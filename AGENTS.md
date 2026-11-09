@@ -25,8 +25,8 @@ hack/schema/                packages the schema in pkl/ with the pkl koldstart p
 hack/pkl/                   downloads the pinned pkl for a platform, for the image
 hack/floci/                 the local aws profile for floci, for running kdst against it by hand
 hack/demonstration/         the checkout service make local and make vhs deploy to floci, the script that seeds it, and backfill, which writes what floci does not keep
-examples/                   example projects, one in each directory or, for stage-output, in each of its two; one with go is a go module of its own, tidied by make lint; examples_test.go checks they evaluate
-test/e2e/                   deploys examples/full-featured to a real account, behind the e2e build tag
+examples/                   concepts/, one thing koldstart does each in a file that fits on a screen; runtimes/, how each language is built, with its tests; reference-application/, the two together in one application, which the e2e tests deploy. make test-examples runs their tests, a go module of its own is tidied and linted by make lint, and examples_test.go checks every one evaluates
+test/e2e/                   deploys examples/reference-application to a real account, behind the e2e build tag
 vhs/                        make vhs: the tape that records kdst ui for the README, its gif and a screenshot of each page, and the floci and profile it records against
 assets/                     the README's header, footer and cassette.gif, and the screenshots make vhs takes in pages/
 internal/version/           the build's version, stamped by the linker: version, commit, date, go and platform
@@ -54,7 +54,7 @@ docs/                       the user documentation, which the README links to
 - `internal/migrate` is tested with golden files: a `serverless.yml` under `testdata/<case>/`, and the `koldstart.pkl` and `todos.txt` it converts to. after changing the conversion, run `go test ./internal/migrate -update`, read the diff, and commit it. every golden file must evaluate with pkl and pass a deploy's checks.
 - logs: `log/slog`. `--debug` writes them to `debug.log`, otherwise nothing is logged.
 - errors wrap with what was being done (`fmt.Errorf("reading the state of %s: %w", stage, err)`). an error a person reads says what to do.
-- `make check` runs most of what ci runs: golangci-lint, actionlint, `go mod tidy`, govulncheck, the unit tests and the goreleaser config. ci also runs the emulator tests, a snapshot release (`make snapshot`) and, on a pull request, the image build. the Makefile is plain targets with a comment above each; keep it that way.
+- `make check` runs most of what ci runs: golangci-lint, actionlint, `go mod tidy`, govulncheck, the unit tests and the goreleaser config. ci also runs the emulator tests, the examples' tests (`make test-examples`), a snapshot release (`make snapshot`) and, on a pull request, the image build. the Makefile is plain targets with a comment above each; keep it that way.
 - base images and actions are pinned by digest or commit, with the tag beside it.
 - writing: short and concrete. say what something does and the command or value, not why at length. comments only explain a non-obvious why. british spelling.
 - comments go above what they describe: a function, type, constant, variable or field. none inside function bodies and none at the end of a line. a `//nolint` goes in the doc comment of the function it covers, after a `//` line. the one exception: the version beside a pinned action, `@<sha> # v7.0.1`, which dependabot reads.

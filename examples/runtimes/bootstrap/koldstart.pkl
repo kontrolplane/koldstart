@@ -1,0 +1,21 @@
+amends "@koldstart/Project.pkl"
+
+import "@koldstart/kdst.pkl"
+
+app = "clock"
+region = "eu-west-1"
+
+functions {
+  ["now"] {
+    // an executable built elsewhere, or a script that starts with #!, zipped as it is as
+    // bootstrap, which provided.al2023 runs; the runtime is inferred from it, and there is no
+    // handler
+    bootstrap = "bin/now"
+    memory = 128
+    timeout = 3.s
+    logFormat = "json"
+    applicationLogLevel = "INFO"
+    tracing = true
+    url = new { auth = "none" }
+  }
+}

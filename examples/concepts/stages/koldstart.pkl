@@ -1,0 +1,49 @@
+amends "@koldstart/Project.pkl"
+
+import "@koldstart/kdst.pkl"
+
+app = "stages"
+region = "eu-west-1"
+
+/// What differs between the stages, in one place. One file describes every stage: `kdst.stage`
+/// is what --stage names.
+local stages: Mapping<String, Dynamic> = new {
+  ["development"] {
+    memory = 256
+    logRetention = 14
+    reporting = false
+  }
+  ["staging"] {
+    memory = 512
+    logRetention = 30
+    reporting = false
+  }
+  ["production"] {
+    memory = 1024
+    logRetention = 365
+    reporting = true
+  }
+}
+
+/// The settings of this stage. Any other stage, such as the preview of a pull request, or `dev`,
+/// which koldstart picks without --stage, is sized as development.
+local stage = stages.getOrNull(kdst.stage) ?? stages["development"]
+
+local production = kdst.stage == "production"
+
+functions {
+  ["report"] {
+    memory = stage.memory
+    logRetention = stage.logRetention
+    environment {
+      ["STAGE"] = kdst.stage
+      ["PRODUCTION"] = production.toString()
+    }
+    events {
+      (kdst.schedule("cron(0 6 * * ? *)")) {
+        timezone = "Europe/London"
+        enabled = stage.reporting
+      }
+    }
+  }
+}

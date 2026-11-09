@@ -1,0 +1,45 @@
+amends "@koldstart/Project.pkl"
+
+import "@koldstart/kdst.pkl"
+
+app = "http-routes"
+region = "eu-west-1"
+
+functions {
+  ["books"] {
+    memory = 256
+    // every route of the stage shares one http api; this function takes these, and picks the
+    // one a request came in on by its routeKey, as "GET /books/{id}"
+    events {
+      kdst.get("/books")
+      kdst.get("/books/{id}")
+      // a route of its own request limit, in place of the stage-wide one below
+      (kdst.post("/books")) {
+        throttling = new {
+          rate = 5
+          burst = 10
+        }
+      }
+      kdst.put("/books/{id}")
+      kdst.patch("/books/{id}")
+      kdst.del("/books/{id}")
+      // every request no other route takes
+      kdst.any("$default")
+    }
+  }
+}
+
+/// The stage's http api, which every route above shares.
+http {
+  throttling = new {
+    rate = 50
+    burst = 100
+  }
+  accessLogs = new { retention = 14 }
+  cors = new {
+    origins { "https://books.example.com" }
+    methods { "GET"; "POST"; "PUT"; "PATCH"; "DELETE" }
+    headers { "content-type" }
+    maxAge = 1.h
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "version": "2.0",
+  "routeKey": "GET /",
+  "rawPath": "/",
+  "rawQueryString": "fail=true",
+  "queryStringParameters": { "fail": "true" },
+  "requestContext": { "requestId": "request-1", "http": { "method": "GET", "path": "/" } }
+}

@@ -1,7 +1,7 @@
 //go:build e2e
 
-// Package e2e deploys examples/full-featured to a real aws account and works with it, for what
-// no emulator gets right. Run it with go test -tags e2e ./test/e2e/..., with credentials for a
+// Package e2e deploys examples/reference-application to a real aws account and works with it, for
+// what no emulator gets right. Run it with go test -tags e2e ./test/e2e/..., with credentials for a
 // sandbox account: every run deploys a stage of its own, e2e-<run>, and removes it.
 package e2e
 
@@ -38,7 +38,7 @@ import (
 
 // The example the tests deploy, and the app it is.
 const (
-	example = "../../examples/full-featured"
+	example = "../../examples/reference-application"
 	app     = "shop"
 )
 
@@ -223,12 +223,12 @@ func (p *project) putAPIKey() string {
 	return key
 }
 
-// TestFullFeatured deploys the example, calls its api, checks the worker stored what the api
-// queued, that a route of iam refuses an unsigned request, that the private route of the rest
-// api takes only requests with its key, and what audit brings: its settings,
-// its alias, its subscription to the worker's log and its async failures. It deploys a change of
-// code through the fast path, and removes the stage, leaving nothing.
-func TestFullFeatured(t *testing.T) {
+// TestReferenceApplication deploys the reference application, calls its api, checks the worker
+// stored what the api queued, that a route of iam refuses an unsigned request, that the private
+// route of the rest api takes only requests with its key, and what audit brings: its settings, its
+// alias, its subscription to the worker's log and its async failures. It deploys a change of code
+// through the fast path, and removes the stage, leaving nothing.
+func TestReferenceApplication(t *testing.T) {
 	p := newProject(t, stageName())
 	key := p.putAPIKey()
 	t.Cleanup(func() {
@@ -243,7 +243,7 @@ func TestFullFeatured(t *testing.T) {
 		t.Fatal("no httpApiUrl output")
 	}
 
-	status, body := request(t, http.MethodPost, api+"/orders", key, `{"item": "socks"}`)
+	status, body := request(t, http.MethodPost, api+"/orders", key, `{"customerId": "end-to-end-test", "lines": [{"sku": "socks", "quantity": 1}]}`)
 	if status != http.StatusAccepted {
 		t.Fatalf("POST /orders: %d %s", status, body)
 	}
@@ -274,7 +274,7 @@ func TestFullFeatured(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	write(t, report, strings.Replace(string(data), `msg: "orders so far"`, `msg: "orders until now"`, 1))
+	write(t, report, strings.Replace(string(data), `"orders so far"`, `"orders until now"`, 1))
 	out := p.kdstRun("deploy", "--yes")
 	if !strings.Contains(out, "only code changes") || !strings.Contains(out, "~   function/report") || strings.Count(out, "\n  ~") != 1 {
 		t.Fatalf("a change of code did not take the fast path:\n%s", out)

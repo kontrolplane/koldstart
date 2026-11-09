@@ -1,0 +1,6 @@
+.gitignore
+.koldstart
+*.md
+*.pkl
+*_test.go
+PklProject*

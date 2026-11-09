@@ -1,0 +1,10 @@
+{
+  "version": "2.0",
+  "routeKey": "GET /attachments/{id}",
+  "rawPath": "/attachments/3f2b8c1e-7a4d-4e9b-9c61-2d5f0a8b7e14",
+  "rawQueryString": "",
+  "headers": {},
+  "pathParameters": { "id": "3f2b8c1e-7a4d-4e9b-9c61-2d5f0a8b7e14" },
+  "isBase64Encoded": false,
+  "requestContext": { "requestId": "local-download-attachment", "http": { "method": "GET", "path": "/attachments/3f2b8c1e-7a4d-4e9b-9c61-2d5f0a8b7e14" } }
+}

@@ -1,0 +1,53 @@
+amends "@koldstart/Project.pkl"
+
+import "@koldstart/kdst.pkl"
+import "@koldstart/Project.pkl"
+
+app = "permissions"
+region = "eu-west-1"
+
+/// The arn of the ssm parameters under path, in this stage's account. The region is `*`: pkl
+/// knows the region the file names, and `--region` may deploy to another.
+local function parameters(path: String): Project.Join =
+  kdst.join(List("arn:", kdst.partition, ":ssm:*:", kdst.accountId, ":parameter/\(app)/\(kdst.stage)/\(path)"))
+
+functions {
+  ["pricing"] {
+    memory = 256
+    environment {
+      ["SETTINGS_PATH"] = "/\(app)/\(kdst.stage)/settings"
+      ["PRICES_BUS"] = kdst.ref("prices", "Name")
+    }
+    // Statements added to the function's role, for what link does not cover.
+    permissions {
+      // every parameter under settings/, and the path itself for GetParametersByPath
+      new {
+        actions { "ssm:GetParametersByPath"; "ssm:GetParameter" }
+        resources { parameters("settings"); parameters("settings/*") }
+      }
+      // but none under settings/internal/: a deny wins over any allow
+      new {
+        effect = "Deny"
+        actions { "ssm:GetParameter*" }
+        resources { parameters("settings/internal/*") }
+      }
+      // link does not know event buses, so the bus is named by its arn, once it exists
+      new {
+        actions { "events:PutEvents" }
+        resources { kdst.ref("prices", "Arn") }
+      }
+      // PutMetricData takes no resource, so it is the one statement on *
+      new {
+        actions { "cloudwatch:PutMetricData" }
+        resources { "*" }
+      }
+    }
+  }
+}
+
+resources {
+  ["prices"] {
+    type = "AWS::Events::EventBus"
+    properties { Name = "\(app)-\(kdst.stage)-prices" }
+  }
+}

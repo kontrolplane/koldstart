@@ -1,0 +1,22 @@
+amends "@koldstart/Project.pkl"
+
+import "@koldstart/kdst.pkl"
+
+app = "shipping"
+region = "eu-west-1"
+
+functions {
+  // no runtime or handler: cmd/quote/ holds a Cargo.toml, so it is provided.al2023, built from
+  // ./cmd/quote with cargo lambda
+  ["quote"] {
+    memory = 128
+    timeout = 3.s
+    logFormat = "json"
+    applicationLogLevel = "INFO"
+    systemLogLevel = "WARN"
+    tracing = true
+    events {
+      kdst.post("/quotes")
+    }
+  }
+}
