@@ -7,7 +7,7 @@ name: koldstart-vhs
 services:
   floci:
     container_name: koldstart-vhs-floci
-    image: floci/floci:2.4.0@sha256:5ee85db604c4aa74ac76e07ea5cc83086f37bb472bf3dbb97e34019e48efae9c
+    image: floci/floci:2.5.0@sha256:a0fbf944d7f338cc0856f1ef83831ea749ff2be71956eb7a7fce08fc21458e19
     environment:
       FLOCI_BASE_URL: http://127.0.0.1:4567
       FLOCI_DOCKER_RESOURCE_NAMESPACE: koldstart-vhs
