@@ -24,7 +24,7 @@ RUN go run ./hack/pkl -os "$TARGETOS" -arch "$TARGETARCH" -out /out/pkl
 FROM golang:1.27.4-trixie@sha256:430985542100b871e108ccc00e8dcc5eef08ca14ee5825e98ebf563d8ffec4ee AS go
 
 # uv, to install the dependencies of python functions for lambda's platform.
-FROM ghcr.io/astral-sh/uv:0.12.18@sha256:3adc3706091ce7c2fe595e669628caedd6d951551b92b258b7e7dbe06d9440bc AS uv
+FROM ghcr.io/astral-sh/uv:0.13.10@sha256:a3ea1357342c1a4bf9a0c53a3deb1b55379aefa037338d8113d5771efa01774f AS uv
 
 # debian rather than alpine, as pkl has no build for musl on arm64, and rather than distroless,
 # for a shell in ci. it runs as root, so a checkout mounted into it is writable; locally, pass
